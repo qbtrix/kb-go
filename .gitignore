@@ -1,0 +1,13 @@
+# Built binary
+kb
+
+# Downloaded test corpora (large, use fetch.sh to get them)
+examples/medium/litestream/
+examples/large/flask/
+
+# Generated benchmark wikis (large, rebuild with bench.sh)
+examples/output/bench-litestream/
+examples/output/bench-flask/
+
+# Benchmark results (regenerated)
+bench_results.json

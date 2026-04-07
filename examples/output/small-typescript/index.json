@@ -1,0 +1,202 @@
+{
+  "scope": "small-typescript",
+  "articles": {
+    "task-management-api-express-route-handlers-and-controller": {
+      "summary": "This module defines the API layer for a task management system using Express.js, including a TaskController class that handles CRUD operations and supporting interfaces for repository abstraction. It provides route handlers for listing, retrieving, creating, updating, and deleting tasks, along with middleware for health checks and centralized error handling.",
+      "title": "Task Management API - Express Route Handlers and Controller"
+    },
+    "task-system-domain-types-and-interfaces": {
+      "summary": "Comprehensive TypeScript type definitions for a task management system, including domain entities (Task, User, Team), input interfaces for mutations, and enums for status, priority, and user role management. Defines the core data structures and contracts for task operations, filtering, and sorting functionality.",
+      "title": "Task System Domain Types and Interfaces"
+    }
+  },
+  "concepts": {
+    "access control": {
+      "name": "Access Control",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "createtaskinput": {
+      "name": "CreateTaskInput",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "crud operations": {
+      "name": "CRUD operations",
+      "articles": [
+        "task-management-api-express-route-handlers-and-controller"
+      ]
+    },
+    "dependency injection": {
+      "name": "Dependency injection",
+      "articles": [
+        "task-management-api-express-route-handlers-and-controller"
+      ]
+    },
+    "domain types": {
+      "name": "Domain Types",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "error handling": {
+      "name": "Error handling",
+      "articles": [
+        "task-management-api-express-route-handlers-and-controller"
+      ]
+    },
+    "express middleware": {
+      "name": "Express middleware",
+      "articles": [
+        "task-management-api-express-route-handlers-and-controller"
+      ]
+    },
+    "health check endpoint": {
+      "name": "Health check endpoint",
+      "articles": [
+        "task-management-api-express-route-handlers-and-controller"
+      ]
+    },
+    "http status codes": {
+      "name": "HTTP status codes",
+      "articles": [
+        "task-management-api-express-route-handlers-and-controller"
+      ]
+    },
+    "input validation": {
+      "name": "Input Validation",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "interface abstraction": {
+      "name": "Interface abstraction",
+      "articles": [
+        "task-management-api-express-route-handlers-and-controller"
+      ]
+    },
+    "paginatedresponse": {
+      "name": "PaginatedResponse",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "priority": {
+      "name": "Priority",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "request validation": {
+      "name": "Request validation",
+      "articles": [
+        "task-management-api-express-route-handlers-and-controller"
+      ]
+    },
+    "rest api": {
+      "name": "REST API",
+      "articles": [
+        "task-management-api-express-route-handlers-and-controller"
+      ]
+    },
+    "sortfield": {
+      "name": "SortField",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "sortorder": {
+      "name": "SortOrder",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "task": {
+      "name": "Task",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "taskcontroller": {
+      "name": "TaskController",
+      "articles": [
+        "task-management-api-express-route-handlers-and-controller"
+      ]
+    },
+    "taskfilter": {
+      "name": "TaskFilter",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "taskrepository": {
+      "name": "TaskRepository",
+      "articles": [
+        "task-management-api-express-route-handlers-and-controller"
+      ]
+    },
+    "taskstatus": {
+      "name": "TaskStatus",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "team": {
+      "name": "Team",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "type contracts": {
+      "name": "Type Contracts",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "type safety": {
+      "name": "Type safety",
+      "articles": [
+        "task-management-api-express-route-handlers-and-controller"
+      ]
+    },
+    "updatetaskinput": {
+      "name": "UpdateTaskInput",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "user": {
+      "name": "User",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "userrole": {
+      "name": "UserRole",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    },
+    "workflow states": {
+      "name": "Workflow States",
+      "articles": [
+        "task-system-domain-types-and-interfaces"
+      ]
+    }
+  },
+  "categories": [
+    "API Contracts",
+    "API Development",
+    "Backend Architecture",
+    "Data Access Patterns",
+    "Data Structures",
+    "Domain Models",
+    "Enumerations",
+    "Express.js",
+    "Task Management",
+    "Type Definitions",
+    "TypeScript"
+  ]
+}

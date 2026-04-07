@@ -545,6 +545,19 @@ func TestScanDirSkipsNodeModules(t *testing.T) {
 	}
 }
 
+func TestScanDirMultiPattern(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("// go"), 0o644)
+	os.WriteFile(filepath.Join(dir, "app.py"), []byte("# python"), 0o644)
+	os.WriteFile(filepath.Join(dir, "index.ts"), []byte("// ts"), 0o644)
+	os.WriteFile(filepath.Join(dir, "readme.md"), []byte("# readme"), 0o644)
+
+	files := scanDir(dir, "*.go,*.py,*.ts")
+	if len(files) != 3 {
+		t.Errorf("expected 3 files with multi-pattern, got %d: %v", len(files), files)
+	}
+}
+
 // --- Helpers ---
 
 func TestWordCount(t *testing.T) {

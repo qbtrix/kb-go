@@ -1,0 +1,225 @@
+{
+  "scope": "small-python",
+  "articles": {
+    "task-management-system-domain-models": {
+      "summary": "This module defines the core domain models for a task management system using Python dataclasses with type hints. It includes enumerations for task states, priority levels, and user permissions, along with three primary entities: Task, User, and Team, each with validation and serialization capabilities.",
+      "title": "Task Management System Domain Models"
+    },
+    "task-management-system-utility-functions": {
+      "summary": "A collection of standalone helper functions for string processing, validation, date formatting, and pagination in a task management system. Provides utilities for slugification, email validation, date formatting with multiple styles, relative time display, sequence pagination, and text truncation.",
+      "title": "Task Management System Utility Functions"
+    },
+    "task-service-async-task-management-with-validation-and-auditing": {
+      "summary": "The Task Service module provides core business logic for task lifecycle management through async CRUD operations with built-in validation, audit logging, and state transition rules. It implements a repository pattern for persistence abstraction and enforces constraints on task creation, assignment, and status transitions.",
+      "title": "Task Service — Async Task Management with Validation and Auditing"
+    }
+  },
+  "concepts": {
+    "async programming": {
+      "name": "async programming",
+      "articles": [
+        "task-service-async-task-management-with-validation-and-auditing"
+      ]
+    },
+    "audit logging": {
+      "name": "audit logging",
+      "articles": [
+        "task-service-async-task-management-with-validation-and-auditing"
+      ]
+    },
+    "business logic": {
+      "name": "business logic",
+      "articles": [
+        "task-service-async-task-management-with-validation-and-auditing"
+      ]
+    },
+    "crud operations": {
+      "name": "CRUD operations",
+      "articles": [
+        "task-service-async-task-management-with-validation-and-auditing"
+      ]
+    },
+    "dataclasses": {
+      "name": "dataclasses",
+      "articles": [
+        "task-management-system-domain-models"
+      ]
+    },
+    "datetime formatting": {
+      "name": "datetime formatting",
+      "articles": [
+        "task-management-system-utility-functions"
+      ]
+    },
+    "email validation": {
+      "name": "email validation",
+      "articles": [
+        "task-management-system-utility-functions"
+      ]
+    },
+    "enumerations": {
+      "name": "enumerations",
+      "articles": [
+        "task-management-system-domain-models"
+      ]
+    },
+    "priority": {
+      "name": "Priority",
+      "articles": [
+        "task-management-system-domain-models"
+      ]
+    },
+    "regex patterns": {
+      "name": "regex patterns",
+      "articles": [
+        "task-management-system-utility-functions"
+      ]
+    },
+    "relative time representation": {
+      "name": "relative time representation",
+      "articles": [
+        "task-management-system-utility-functions"
+      ]
+    },
+    "repository pattern": {
+      "name": "repository pattern",
+      "articles": [
+        "task-service-async-task-management-with-validation-and-auditing"
+      ]
+    },
+    "sequence pagination": {
+      "name": "sequence pagination",
+      "articles": [
+        "task-management-system-utility-functions"
+      ]
+    },
+    "serialization": {
+      "name": "serialization",
+      "articles": [
+        "task-management-system-domain-models"
+      ]
+    },
+    "state machine": {
+      "name": "state machine",
+      "articles": [
+        "task-service-async-task-management-with-validation-and-auditing"
+      ]
+    },
+    "status transitions": {
+      "name": "status transitions",
+      "articles": [
+        "task-service-async-task-management-with-validation-and-auditing"
+      ]
+    },
+    "string slugification": {
+      "name": "string slugification",
+      "articles": [
+        "task-management-system-utility-functions"
+      ]
+    },
+    "task": {
+      "name": "Task",
+      "articles": [
+        "task-management-system-domain-models"
+      ]
+    },
+    "task lifecycle": {
+      "name": "task lifecycle",
+      "articles": [
+        "task-service-async-task-management-with-validation-and-auditing"
+      ]
+    },
+    "task management": {
+      "name": "task management",
+      "articles": [
+        "task-service-async-task-management-with-validation-and-auditing"
+      ]
+    },
+    "taskstatus": {
+      "name": "TaskStatus",
+      "articles": [
+        "task-management-system-domain-models"
+      ]
+    },
+    "team": {
+      "name": "Team",
+      "articles": [
+        "task-management-system-domain-models"
+      ]
+    },
+    "text truncation": {
+      "name": "text truncation",
+      "articles": [
+        "task-management-system-utility-functions"
+      ]
+    },
+    "timestamp tracking": {
+      "name": "timestamp tracking",
+      "articles": [
+        "task-management-system-domain-models"
+      ]
+    },
+    "type hints": {
+      "name": "type hints",
+      "articles": [
+        "task-management-system-domain-models",
+        "task-management-system-utility-functions"
+      ]
+    },
+    "url-friendly strings": {
+      "name": "URL-friendly strings",
+      "articles": [
+        "task-management-system-utility-functions"
+      ]
+    },
+    "user": {
+      "name": "User",
+      "articles": [
+        "task-management-system-domain-models"
+      ]
+    },
+    "userrole": {
+      "name": "UserRole",
+      "articles": [
+        "task-management-system-domain-models"
+      ]
+    },
+    "utility functions": {
+      "name": "utility functions",
+      "articles": [
+        "task-management-system-utility-functions"
+      ]
+    },
+    "uuid identification": {
+      "name": "UUID identification",
+      "articles": [
+        "task-management-system-domain-models"
+      ]
+    },
+    "validation": {
+      "name": "validation",
+      "articles": [
+        "task-management-system-domain-models",
+        "task-service-async-task-management-with-validation-and-auditing"
+      ]
+    }
+  },
+  "categories": [
+    "Python dataclasses",
+    "async patterns",
+    "backend services",
+    "business logic layer",
+    "data persistence",
+    "data structures",
+    "data validation",
+    "date/time formatting",
+    "domain models",
+    "helpers",
+    "pagination",
+    "string processing",
+    "system architecture",
+    "task management",
+    "task management systems",
+    "utilities"
+  ]
+}

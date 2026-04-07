@@ -2,7 +2,10 @@
 // Headless, lean CLI. BM25 search over LLM-compiled articles.
 // No embeddings, no vectors. The LLM understands at write time, not query time.
 //
-// Commands: build, search, ingest, show, list, stats, lint, watch, clear
+// Changes: Added parallel compilation (goroutines), BM25 title+concept boosting,
+// multi-pattern support (*.go,*.py,*.ts), --lang flag for stdin, recompile command.
+//
+// Commands: build, search, ingest, show, list, stats, lint, recompile, watch, clear
 // AST parsing: Go (stdlib go/ast), Python (regex), TypeScript/JS (regex)
 // Storage: markdown + JSON frontmatter (compatible with Python knowledge-base package)
 // External deps: fsnotify (watch mode only)
@@ -24,6 +27,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -947,6 +951,127 @@ func contentHash(text string) string {
 	return fmt.Sprintf("%x", h)
 }
 
+// --- Wiki Export ---
+
+func exportWiki(scope, outputDir string) {
+	articles, _ := listArticles(scope)
+	idx := loadIndex(scope)
+
+	os.MkdirAll(outputDir, 0o755)
+
+	// Write each article as a standalone .md
+	for _, a := range articles {
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "# %s\n\n", a.Title)
+		if a.Summary != "" {
+			fmt.Fprintf(&sb, "> %s\n\n", a.Summary)
+		}
+		if len(a.Categories) > 0 {
+			fmt.Fprintf(&sb, "**Categories:** %s  \n", strings.Join(a.Categories, ", "))
+		}
+		if len(a.Concepts) > 0 {
+			top := a.Concepts
+			if len(top) > 10 {
+				top = top[:10]
+			}
+			fmt.Fprintf(&sb, "**Concepts:** %s  \n", strings.Join(top, ", "))
+		}
+		fmt.Fprintf(&sb, "**Words:** %d | **Version:** %d\n\n---\n\n", a.WordCount, a.Version)
+		sb.WriteString(a.Content)
+		if len(a.Backlinks) > 0 {
+			sb.WriteString("\n\n---\n\n## Related\n\n")
+			for _, link := range a.Backlinks {
+				fmt.Fprintf(&sb, "- [%s](%s.md)\n", link, link)
+			}
+		}
+		os.WriteFile(filepath.Join(outputDir, a.ID+".md"), []byte(sb.String()), 0o644)
+	}
+
+	// Write index.md
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "# Knowledge Base: %s\n\n", scope)
+	fmt.Fprintf(&sb, "**%d articles** | **%d concepts** | **%d categories**\n\n", len(articles), len(idx.Concepts), len(idx.Categories))
+
+	if len(idx.Categories) > 0 {
+		sb.WriteString("## Categories\n\n")
+		for _, cat := range idx.Categories {
+			fmt.Fprintf(&sb, "### %s\n\n", cat)
+			for _, a := range articles {
+				if contains(a.Categories, cat) {
+					fmt.Fprintf(&sb, "- [%s](%s.md) — %s\n", a.Title, a.ID, truncate(a.Summary, 80))
+				}
+			}
+			sb.WriteString("\n")
+		}
+	} else {
+		sb.WriteString("## Articles\n\n")
+		for _, a := range articles {
+			fmt.Fprintf(&sb, "- [%s](%s.md) — %s\n", a.Title, a.ID, truncate(a.Summary, 80))
+		}
+	}
+	os.WriteFile(filepath.Join(outputDir, "index.md"), []byte(sb.String()), 0o644)
+
+	fmt.Printf("Exported %d articles + index.md to %s/\n", len(articles), outputDir)
+}
+
+// --- Search Index (pre-tokenized) ---
+
+// SearchIndex stores pre-tokenized article data for fast BM25 search.
+type SearchIndex struct {
+	Articles []SearchEntry `json:"articles"`
+	AvgDL    float64       `json:"avg_dl"`
+}
+
+type SearchEntry struct {
+	ID            string   `json:"id"`
+	AllTokens     []string `json:"all"`
+	TitleTokens   []string `json:"title"`
+	ConceptTokens []string `json:"concepts"`
+}
+
+func buildSearchIndex(articles []*WikiArticle) *SearchIndex {
+	si := &SearchIndex{Articles: make([]SearchEntry, len(articles))}
+	totalLen := 0
+	for i, a := range articles {
+		all := tokenize(a.Title + " " + a.Summary + " " + a.Content +
+			" " + strings.Join(a.Concepts, " ") + " " + strings.Join(a.Categories, " "))
+		si.Articles[i] = SearchEntry{
+			ID:            a.ID,
+			AllTokens:     all,
+			TitleTokens:   tokenize(a.Title),
+			ConceptTokens: tokenize(strings.Join(a.Concepts, " ")),
+		}
+		totalLen += len(all)
+	}
+	if len(articles) > 0 {
+		si.AvgDL = float64(totalLen) / float64(len(articles))
+	}
+	return si
+}
+
+func saveSearchIndex(scope string, si *SearchIndex) error {
+	ensureDirs(scope)
+	path := filepath.Join(scopeDir(scope), "cache", "search_index.json")
+	data, err := json.Marshal(si)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+func loadSearchIndex(scope string) *SearchIndex {
+	path := filepath.Join(scopeDir(scope), "cache", "search_index.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var si SearchIndex
+	if err := json.Unmarshal(data, &si); err != nil {
+		return nil
+	}
+	return &si
+}
+
 // --- BM25 Search ---
 
 func tokenize(text string) []string {
@@ -959,6 +1084,10 @@ func tokenize(text string) []string {
 }
 
 func bm25Search(articles []*WikiArticle, query string, limit int) []*WikiArticle {
+	return bm25SearchWithIndex(articles, query, limit, nil)
+}
+
+func bm25SearchWithIndex(articles []*WikiArticle, query string, limit int, si *SearchIndex) []*WikiArticle {
 	if len(articles) == 0 || query == "" {
 		return nil
 	}
@@ -968,15 +1097,37 @@ func bm25Search(articles []*WikiArticle, query string, limit int) []*WikiArticle
 		return nil
 	}
 
-	// Tokenize all docs
-	docs := make([][]string, len(articles))
-	totalLen := 0
-	for i, a := range articles {
-		docs[i] = tokenize(a.Title + " " + a.Summary + " " + a.Content +
-			" " + strings.Join(a.Concepts, " ") + " " + strings.Join(a.Categories, " "))
-		totalLen += len(docs[i])
+	// Use pre-tokenized index if available, otherwise tokenize on the fly
+	var docs [][]string
+	var titleTokens, conceptTokens [][]string
+	var avgDL float64
+
+	if si != nil && len(si.Articles) == len(articles) {
+		// Fast path: use cached tokens
+		docs = make([][]string, len(si.Articles))
+		titleTokens = make([][]string, len(si.Articles))
+		conceptTokens = make([][]string, len(si.Articles))
+		for i, entry := range si.Articles {
+			docs[i] = entry.AllTokens
+			titleTokens[i] = entry.TitleTokens
+			conceptTokens[i] = entry.ConceptTokens
+		}
+		avgDL = si.AvgDL
+	} else {
+		// Slow path: tokenize everything
+		docs = make([][]string, len(articles))
+		titleTokens = make([][]string, len(articles))
+		conceptTokens = make([][]string, len(articles))
+		totalLen := 0
+		for i, a := range articles {
+			docs[i] = tokenize(a.Title + " " + a.Summary + " " + a.Content +
+				" " + strings.Join(a.Concepts, " ") + " " + strings.Join(a.Categories, " "))
+			titleTokens[i] = tokenize(a.Title)
+			conceptTokens[i] = tokenize(strings.Join(a.Concepts, " "))
+			totalLen += len(docs[i])
+		}
+		avgDL = float64(totalLen) / float64(len(docs))
 	}
-	avgDL := float64(totalLen) / float64(len(docs))
 
 	// IDF per query term
 	idfs := map[string]float64{}
@@ -990,7 +1141,7 @@ func bm25Search(articles []*WikiArticle, query string, limit int) []*WikiArticle
 		idfs[term] = math.Log((float64(len(docs))-float64(df)+0.5)/(float64(df)+0.5) + 1)
 	}
 
-	// Score each doc
+	// Score each doc with title (3x) and concept (2x) boosting
 	type scored struct {
 		idx   int
 		score float64
@@ -1003,7 +1154,17 @@ func bm25Search(articles []*WikiArticle, query string, limit int) []*WikiArticle
 			tf := float64(countStr(doc, term))
 			num := tf * (bm25K1 + 1)
 			den := tf + bm25K1*(1-bm25B+bm25B*dl/avgDL)
-			s += idfs[term] * num / den
+			base := idfs[term] * num / den
+			s += base
+
+			// Title boost: 3x for terms appearing in the title
+			if containsStr(titleTokens[i], term) {
+				s += base * 2.0
+			}
+			// Concept boost: 2x for terms matching concepts
+			if containsStr(conceptTokens[i], term) {
+				s += base * 1.0
+			}
 		}
 		scores[i] = scored{i, s}
 	}
@@ -1025,9 +1186,15 @@ func bm25Search(articles []*WikiArticle, query string, limit int) []*WikiArticle
 
 // --- LLM Compilation ---
 
-func compileLLM(rawText, source, model, apiKey string, codeMod *CodeModule) (*WikiArticle, error) {
+// TokenUsage tracks API token consumption.
+type TokenUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
+func compileLLM(rawText, source, model, apiKey string, codeMod *CodeModule) (*WikiArticle, *TokenUsage, error) {
 	if apiKey == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set")
+		return nil, nil, fmt.Errorf("ANTHROPIC_API_KEY not set")
 	}
 
 	var contextBlock string
@@ -1053,7 +1220,7 @@ Source text:
 
 	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("anthropic-version", apiVersion)
@@ -1062,28 +1229,37 @@ Source text:
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("API request failed: %w", err)
+		return nil, nil, fmt.Errorf("API request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
+		return nil, nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	// Parse Anthropic response
+	// Parse Anthropic response with usage
 	var apiResp struct {
 		Content []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
+		Usage struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(respBody, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to parse API response: %w", err)
+		return nil, nil, fmt.Errorf("failed to parse API response: %w", err)
+	}
+
+	usage := &TokenUsage{
+		InputTokens:  apiResp.Usage.InputTokens,
+		OutputTokens: apiResp.Usage.OutputTokens,
 	}
 
 	if len(apiResp.Content) == 0 {
-		return nil, fmt.Errorf("empty API response")
+		return nil, usage, fmt.Errorf("empty API response")
 	}
 
 	text := apiResp.Content[0].Text
@@ -1101,7 +1277,7 @@ Source text:
 		Categories []string `json:"categories"`
 	}
 	if err := json.Unmarshal([]byte(text), &result); err != nil {
-		return nil, fmt.Errorf("failed to parse LLM output as JSON: %w\nraw: %s", err, text[:min(len(text), 200)])
+		return nil, usage, fmt.Errorf("failed to parse LLM output as JSON: %w\nraw: %s", err, text[:min(len(text), 200)])
 	}
 
 	slug := slugify(result.Title)
@@ -1120,7 +1296,7 @@ Source text:
 		CompiledAt:   now,
 		CompiledWith: model,
 		Version:      1,
-	}, nil
+	}, usage, nil
 }
 
 // --- Structural Lint (no LLM) ---
@@ -1327,6 +1503,7 @@ func cmdBuild(args []string) {
 	pattern := flagStr(args, "--pattern", "*.py")
 	model := flagStr(args, "--model", defaultModel)
 	jsonOut := flagBool(args, "--json")
+	outputDir := flagStr(args, "--output", "")
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 
 	absPath, err := filepath.Abs(path)
@@ -1342,8 +1519,18 @@ func cmdBuild(args []string) {
 		fatal("No files found matching %s in %s", pattern, absPath)
 	}
 
-	var changed, skipped int
-	var built []*WikiArticle
+	concurrency := flagInt(args, "--concurrency", 5)
+
+	// Phase 1: read files, check cache, collect work
+	type compileJob struct {
+		filePath string
+		relPath  string
+		text     string
+		hash     string
+		rawID    string
+	}
+	var jobs []compileJob
+	var skipped int
 
 	for _, f := range files {
 		text, err := os.ReadFile(f)
@@ -1363,59 +1550,97 @@ func cmdBuild(args []string) {
 			continue
 		}
 
-		if !jsonOut {
-			fmt.Printf("Compiling: %s\n", relPath)
-		}
+		jobs = append(jobs, compileJob{
+			filePath: f,
+			relPath:  relPath,
+			text:     string(text),
+			hash:     hash,
+			rawID:    hash[:16],
+		})
+	}
 
-		// Create raw doc
-		rawID := hash[:16]
-		raw := &RawDoc{
-			ID:          rawID,
-			SourceType:  "file",
-			Source:      relPath,
-			Filename:    filepath.Base(f),
-			ContentType: "text",
-			RawText:     string(text),
-			WordCount:   wordCount(string(text)),
-			IngestedAt:  time.Now().UTC().Format(time.RFC3339),
-		}
-		saveRawDoc(scope, raw)
+	// Phase 2: compile in parallel
+	type compileResult struct {
+		job     compileJob
+		article *WikiArticle
+		usage   *TokenUsage
+	}
 
-		// Parse AST if supported language
-		codeMod := parseCode(f, string(text))
+	var (
+		mu      sync.Mutex
+		results []compileResult
+		wg      sync.WaitGroup
+		sem     = make(chan struct{}, concurrency)
+	)
 
-		// Compile with LLM (AST context injected if available)
-		article, err := compileLLM(string(text), relPath, model, apiKey, codeMod)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: compilation failed for %s: %v\n", relPath, err)
-			// Fallback: basic article from raw text
-			article = &WikiArticle{
-				ID:           slugify(filepath.Base(f)),
-				Title:        filepath.Base(f),
-				Summary:      truncate(string(text), 200),
-				Content:      string(text),
-				WordCount:    wordCount(string(text)),
-				CompiledAt:   time.Now().UTC().Format(time.RFC3339),
-				CompiledWith: "none (fallback)",
-				Version:      1,
+	for _, job := range jobs {
+		wg.Add(1)
+		go func(j compileJob) {
+			defer wg.Done()
+			sem <- struct{}{}        // acquire
+			defer func() { <-sem }() // release
+
+			if !jsonOut {
+				fmt.Printf("Compiling: %s\n", j.relPath)
 			}
-		}
-		article.SourceDocs = []string{rawID}
 
-		// Check for existing version
-		if existing, err := loadArticle(scope, article.ID); err == nil && existing != nil {
-			article.Version = existing.Version + 1
-		}
+			// Save raw doc
+			raw := &RawDoc{
+				ID:          j.rawID,
+				SourceType:  "file",
+				Source:      j.relPath,
+				Filename:    filepath.Base(j.filePath),
+				ContentType: "text",
+				RawText:     j.text,
+				WordCount:   wordCount(j.text),
+				IngestedAt:  time.Now().UTC().Format(time.RFC3339),
+			}
+			saveRawDoc(scope, raw)
 
-		saveArticle(scope, article)
-		built = append(built, article)
+			// Parse AST if supported language
+			codeMod := parseCode(j.filePath, j.text)
 
-		cache.Files[relPath] = CacheEntry{
-			Hash:       hash,
-			ArticleID:  article.ID,
-			CompiledAt: article.CompiledAt,
+			// Compile with LLM
+			article, usage, err := compileLLM(j.text, j.relPath, model, apiKey, codeMod)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: compilation failed for %s: %v\n", j.relPath, err)
+				article = &WikiArticle{
+					ID:           slugify(filepath.Base(j.filePath)),
+					Title:        filepath.Base(j.filePath),
+					Summary:      truncate(j.text, 200),
+					Content:      j.text,
+					WordCount:    wordCount(j.text),
+					CompiledAt:   time.Now().UTC().Format(time.RFC3339),
+					CompiledWith: "none (fallback)",
+					Version:      1,
+				}
+			}
+			article.SourceDocs = []string{j.rawID}
+
+			mu.Lock()
+			results = append(results, compileResult{job: j, article: article, usage: usage})
+			mu.Unlock()
+		}(job)
+	}
+	wg.Wait()
+
+	// Phase 3: save articles + update cache (sequential for consistency)
+	changed := len(results)
+	var totalInput, totalOutput int
+	for _, r := range results {
+		if r.usage != nil {
+			totalInput += r.usage.InputTokens
+			totalOutput += r.usage.OutputTokens
 		}
-		changed++
+		if existing, err := loadArticle(scope, r.article.ID); err == nil && existing != nil {
+			r.article.Version = existing.Version + 1
+		}
+		saveArticle(scope, r.article)
+		cache.Files[r.job.relPath] = CacheEntry{
+			Hash:       r.job.hash,
+			ArticleID:  r.article.ID,
+			CompiledAt: r.article.CompiledAt,
+		}
 	}
 
 	saveCache(scope, cache)
@@ -1424,18 +1649,30 @@ func cmdBuild(args []string) {
 	allArticles, _ := listArticles(scope)
 	idx := rebuildIndex(scope, allArticles)
 	saveIndex(scope, idx)
+	saveSearchIndex(scope, buildSearchIndex(allArticles))
 
 	if jsonOut {
 		out := map[string]any{
-			"changed": changed,
-			"cached":  skipped,
-			"total":   len(files),
-			"articles": len(allArticles),
+			"changed":       changed,
+			"cached":        skipped,
+			"total":         len(files),
+			"articles":      len(allArticles),
+			"input_tokens":  totalInput,
+			"output_tokens": totalOutput,
+			"total_tokens":  totalInput + totalOutput,
 		}
 		printJSON(out)
 	} else {
 		fmt.Printf("\nBuilt: %d compiled, %d cached (skipped), %d total files\n", changed, skipped, len(files))
 		fmt.Printf("KB: %d articles, %d concepts\n", len(allArticles), len(idx.Concepts))
+		if totalInput > 0 {
+			fmt.Printf("Tokens: %d input + %d output = %d total\n", totalInput, totalOutput, totalInput+totalOutput)
+		}
+	}
+
+	// Export wiki to output directory if specified
+	if outputDir != "" {
+		exportWiki(scope, outputDir)
 	}
 }
 
@@ -1455,7 +1692,9 @@ func cmdSearch(args []string) {
 		fatal("Failed to list articles: %v", err)
 	}
 
-	results := bm25Search(articles, query, limit)
+	// Use pre-tokenized search index if available
+	si := loadSearchIndex(scope)
+	results := bm25SearchWithIndex(articles, query, limit, si)
 
 	if contextMode {
 		// Output formatted context for agent prompt injection
@@ -1519,7 +1758,7 @@ func cmdIngest(args []string) {
 	// Check for non-flag argument (file path)
 	// Skip flag values: if previous arg was a flag that takes a value, skip this one
 	filePath := ""
-	flagsWithValues := map[string]bool{"--scope": true, "--source": true, "--model": true}
+	flagsWithValues := map[string]bool{"--scope": true, "--source": true, "--model": true, "--lang": true}
 	skipNext := false
 	for _, a := range args {
 		if skipNext {
@@ -1575,13 +1814,18 @@ func cmdIngest(args []string) {
 	saveRawDoc(scope, raw)
 
 	// Parse AST if it's a code file
+	lang := flagStr(args, "--lang", "")
 	var codeMod *CodeModule
 	if filePath != "" {
 		codeMod = parseCode(filePath, text)
+	} else if lang != "" {
+		// Use --lang flag for stdin input (e.g., --lang go)
+		fakeFile := "stdin." + langToExt(lang)
+		codeMod = parseCode(fakeFile, text)
 	}
 
 	// Compile
-	article, err := compileLLM(text, source, model, apiKey, codeMod)
+	article, _, err := compileLLM(text, source, model, apiKey, codeMod)
 	if err != nil {
 		// Fallback
 		article = &WikiArticle{
@@ -1607,6 +1851,7 @@ func cmdIngest(args []string) {
 	allArticles, _ := listArticles(scope)
 	idx := rebuildIndex(scope, allArticles)
 	saveIndex(scope, idx)
+	saveSearchIndex(scope, buildSearchIndex(allArticles))
 
 	if jsonOut {
 		printJSON(map[string]any{
@@ -1787,6 +2032,77 @@ func cmdLint(args []string) {
 	}
 }
 
+func cmdRecompile(args []string) {
+	if len(args) < 1 {
+		fatal("Usage: kb recompile <article_id|--all> [--scope NAME] [--model MODEL]")
+	}
+
+	scope := flagStr(args, "--scope", "default")
+	model := flagStr(args, "--model", defaultModel)
+	jsonOut := flagBool(args, "--json")
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	recompileAll := flagBool(args, "--all") || args[0] == "--all"
+
+	var targets []*WikiArticle
+	if recompileAll {
+		all, _ := listArticles(scope)
+		targets = all
+	} else {
+		a, err := loadArticle(scope, args[0])
+		if err != nil || a == nil {
+			fatal("Article not found: %s", args[0])
+		}
+		targets = []*WikiArticle{a}
+	}
+
+	var recompiled int
+	for _, a := range targets {
+		// Load raw source docs
+		var texts []string
+		for _, docID := range a.SourceDocs {
+			raw, err := loadRawDoc(scope, docID)
+			if err == nil && raw != nil {
+				texts = append(texts, raw.RawText)
+			}
+		}
+		if len(texts) == 0 {
+			fmt.Fprintf(os.Stderr, "Warning: no raw docs for %s, skipping\n", a.ID)
+			continue
+		}
+
+		combined := strings.Join(texts, "\n\n")
+		source := "recompile:" + a.ID
+
+		if !jsonOut {
+			fmt.Printf("Recompiling: %s\n", a.Title)
+		}
+
+		newArticle, _, err := compileLLM(combined, source, model, apiKey, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: recompilation failed for %s: %v\n", a.ID, err)
+			continue
+		}
+
+		newArticle.ID = a.ID
+		newArticle.Version = a.Version + 1
+		newArticle.SourceDocs = a.SourceDocs
+		saveArticle(scope, newArticle)
+		recompiled++
+	}
+
+	// Rebuild index
+	allArticles, _ := listArticles(scope)
+	idx := rebuildIndex(scope, allArticles)
+	saveIndex(scope, idx)
+	saveSearchIndex(scope, buildSearchIndex(allArticles))
+
+	if jsonOut {
+		printJSON(map[string]any{"recompiled": recompiled, "total": len(targets)})
+	} else {
+		fmt.Printf("Recompiled: %d / %d articles\n", recompiled, len(targets))
+	}
+}
+
 func cmdClear(args []string) {
 	scope := flagStr(args, "--scope", "default")
 	jsonOut := flagBool(args, "--json")
@@ -1911,6 +2227,12 @@ func scanDir(root, pattern string) []string {
 		"dist": true, "build": true, ".eggs": true, ".pytest_cache": true,
 	}
 
+	// Support comma-separated patterns: "*.go,*.py,*.ts"
+	patterns := strings.Split(pattern, ",")
+	for i := range patterns {
+		patterns[i] = strings.TrimSpace(patterns[i])
+	}
+
 	filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -1922,9 +2244,11 @@ func scanDir(root, pattern string) []string {
 			return nil
 		}
 
-		matched, _ := filepath.Match(pattern, d.Name())
-		if matched {
-			files = append(files, path)
+		for _, p := range patterns {
+			if matched, _ := filepath.Match(p, d.Name()); matched {
+				files = append(files, path)
+				break
+			}
 		}
 		return nil
 	})
@@ -1977,6 +2301,21 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+func langToExt(lang string) string {
+	switch strings.ToLower(lang) {
+	case "go", "golang":
+		return "go"
+	case "python", "py":
+		return "py"
+	case "typescript", "ts":
+		return "ts"
+	case "javascript", "js":
+		return "js"
+	default:
+		return lang
+	}
 }
 
 func containsStr(tokens []string, term string) bool {
@@ -2069,6 +2408,8 @@ func main() {
 		cmdLint(args)
 	case "clear":
 		cmdClear(args)
+	case "recompile":
+		cmdRecompile(args)
 	case "watch":
 		cmdWatch(args)
 	case "version":
@@ -2095,6 +2436,7 @@ Commands:
   list                   List all articles
   stats                  Show KB statistics
   lint                   Structural health check (add --llm for deep check)
+  recompile <id|--all>   Force recompile article(s) from raw source
   clear                  Delete all knowledge for a scope
   watch <path>           Auto-rebuild on file changes
   version                Show version
@@ -2103,6 +2445,9 @@ Global flags:
   --scope NAME           Knowledge scope (default: "default")
   --json                 Output as JSON (for machine consumption)
   --model MODEL          LLM model for compilation (default: claude-haiku-4-5-20251001)
+  --concurrency N        Parallel LLM compilations (default: 5, build only)
+  --pattern GLOB         File patterns, comma-separated (e.g. "*.go,*.py,*.ts")
+  --lang LANG            Language hint for stdin ingest (go, python, typescript)
 
 Examples:
   kb build ./src/myapp --scope myapp

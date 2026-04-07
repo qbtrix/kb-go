@@ -1,0 +1,337 @@
+{
+  "scope": "small-go",
+  "articles": {
+    "application-configuration-management-in-taskapi": {
+      "summary": "The config.go module provides environment-based configuration loading for the TaskAPI application. It defines a Config struct with sensible defaults, loads values from environment variables, and includes validation to ensure required settings are present and valid.",
+      "title": "Application Configuration Management in TaskAPI"
+    },
+    "http-middleware-for-authentication-logging-and-rate-limiting": {
+      "summary": "The middleware.go module provides three HTTP middleware components for the taskapi package: authentication validation via API tokens, request logging with timing information, and rate limiting based on sliding window per IP address. These middlewares enable secure, observable, and throttled API access.",
+      "title": "HTTP Middleware for Authentication, Logging, and Rate Limiting"
+    },
+    "task-api-domain-models-and-storage-interface": {
+      "summary": "The models.go file defines the core domain entities for a task management system, including Task, User, and Team types, along with a TaskStore interface for persistence. It provides status and priority constants, and includes an IsOverdue() method for tracking task deadlines.",
+      "title": "Task API Domain Models and Storage Interface"
+    },
+    "task-api-http-handler-implementation": {
+      "summary": "The handler.go module provides HTTP request handlers for complete CRUD operations on tasks, implementing endpoints for listing, creating, retrieving, updating, and deleting tasks. It uses a dependency-injected store interface and standardizes JSON request/response serialization across all endpoints.",
+      "title": "Task API HTTP Handler Implementation"
+    },
+    "task-api-http-server-implementation": {
+      "summary": "The server.go module implements an HTTP server for the task management API with lifecycle management, route registration, and graceful shutdown capabilities. It provides REST endpoints for task CRUD operations, health checks, and includes middleware support for authentication and logging.",
+      "title": "Task API HTTP Server Implementation"
+    }
+  },
+  "concepts": {
+    "api token validation": {
+      "name": "API Token Validation",
+      "articles": [
+        "http-middleware-for-authentication-logging-and-rate-limiting"
+      ]
+    },
+    "authentication": {
+      "name": "Authentication",
+      "articles": [
+        "http-middleware-for-authentication-logging-and-rate-limiting"
+      ]
+    },
+    "config struct": {
+      "name": "Config struct",
+      "articles": [
+        "application-configuration-management-in-taskapi"
+      ]
+    },
+    "configerror type": {
+      "name": "ConfigError type",
+      "articles": [
+        "application-configuration-management-in-taskapi"
+      ]
+    },
+    "configuration loading": {
+      "name": "configuration loading",
+      "articles": [
+        "application-configuration-management-in-taskapi"
+      ]
+    },
+    "context timeout": {
+      "name": "Context Timeout",
+      "articles": [
+        "task-api-http-server-implementation"
+      ]
+    },
+    "crud operations": {
+      "name": "CRUD operations",
+      "articles": [
+        "task-api-http-handler-implementation",
+        "task-api-http-server-implementation"
+      ]
+    },
+    "deadline tracking": {
+      "name": "Deadline tracking",
+      "articles": [
+        "task-api-domain-models-and-storage-interface"
+      ]
+    },
+    "default values": {
+      "name": "default values",
+      "articles": [
+        "application-configuration-management-in-taskapi"
+      ]
+    },
+    "dependency injection": {
+      "name": "dependency injection",
+      "articles": [
+        "task-api-http-handler-implementation"
+      ]
+    },
+    "domain models": {
+      "name": "Domain models",
+      "articles": [
+        "task-api-domain-models-and-storage-interface"
+      ]
+    },
+    "entity modeling": {
+      "name": "Entity modeling",
+      "articles": [
+        "task-api-domain-models-and-storage-interface"
+      ]
+    },
+    "environment variables": {
+      "name": "environment variables",
+      "articles": [
+        "application-configuration-management-in-taskapi"
+      ]
+    },
+    "error handling": {
+      "name": "error handling",
+      "articles": [
+        "application-configuration-management-in-taskapi",
+        "task-api-http-handler-implementation"
+      ]
+    },
+    "graceful shutdown": {
+      "name": "Graceful Shutdown",
+      "articles": [
+        "task-api-http-server-implementation"
+      ]
+    },
+    "health check": {
+      "name": "Health Check",
+      "articles": [
+        "task-api-http-server-implementation"
+      ]
+    },
+    "http handlers": {
+      "name": "HTTP handlers",
+      "articles": [
+        "task-api-http-handler-implementation"
+      ]
+    },
+    "http middleware": {
+      "name": "HTTP Middleware",
+      "articles": [
+        "http-middleware-for-authentication-logging-and-rate-limiting"
+      ]
+    },
+    "http server": {
+      "name": "HTTP Server",
+      "articles": [
+        "task-api-http-server-implementation"
+      ]
+    },
+    "http status codes": {
+      "name": "HTTP status codes",
+      "articles": [
+        "task-api-http-handler-implementation"
+      ]
+    },
+    "ip-based throttling": {
+      "name": "IP-based Throttling",
+      "articles": [
+        "http-middleware-for-authentication-logging-and-rate-limiting"
+      ]
+    },
+    "json serialization": {
+      "name": "JSON serialization",
+      "articles": [
+        "task-api-http-handler-implementation"
+      ]
+    },
+    "lifecycle management": {
+      "name": "Lifecycle Management",
+      "articles": [
+        "task-api-http-server-implementation"
+      ]
+    },
+    "middleware": {
+      "name": "Middleware",
+      "articles": [
+        "task-api-http-server-implementation"
+      ]
+    },
+    "mutex locking": {
+      "name": "Mutex Locking",
+      "articles": [
+        "http-middleware-for-authentication-logging-and-rate-limiting"
+      ]
+    },
+    "path parameters": {
+      "name": "path parameters",
+      "articles": [
+        "task-api-http-handler-implementation"
+      ]
+    },
+    "persistence interface": {
+      "name": "Persistence interface",
+      "articles": [
+        "task-api-domain-models-and-storage-interface"
+      ]
+    },
+    "priority levels": {
+      "name": "Priority levels",
+      "articles": [
+        "task-api-domain-models-and-storage-interface"
+      ]
+    },
+    "query parameters": {
+      "name": "query parameters",
+      "articles": [
+        "task-api-http-handler-implementation"
+      ]
+    },
+    "rate limiting": {
+      "name": "Rate Limiting",
+      "articles": [
+        "http-middleware-for-authentication-logging-and-rate-limiting"
+      ]
+    },
+    "repository pattern": {
+      "name": "Repository pattern",
+      "articles": [
+        "task-api-domain-models-and-storage-interface"
+      ]
+    },
+    "request duration measurement": {
+      "name": "Request Duration Measurement",
+      "articles": [
+        "http-middleware-for-authentication-logging-and-rate-limiting"
+      ]
+    },
+    "request handler": {
+      "name": "Request Handler",
+      "articles": [
+        "task-api-http-server-implementation"
+      ]
+    },
+    "request logging": {
+      "name": "Request Logging",
+      "articles": [
+        "http-middleware-for-authentication-logging-and-rate-limiting"
+      ]
+    },
+    "request validation": {
+      "name": "request validation",
+      "articles": [
+        "task-api-http-handler-implementation"
+      ]
+    },
+    "rest api": {
+      "name": "REST API",
+      "articles": [
+        "task-api-http-server-implementation"
+      ]
+    },
+    "restful api": {
+      "name": "RESTful API",
+      "articles": [
+        "task-api-http-handler-implementation"
+      ]
+    },
+    "route registration": {
+      "name": "Route Registration",
+      "articles": [
+        "task-api-http-server-implementation"
+      ]
+    },
+    "sentinel errors": {
+      "name": "sentinel errors",
+      "articles": [
+        "application-configuration-management-in-taskapi"
+      ]
+    },
+    "servemux router": {
+      "name": "ServeMux Router",
+      "articles": [
+        "task-api-http-server-implementation"
+      ]
+    },
+    "sliding window algorithm": {
+      "name": "Sliding Window Algorithm",
+      "articles": [
+        "http-middleware-for-authentication-logging-and-rate-limiting"
+      ]
+    },
+    "status lifecycle": {
+      "name": "Status lifecycle",
+      "articles": [
+        "task-api-domain-models-and-storage-interface"
+      ]
+    },
+    "task management": {
+      "name": "Task management",
+      "articles": [
+        "task-api-domain-models-and-storage-interface"
+      ]
+    },
+    "team organization": {
+      "name": "Team organization",
+      "articles": [
+        "task-api-domain-models-and-storage-interface"
+      ]
+    },
+    "thread safety": {
+      "name": "Thread Safety",
+      "articles": [
+        "http-middleware-for-authentication-logging-and-rate-limiting"
+      ]
+    },
+    "user assignment": {
+      "name": "User assignment",
+      "articles": [
+        "task-api-domain-models-and-storage-interface"
+      ]
+    },
+    "validation": {
+      "name": "validation",
+      "articles": [
+        "application-configuration-management-in-taskapi"
+      ]
+    }
+  },
+  "categories": [
+    "API Design",
+    "API Security",
+    "Backend Architecture",
+    "Backend Development",
+    "Data Models",
+    "Domain-Driven Design",
+    "Go Programming",
+    "Go Standard Library",
+    "Go Web Development",
+    "HTTP Handlers",
+    "HTTP Middleware",
+    "HTTP Server",
+    "Observability",
+    "Rate Limiting",
+    "Request Processing",
+    "Request/Response Processing",
+    "Server Infrastructure",
+    "Software Architecture",
+    "Task Management Systems",
+    "Web Development",
+    "application initialization",
+    "configuration management",
+    "environment handling",
+    "error types"
+  ]
+}

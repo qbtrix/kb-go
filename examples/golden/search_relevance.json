@@ -1,0 +1,29 @@
+{
+  "description": "Expected search results for the small example corpus. Each query should return the expected article as the top result.",
+  "cases": [
+    {"query": "HTTP server startup shutdown", "expected_top_contains": "server", "scope": "small-go"},
+    {"query": "task CRUD create delete handler", "expected_top_contains": "handler", "scope": "small-go"},
+    {"query": "authentication middleware token", "expected_top_contains": "middleware", "scope": "small-go"},
+    {"query": "rate limiter sliding window", "expected_top_contains": "middleware", "scope": "small-go"},
+    {"query": "Task User Team model struct", "expected_top_contains": "model", "scope": "small-go"},
+    {"query": "environment variables port config", "expected_top_contains": "config", "scope": "small-go"},
+    {"query": "async task service create assign", "expected_top_contains": "service", "scope": "small-python"},
+    {"query": "dataclass enum status priority", "expected_top_contains": "model", "scope": "small-python"},
+    {"query": "slugify email validation paginate", "expected_top_contains": "util", "scope": "small-python"},
+    {"query": "Express route controller REST", "expected_top_contains": "api", "scope": "small-typescript"},
+    {"query": "TypeScript interface enum Task User", "expected_top_contains": "type", "scope": "small-typescript"},
+    {"query": "status transition open closed done", "expected_top_contains": "service", "scope": "small-python"},
+
+    {"query": "SQLite replication WAL snapshot", "expected_top_contains": "litestream", "scope": "bench-litestream"},
+    {"query": "S3 replica client upload download", "expected_top_contains": "s3", "scope": "bench-litestream"},
+    {"query": "Azure blob storage replica", "expected_top_contains": "azure", "scope": "bench-litestream"},
+    {"query": "database compaction retention LTX", "expected_top_contains": "compact", "scope": "bench-litestream"},
+    {"query": "directory watcher monitor file changes", "expected_top_contains": "directory", "scope": "bench-litestream"},
+
+    {"query": "Flask WSGI application class init", "expected_top_contains": "flask-app", "scope": "bench-flask"},
+    {"query": "blueprint modular route registration", "expected_top_contains": "blueprint", "scope": "bench-flask"},
+    {"query": "Jinja2 template rendering environment", "expected_top_contains": "templat", "scope": "bench-flask"},
+    {"query": "session management cookie interface", "expected_top_contains": "session", "scope": "bench-flask"},
+    {"query": "JSON serialization provider API", "expected_top_contains": "json", "scope": "bench-flask"}
+  ]
+}

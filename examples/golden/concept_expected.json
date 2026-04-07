@@ -1,0 +1,15 @@
+{
+  "description": "Expected concepts that should be extracted from each file in the small corpus. Used for quality validation.",
+  "files": {
+    "small/go/server.go": ["Server", "HTTP", "routing", "health check", "shutdown"],
+    "small/go/handler.go": ["TaskHandler", "CRUD", "HTTP handler", "REST API"],
+    "small/go/middleware.go": ["authentication", "middleware", "rate limiter", "logging"],
+    "small/go/models.go": ["Task", "User", "Team", "TaskStore", "interface"],
+    "small/go/config.go": ["Config", "environment variables", "validation"],
+    "small/python/service.py": ["TaskService", "BaseService", "async", "status transition"],
+    "small/python/models.py": ["Task", "User", "Team", "dataclass", "enum", "TaskStatus", "Priority"],
+    "small/python/utils.py": ["slugify", "email validation", "pagination", "date formatting"],
+    "small/typescript/api.ts": ["TaskController", "TaskRepository", "Express", "REST", "error handling"],
+    "small/typescript/types.ts": ["Task", "User", "Team", "TaskStatus", "Priority", "interface", "enum"]
+  }
+}
