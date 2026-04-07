@@ -1205,8 +1205,13 @@ func compileLLM(rawText, source, model, apiKey string, codeMod *CodeModule) (*Wi
 	prompt := fmt.Sprintf(`Compile this source into a structured knowledge article.
 Source: %s
 %s
+Important:
+- Explain WHY code exists, not just what it does. For defensive patterns, edge cases, and workarounds, explain what failure they prevent.
+- Flag any TODO, FIXME, HACK, or incomplete implementations as "Known Gaps" in the content.
+- If you see idempotency guards, retry logic, or error handling, explain the failure scenario that motivated them.
+
 Output ONLY valid JSON with these exact keys:
-{"title":"descriptive title","summary":"2-3 sentence overview","content":"full markdown article","concepts":["key","entities"],"categories":["broad","topics"]}
+{"title":"descriptive title","summary":"2-3 sentence overview","content":"full markdown article with a Known Gaps section if applicable","concepts":["key","entities"],"categories":["broad","topics"]}
 
 Source text:
 %s`, source, contextBlock, rawText)
@@ -1501,6 +1506,7 @@ func cmdBuild(args []string) {
 	path := args[0]
 	scope := flagStr(args, "--scope", filepath.Base(path))
 	pattern := flagStr(args, "--pattern", "*.py")
+	exclude := flagStr(args, "--exclude", "")
 	model := flagStr(args, "--model", defaultModel)
 	jsonOut := flagBool(args, "--json")
 	outputDir := flagStr(args, "--output", "")
@@ -1515,6 +1521,9 @@ func cmdBuild(args []string) {
 	cache := loadCache(scope)
 
 	files := scanDir(absPath, pattern)
+	if exclude != "" {
+		files = excludeFiles(files, exclude)
+	}
 	if len(files) == 0 {
 		fatal("No files found matching %s in %s", pattern, absPath)
 	}
@@ -1617,6 +1626,11 @@ func cmdBuild(args []string) {
 			}
 			article.SourceDocs = []string{j.rawID}
 
+			// Auto-tag test files
+			if isTestFile(j.filePath) && !contains(article.Categories, "test") {
+				article.Categories = append(article.Categories, "test")
+			}
+
 			mu.Lock()
 			results = append(results, compileResult{job: j, article: article, usage: usage})
 			mu.Unlock()
@@ -1678,7 +1692,7 @@ func cmdBuild(args []string) {
 
 func cmdSearch(args []string) {
 	if len(args) < 1 {
-		fatal("Usage: kb search <query> [--scope NAME] [--limit N] [--context]")
+		fatal("Usage: kb search <query> [--scope NAME] [--limit N] [--context] [--exclude-tags TAG]")
 	}
 
 	query := args[0]
@@ -1686,15 +1700,60 @@ func cmdSearch(args []string) {
 	limit := flagInt(args, "--limit", 5)
 	jsonOut := flagBool(args, "--json")
 	contextMode := flagBool(args, "--context")
+	excludeTags := flagStr(args, "--exclude-tags", "")
 
-	articles, err := listArticles(scope)
-	if err != nil {
-		fatal("Failed to list articles: %v", err)
+	// Resolve scopes: "*" = all, "a,b,c" = specific, else single
+	scopes := resolveScopes(scope)
+
+	// Collect articles from all scopes
+	type scopedArticle struct {
+		article *WikiArticle
+		scope   string
+	}
+	var allArticles []*WikiArticle
+	var scopeMap []string // parallel array: scope per article
+	for _, s := range scopes {
+		articles, err := listArticles(s)
+		if err != nil {
+			continue
+		}
+		for _, a := range articles {
+			allArticles = append(allArticles, a)
+			scopeMap = append(scopeMap, s)
+		}
 	}
 
-	// Use pre-tokenized search index if available
-	si := loadSearchIndex(scope)
-	results := bm25SearchWithIndex(articles, query, limit, si)
+	// Filter by excluded tags
+	if excludeTags != "" {
+		excluded := strings.Split(excludeTags, ",")
+		var filtered []*WikiArticle
+		var filteredScopes []string
+		for i, a := range allArticles {
+			skip := false
+			for _, tag := range excluded {
+				tag = strings.TrimSpace(tag)
+				if contains(a.Categories, tag) {
+					skip = true
+					break
+				}
+			}
+			if !skip {
+				filtered = append(filtered, a)
+				filteredScopes = append(filteredScopes, scopeMap[i])
+			}
+		}
+		allArticles = filtered
+		scopeMap = filteredScopes
+	}
+
+	// Search with pre-tokenized index (only works for single scope)
+	var results []*WikiArticle
+	if len(scopes) == 1 {
+		si := loadSearchIndex(scopes[0])
+		results = bm25SearchWithIndex(allArticles, query, limit, si)
+	} else {
+		results = bm25Search(allArticles, query, limit)
+	}
 
 	if contextMode {
 		// Output formatted context for agent prompt injection
@@ -1716,15 +1775,30 @@ func cmdSearch(args []string) {
 		return
 	}
 
+	// Build a result-to-scope lookup for multi-scope display
+	resultScope := func(a *WikiArticle) string {
+		for i, art := range allArticles {
+			if art == a && i < len(scopeMap) {
+				return scopeMap[i]
+			}
+		}
+		return ""
+	}
+	multiScope := len(scopes) > 1
+
 	if jsonOut {
 		out := make([]map[string]any, 0, len(results))
 		for _, a := range results {
-			out = append(out, map[string]any{
+			entry := map[string]any{
 				"id":       a.ID,
 				"title":    a.Title,
 				"summary":  a.Summary,
 				"concepts": a.Concepts,
-			})
+			}
+			if multiScope {
+				entry["scope"] = resultScope(a)
+			}
+			out = append(out, entry)
 		}
 		printJSON(out)
 	} else {
@@ -1734,7 +1808,11 @@ func cmdSearch(args []string) {
 		}
 		fmt.Printf("Found %d results:\n\n", len(results))
 		for i, a := range results {
-			fmt.Printf("  %d. %s\n", i+1, a.Title)
+			scopeLabel := ""
+			if multiScope {
+				scopeLabel = fmt.Sprintf(" [%s]", resultScope(a))
+			}
+			fmt.Printf("  %d. %s%s\n", i+1, a.Title, scopeLabel)
 			fmt.Printf("     %s\n", truncate(a.Summary, 120))
 			if len(a.Concepts) > 0 {
 				fmt.Printf("     Concepts: %s\n", strings.Join(a.Concepts[:min(len(a.Concepts), 5)], ", "))
@@ -2301,6 +2379,76 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// excludeFiles removes files matching comma-separated exclude patterns.
+func excludeFiles(files []string, excludePattern string) []string {
+	patterns := strings.Split(excludePattern, ",")
+	for i := range patterns {
+		patterns[i] = strings.TrimSpace(patterns[i])
+	}
+	var result []string
+	for _, f := range files {
+		excluded := false
+		for _, p := range patterns {
+			if matched, _ := filepath.Match(p, filepath.Base(f)); matched {
+				excluded = true
+				break
+			}
+		}
+		if !excluded {
+			result = append(result, f)
+		}
+	}
+	return result
+}
+
+// isTestFile detects test files by common naming patterns.
+func isTestFile(path string) bool {
+	base := filepath.Base(path)
+	lower := strings.ToLower(base)
+	testPatterns := []string{
+		".test.", ".spec.", "_test.", "_spec.",
+		"test_", "spec_",
+	}
+	for _, p := range testPatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	// Check if inside a __tests__ or test/ directory
+	dir := strings.ToLower(filepath.Dir(path))
+	return strings.Contains(dir, "__tests__") || strings.Contains(dir, "/test/") || strings.Contains(dir, "/tests/")
+}
+
+// resolveScopes handles "*" (all scopes), "a,b,c" (multi), or single scope.
+func resolveScopes(scope string) []string {
+	if scope == "*" {
+		// List all scope directories under basePath
+		entries, err := os.ReadDir(basePath())
+		if err != nil {
+			return nil
+		}
+		var scopes []string
+		for _, e := range entries {
+			if e.IsDir() {
+				// Check it has a wiki/ dir (is a real scope)
+				wikiDir := filepath.Join(basePath(), e.Name(), "wiki")
+				if info, err := os.Stat(wikiDir); err == nil && info.IsDir() {
+					scopes = append(scopes, e.Name())
+				}
+			}
+		}
+		return scopes
+	}
+	if strings.Contains(scope, ",") {
+		parts := strings.Split(scope, ",")
+		for i := range parts {
+			parts[i] = strings.TrimSpace(parts[i])
+		}
+		return parts
+	}
+	return []string{scope}
 }
 
 func langToExt(lang string) string {
