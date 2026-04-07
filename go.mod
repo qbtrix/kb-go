@@ -1,4 +1,4 @@
-module github.com/pocketpaw/kb-go
+module github.com/qbtrix/kb-go
 
 go 1.25.0
 
