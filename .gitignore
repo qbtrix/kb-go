@@ -1,5 +1,7 @@
-# Built binary
+# Built binaries
 kb
+kb-darwin-*
+kb-linux-*
 
 # Downloaded test corpora (large, use fetch.sh to get them)
 examples/medium/litestream/
