@@ -7,54 +7,79 @@
 
 # kb
 
-A 6MB Go binary that compiles codebases into searchable wikis. No embeddings, no vectors, no database.
+A 6MB Go binary that builds and maintains structured wikis from any source. Code, docs, research papers, meeting notes, web pages. Feed it text, it gives you a searchable, interlinked knowledge base.
 
-The LLM reads your code once, turns it into structured articles, and you never pay for that context again. Searches take about 10ms.
+No embeddings, no vectors, no database.
 
-## Why
+## The idea
 
-AI agents keep re-reading the same source files. Every conversation, every task, thousands of tokens spent on files that haven't changed. RAG pipelines bolt on vector databases and embedding models to deal with this, but you end up maintaining more infrastructure than the problem warrants.
+This is an implementation of [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) concept. The core insight: instead of retrieving raw document chunks at query time (RAG), have the LLM compile your sources into a persistent wiki that accumulates knowledge over time.
 
-`kb` does something simpler: compile your codebase into a wiki once, then search it.
+Three layers:
+- **Raw sources** -- your files, immutable, never modified
+- **The wiki** -- LLM-generated articles with summaries, concepts, categories, and cross-references
+- **The index** -- concept graph, backlinks, categories. BM25 search over the compiled articles
 
+Three operations:
+- **Ingest** -- add a source, the LLM reads it, writes a structured article, updates the index
+- **Search** -- query the wiki, not the raw files. 10ms, not 10 seconds
+- **Lint** -- health-check for contradictions, orphan concepts, missing cross-references
+
+The LLM does the tedious work that kills human-maintained wikis: summarizing, cross-referencing, keeping things consistent. You curate sources and ask questions.
+
+## Not just for code
+
+kb started as a codebase wiki builder, and it's good at that. AST parsing for Go, Python, and TypeScript means the LLM gets structural context alongside raw source.
+
+But the input is text and the output is articles. Anything that produces text can feed kb:
+
+```bash
+# Codebases
+kb build ./src --scope myapp --pattern "*.go,*.py,*.ts"
+
+# Research papers
+pdftotext paper.pdf - | kb ingest --scope research --source "arxiv-2401.1234"
+
+# Web pages and documentation
+curl -s https://docs.example.com/guide | kb ingest --scope docs --source "setup-guide"
+
+# Meeting notes
+cat standup-notes.md | kb ingest --scope team --source "standup-04-07"
+
+# Anything with text
+cat slack-export.json | jq -r '.messages[].text' | kb ingest --scope comms --source "slack-general"
 ```
-129 source files  →  kb build  →  129 wiki articles + concept graph
-                                       ↓
-                                  10ms search, zero re-reads, works offline
-```
 
-## Comparison
+Each new source gets compiled into a wiki article, linked to existing concepts, and made searchable. The wiki grows and gets more useful over time.
 
-| | kb | Traditional RAG | Graphify |
-|---|---|---|---|
-| Approach | LLM compiles at write time | Embedding similarity at query time | Knowledge graph from AST + LLM |
-| Search | BM25 + concept boost (~10ms) | Vector similarity + reranking (~200ms) | Graph traversal, BFS/DFS |
-| Install | 6MB binary | Python + embedding model + vector DB | Python + NetworkX + tree-sitter + vis.js |
-| Languages | Go, Python, TypeScript/JS | Language-agnostic | 14 languages via tree-sitter |
-| Output | Markdown wiki articles | Opaque vectors | Interactive graph (HTML/Obsidian/Neo4j) |
-| Incremental | SHA256 cache, 0.03s rebuild | Re-embed on change | SHA256 cache, per-file |
-| Offline | Yes, after first build | Needs embedding model | Needs Claude for docs/images |
-| Search accuracy | 100% on 22 test queries | Depends on embeddings | N/A (different query model) |
+## How it compares to RAG
 
-kb is fast and simple. One binary, no infra, plain markdown output you can `cat` or `grep` or commit to git. Search returns the right article first on every query we've tested.
+| | kb (LLM wiki) | Traditional RAG |
+|---|---|---|
+| When understanding happens | At write time (once) | At query time (every time) |
+| What you search | Compiled wiki articles | Raw document chunks |
+| Search method | BM25 with concept weighting (~10ms) | Vector similarity + reranking (~200ms) |
+| What you store | Readable markdown files | Opaque vector embeddings |
+| Infrastructure | One 6MB binary | Python + embedding model + vector DB |
+| Incremental updates | SHA256 cache, 0.03s warm rebuild | Re-embed changed documents |
+| Offline | Yes, after first build | Needs embedding model running |
+| Maintenance | LLM handles cross-refs and consistency | You manage chunking and embedding quality |
 
-Graphify does things kb doesn't: it models relationships between concepts (not just which articles mention them), has a visual graph explorer, handles 14 languages through tree-sitter, and ingests images and PDFs natively. RAG is better when you need fuzzy semantic matching over large unstructured text.
-
-kb handles multimodal by piping external tools into `kb ingest` (see [multimodal](#multimodal)). Graphify builds extraction in natively. Depends on whether you want a lean binary or a batteries-included toolkit.
+RAG is better for fuzzy semantic matching over huge unstructured text where you can't compile everything upfront. kb is better when you want accumulated, structured knowledge that improves as you add sources.
 
 ## Numbers
 
-Tested against real codebases with `claude-haiku-4-5-20251001`. These are not synthetic benchmarks.
+Real codebases, `claude-haiku-4-5-20251001`. Not synthetic benchmarks.
 
 ### Build speed
 
-| Codebase | Language | Files | Cold build | Per file | Warm build |
-|----------|----------|-------|-----------|---------|-----------|
-| [litestream](https://github.com/benbjohnson/litestream) | Go | 129 | 355s | 2.75s | 0.03s |
-| [flask](https://github.com/pallets/flask) | Python | 83 | 78s | 3.25s | 0.01s |
+| Source | Type | Files | Cold build | Per file | Warm build |
+|--------|------|-------|-----------|---------|-----------|
+| [litestream](https://github.com/benbjohnson/litestream) | Go codebase | 129 | 355s | 2.75s | 0.03s |
+| [flask](https://github.com/pallets/flask) | Python codebase | 83 | 78s | 3.25s | 0.01s |
 | [Small corpus](examples/small/) | Go/Py/TS | 10 | 9.5s | 1.90s | 0.01s |
 
-Cold builds run 5 files at a time. Warm builds check SHA256 hashes and skip anything that hasn't changed, which is why they take fractions of a second.
+Cold builds run 5 compilations at a time. Warm builds check SHA256 hashes and skip unchanged files.
 
 ### Search accuracy
 
@@ -66,13 +91,13 @@ Cold builds run 5 files at a time. Warm builds check SHA256 hashes and skip anyt
 | litestream (129 articles) | 5 | 5/5 | ~11ms |
 | flask (24 articles) | 5 | 5/5 | ~11ms |
 
-22 for 22. BM25 with title weighting (3x) and concept weighting (2x). No embeddings involved.
+22 for 22. BM25 with title weighting (3x) and concept weighting (2x).
 
-Test queries are in [`examples/golden/search_relevance.json`](examples/golden/search_relevance.json).
+Test queries: [`examples/golden/search_relevance.json`](examples/golden/search_relevance.json)
 
 ### Raw throughput
 
-These run offline on an Apple M2 Pro. No API key needed.
+Offline, Apple M2 Pro. No API key needed to reproduce.
 
 | Operation | Speed |
 |-----------|-------|
@@ -95,9 +120,9 @@ These run offline on an Apple M2 Pro. No API key needed.
 | Concepts per article | 7.6 avg | 10.9 avg |
 | Categories | 353 | 112 |
 
-Each article has a title, summary, body, concepts, categories, and backlinks to related articles. They're full documents, not chunks.
+Each article has a title, summary, body, concepts, categories, and backlinks. Full documents, not fragments.
 
-You can browse pre-built output here: [`examples/output/`](examples/output/)
+Browse pre-built output: [`examples/output/`](examples/output/)
 
 ## Install
 
@@ -108,11 +133,11 @@ curl -L https://github.com/qbtrix/kb-go/releases/download/v0.1.0/kb-darwin-arm64
 # Build from source
 go install github.com/qbtrix/kb-go@latest
 
-# Or clone
+# Clone and build
 git clone https://github.com/qbtrix/kb-go && cd kb-go && go build -o kb .
 ```
 
-Binaries for macOS and Linux (ARM and x86) are on the [releases page](https://github.com/qbtrix/kb-go/releases).
+Binaries for macOS and Linux (ARM and x86) on the [releases page](https://github.com/qbtrix/kb-go/releases).
 
 You need an Anthropic API key for building and ingesting:
 ```bash
@@ -122,28 +147,25 @@ export ANTHROPIC_API_KEY="sk-..."
 ## Quick start
 
 ```bash
-# Build a wiki
+# Build a wiki from a codebase
 kb build ./src --scope myapp --pattern "*.go,*.py,*.ts"
 
 # Search it
 kb search "auth middleware" --scope myapp
 
-# Rebuild (only changed files get recompiled)
+# Rebuild (only changed files recompile)
 kb build ./src --scope myapp --pattern "*.go"
 
-# Export as markdown
+# Export the wiki as markdown
 kb build ./src --scope myapp --output docs/wiki/
 
 # Watch for changes
 kb watch ./src --scope myapp --pattern "*.go"
-
-# Pipe in text from other tools
-pdftotext paper.pdf - | kb ingest --scope myapp --source "paper.pdf"
 ```
 
 ## Agent integrations
 
-After building a wiki, tell your agent to check it before grepping raw files.
+After building a wiki, tell your agent to check it before reading raw files.
 
 ### Claude Code
 
@@ -156,10 +178,10 @@ Before searching raw files, check the knowledge base:
 \`\`\`bash
 kb search "<your question>" --scope myapp --context
 \`\`\`
-Returns pre-compiled articles instead of raw source.
+Returns compiled articles instead of raw source.
 ```
 
-Or install as a skill and Claude picks it up automatically:
+Or install as a skill:
 ```bash
 npx skills add qbtrix/kb-go
 ```
@@ -181,11 +203,10 @@ Overview: `kb stats --scope myapp`
 
 ### Programmatic access
 
-`--context` returns formatted text you can inject into prompts:
+`--context` returns formatted text for prompt injection:
 
 ```bash
 CONTEXT=$(kb search "authentication flow" --scope myapp --context)
-# Markdown blocks, truncated to ~8K chars
 ```
 
 `--json` on every command for machine consumption:
@@ -225,7 +246,7 @@ kb show auth-service --scope myapp --json
 
 ## AST parsing
 
-Source files are parsed for structure before the LLM sees them. The compilation prompt includes both the raw code and a structural summary (types, functions, imports), which tends to produce better articles.
+Source files are parsed for structure before the LLM sees them. The compilation prompt includes both the raw code and a structural summary, which tends to produce better articles.
 
 | Language | Parser | Extracts |
 |----------|--------|----------|
@@ -236,13 +257,13 @@ Source files are parsed for structure before the LLM sees them. The compilation 
 ## How it works
 
 ```
-Source files
+Source (any text)
     ↓
-AST parse (Go: go/ast, Python: regex, TS: regex)
+AST parse if code (Go: go/ast, Python: regex, TS: regex)
     ↓
 LLM compile (Anthropic API, 5 concurrent)
     ↓
-Wiki articles (markdown + JSON frontmatter)
+Wiki article (markdown + JSON frontmatter)
     ↓
 BM25 index (pre-tokenized, weighted by title and concepts)
     ↓
@@ -253,30 +274,7 @@ BM25 index (pre-tokenized, weighted by title and concepts)
 └── index.json concept graph, backlinks, categories
 ```
 
-Articles are plain markdown with JSON frontmatter. You can `cat` them, `grep` across them, or commit them to your repo.
-
-## Multimodal
-
-kb takes text in and puts articles out. If you want to ingest PDFs, images, audio, or web pages, pipe the extraction through whatever tool you prefer:
-
-```bash
-# PDFs
-pdftotext paper.pdf - | kb ingest --scope research --source "paper.pdf"
-
-# Images / OCR
-tesseract diagram.png stdout | kb ingest --scope docs --source "diagram.png"
-
-# Web pages
-curl -s https://docs.example.com | kb ingest --scope docs --source "docs-page"
-
-# Audio
-whisper meeting.mp3 --output_format txt && cat meeting.txt | kb ingest --scope meetings
-
-# Structured data
-cat export.json | jq -r '.messages[].text' | kb ingest --scope comms --source "slack"
-```
-
-If you're using Python, the [PocketPaw wrapper](https://github.com/pocketpaw/pocketpaw) handles PDF, URL, OCR, and DOCX extraction and pipes it to kb.
+Articles are plain markdown with JSON frontmatter. `cat` them, `grep` them, commit them.
 
 ## Architecture
 
@@ -295,7 +293,7 @@ One file: [`kb.go`](kb.go), 2,463 lines. One dependency: `fsnotify` for watch mo
 
 ## Testing
 
-37 unit tests, 10 performance benchmarks. No test dependencies beyond the Go stdlib.
+37 unit tests, 10 performance benchmarks. No test dependencies beyond Go stdlib.
 
 ```bash
 go test -v ./...       # Unit tests
@@ -320,14 +318,9 @@ go test -bench=. ./... # Benchmarks
 ### Reproduce the benchmarks
 
 ```bash
-# Offline, runs in seconds
-go test -bench=. -benchmem
-
-# Full pipeline on real codebases
+go test -bench=. -benchmem                    # Offline, seconds
 ./bench.sh small                              # 10 files, ~30s
 ./examples/fetch.sh all && ./bench.sh medium  # 129 files, ~6 min
-./bench.sh all                                # everything
-
 cat bench_results.json
 ```
 
@@ -340,17 +333,16 @@ examples/
 │   ├── python/         service, models, utils
 │   └── typescript/     api, types
 ├── golden/             Expected search results and concept extraction
-│   ├── search_relevance.json
-│   └── concept_expected.json
 ├── output/             Pre-built wiki (browse without an API key)
-│   ├── small-go/
-│   ├── small-python/
-│   └── small-typescript/
 ├── fetch.sh            Download litestream + flask for benchmarking
 └── README.md
 ```
 
 [Source files](examples/small/) · [Expected results](examples/golden/) · [Compiled output](examples/output/)
+
+## Inspired by
+
+[Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) -- the idea that LLMs should maintain persistent, structured knowledge instead of re-deriving it from raw sources on every query. kb is that concept as a CLI tool.
 
 ## License
 
