@@ -51,8 +51,10 @@ Your codebase (129 files) → kb build → 129 structured articles + concept gra
 - **Portability**: markdown files you can `cat`, `grep`, commit to git
 
 ### Where others win
-- **Graphify**: richer relationship modeling (edges between concepts, not just articles), visual exploration, 14 language AST support, image/PDF ingestion via Claude vision
+- **Graphify**: concept-to-concept edges (not just concept-to-article), visual graph exploration, 14 language AST via tree-sitter, built-in image/PDF ingestion via Claude vision
 - **RAG**: better for ad-hoc questions over massive unstructured text, semantic similarity for vague queries
+
+`kb` handles multimodal by piping — see [Bring Your Own Batteries](#multimodal--bring-your-own-batteries). Graphify bakes it in. Different tradeoffs — lean binary vs batteries-included.
 
 `kb` is built for **codebase understanding** — structured, fast, predictable. If you need a knowledge graph or vector search, those tools exist. If you want a wiki that actually works, use `kb`.
 
@@ -216,6 +218,31 @@ BM25 index (pre-tokenized, title/concept boosted)
 ```
 
 Every article is a readable `.md` file. No database, no binary formats. `cat` any article.
+
+## Multimodal — Bring Your Own Batteries
+
+`kb` is headless by design — it ingests text and produces articles. Multimodal support comes from piping external tools into `kb ingest`:
+
+```bash
+# PDFs
+pdftotext paper.pdf - | kb ingest --scope research --source "paper.pdf"
+
+# Images / diagrams (OCR)
+tesseract diagram.png stdout | kb ingest --scope docs --source "diagram.png"
+
+# URLs / web pages
+curl -s https://docs.example.com | kb ingest --scope docs --source "docs-page"
+
+# Audio transcripts
+whisper meeting.mp3 --output_format txt && cat meeting.txt | kb ingest --scope meetings --source "standup-04-07"
+
+# Slack exports, CSV, JSON — anything that produces text
+cat slack-export.json | jq -r '.messages[].text' | kb ingest --scope comms --source "slack"
+```
+
+The binary stays lean. Your extraction pipeline stays yours. Any tool that outputs text can feed `kb`.
+
+For Python projects, the [PocketPaw wrapper](https://github.com/pocketpaw/pocketpaw) handles PDF (pypdf), URL (trafilatura), OCR (tesseract), and DOCX (python-docx) extraction automatically.
 
 ## Architecture
 
