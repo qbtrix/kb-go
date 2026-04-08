@@ -16,10 +16,10 @@ A single-binary CLI that turns files into searchable, LLM-compiled knowledge art
 
 ```bash
 # Install from source
-go install github.com/pocketpaw/kb-go@latest
+go install github.com/qbtrix/kb-go@latest
 
 # Or build locally
-git clone https://github.com/pocketpaw/kb-go && cd kb-go && go build -o kb .
+git clone https://github.com/qbtrix/kb-go && cd kb-go && go build -o kb .
 
 # Set your API key
 export ANTHROPIC_API_KEY="sk-..."
