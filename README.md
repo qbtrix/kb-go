@@ -165,43 +165,111 @@ kb build ./src --scope myapp --output docs/wiki/
 kb watch ./src --scope myapp --pattern "*.go"
 ```
 
-## Agent integrations
+## Use with AI agents
 
-After building a wiki, tell your agent to check it before reading raw files.
+kb works in two modes: search an existing wiki, or build the wiki using the agent's own LLM (no API key).
 
 ### Claude Code
 
-Add to your project's `CLAUDE.md`:
+**Option A: Install as a skill** (recommended)
 
-```markdown
-## Knowledge base
-
-Before searching raw files, check the knowledge base:
-\`\`\`bash
-kb search "<your question>" --scope myapp --context
-\`\`\`
-Returns compiled articles instead of raw source.
-```
-
-Or install as a skill:
 ```bash
 npx skills add qbtrix/kb-go
 ```
 
-### Codex, OpenCode, Cursor, other agents
+Then ask Claude Code to "build a knowledge base from ./src" and it'll follow the skill instructions.
 
-Add to `AGENTS.md` or your agent's instructions file:
+**Option B: Add to CLAUDE.md**
+
+Drop this in your project's `CLAUDE.md`:
 
 ```markdown
 ## Knowledge base
 
-This project has a pre-built knowledge base. Before searching files:
+This project has a knowledge base. Use it before reading raw files.
+
+### Search (existing wiki)
 \`\`\`bash
 kb search "<topic>" --scope myapp --context
 \`\`\`
-Full article: `kb show <article-id> --scope myapp`
-Overview: `kb stats --scope myapp`
+
+### Build wiki (agent mode, no API key)
+To build or update the wiki, use agent mode:
+1. Run `kb prepare ./src --scope myapp --pattern "*.go,*.py,*.ts" --json`
+2. For each item in the output, process the `prompt` field yourself
+3. Collect results and pipe to: `echo '<json>' | kb accept --scope myapp`
+
+The accept input format:
+\`\`\`json
+{"scope":"myapp","articles":[{"source":"file.go","hash":"from prepare","raw_id":"from prepare","title":"...","summary":"...","content":"...","concepts":["..."],"categories":["..."]}]}
+\`\`\`
+
+### Other commands
+- `kb show <article-id> --scope myapp` — full article
+- `kb stats --scope myapp` — overview
+- `kb lint --scope myapp` — health check
 ```
+
+Claude Code loads `CLAUDE.md` at session start, so it picks up the kb commands automatically.
+
+### OpenAI Codex
+
+Add to `AGENTS.md` in your project root:
+
+```markdown
+## Knowledge base
+
+This project uses `kb` for structured knowledge. Binary must be on PATH.
+
+### Search
+\`\`\`bash
+kb search "<topic>" --scope myapp --context
+\`\`\`
+
+### Build (agent mode)
+1. `kb prepare ./src --scope myapp --pattern "*.py" --json` — get compilation prompts
+2. Process each item's `prompt` field, output JSON with: title, summary, content, concepts, categories
+3. Pipe results: `echo '<json>' | kb accept --scope myapp`
+```
+
+### Cursor
+
+Add to `.cursorrules`:
+
+```
+This project has a knowledge base. Before searching files, run:
+  kb search "<topic>" --scope myapp --context
+To build/update the wiki without an API key, use agent mode:
+  kb prepare ./src --scope myapp --pattern "*.go" --json
+  Then compile each prompt and pipe results to: kb accept --scope myapp
+```
+
+### Any other agent
+
+If the agent can run shell commands, the same pattern applies. `kb search "topic" --scope myapp --context` returns formatted text you can inject into prompts. `kb prepare` + `kb accept` handles builds. Add `--json` to any command for machine-readable output.
+
+### Agent mode explained
+
+If kb is running inside an agent, the agent already has LLM access. A separate API call means paying twice and managing another key. Agent mode avoids that by splitting the build into two steps:
+
+```bash
+# Step 1: Scan files, check cache, output prompts (no LLM call)
+kb prepare ./src --scope myapp --pattern "*.go,*.py,*.ts"
+# Returns: {"items": [{"source": "main.go", "hash": "...", "raw_id": "...", "prompt": "..."}], ...}
+
+# Step 2: Agent compiles each prompt using its own LLM
+# (This is the part where YOUR agent does the work)
+
+# Step 3: Feed compiled results back
+echo '<json>' | kb accept --scope myapp
+# Returns: {"accepted": 5, "articles": 12, "concepts": 47}
+```
+
+`accept` reads JSON from stdin. It accepts a wrapped object `{"scope":"...","articles":[...]}`, a bare array `[{...}]`, or a single article `{...}`.
+
+Each article needs: `source`, `hash`, `raw_id` (from prepare output), plus `title`, `summary`, `content`, `concepts`, `categories` (from your LLM compilation).
+
+Cache works across both modes. Run `prepare` again and unchanged files are skipped.
 
 ### Programmatic access
 
@@ -218,26 +286,6 @@ kb search "auth" --scope myapp --json
 kb stats --scope myapp --json
 kb show auth-service --scope myapp --json
 ```
-
-## Agent mode
-
-When kb runs inside an AI agent, the agent already has LLM access. Why make a separate API call? Agent mode lets the calling agent do the compilation — no API key, no extra cost.
-
-```bash
-# 1. Get compilation prompts (scans files, checks cache, outputs prompts)
-kb prepare ./src --scope myapp --pattern "*.go"
-
-# 2. Your agent processes each prompt using its own LLM
-
-# 3. Feed compiled results back
-echo '<compiled JSON>' | kb accept --scope myapp
-```
-
-`prepare` outputs JSON with an `items` array. Each item has `source`, `hash`, `raw_id`, and `prompt`. The agent compiles each prompt, then pipes the results (with `title`, `summary`, `content`, `concepts`, `categories`) to `accept`.
-
-Cache still works — unchanged files are skipped on subsequent `prepare` runs.
-
-This is how kb works as a skill inside Claude Code, Cursor, Codex, and other agents. The user's existing subscription handles the LLM work. No separate API key to manage.
 
 ## Commands
 
@@ -302,7 +350,7 @@ Articles are plain markdown with JSON frontmatter. `cat` them, `grep` them, comm
 
 ## Architecture
 
-One file: [`kb.go`](kb.go), 2,463 lines. One dependency: `fsnotify` for watch mode.
+One file: [`kb.go`](kb.go), ~2,850 lines. One dependency: `fsnotify` for watch mode.
 
 | Component | ~Lines | What it does |
 |-----------|--------|-------------|
