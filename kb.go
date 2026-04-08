@@ -2621,7 +2621,13 @@ func excludeFiles(files []string, excludePattern string) []string {
 	for _, f := range files {
 		excluded := false
 		for _, p := range patterns {
+			// Match against basename (e.g. "*.test.*")
 			if matched, _ := filepath.Match(p, filepath.Base(f)); matched {
+				excluded = true
+				break
+			}
+			// Also match against full path for directory patterns (e.g. "*components/ui*")
+			if strings.Contains(f, strings.Trim(p, "*")) && strings.Contains(p, "/") {
 				excluded = true
 				break
 			}
