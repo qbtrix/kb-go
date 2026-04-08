@@ -20,6 +20,8 @@ go test -bench=. -benchmem
 
 # Usage
 kb build <path> --scope <name> --pattern "*.go,*.py,*.ts"
+kb prepare <path> --scope <name> --pattern "*.go"   # Agent mode: output prompts
+kb accept --scope <name>                             # Agent mode: read compiled articles from stdin
 kb search <query> --scope <name>
 kb ingest [file] --scope <name>
 kb show <id> --scope <name>

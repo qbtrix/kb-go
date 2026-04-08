@@ -139,10 +139,12 @@ git clone https://github.com/qbtrix/kb-go && cd kb-go && go build -o kb .
 
 Binaries for macOS and Linux (ARM and x86) on the [releases page](https://github.com/qbtrix/kb-go/releases).
 
-You need an Anthropic API key for building and ingesting:
+For standalone use, you need an Anthropic API key:
 ```bash
 export ANTHROPIC_API_KEY="sk-..."
 ```
+
+Running inside an AI agent (Claude Code, Cursor, Codex)? Use [agent mode](#agent-mode) instead — no API key needed.
 
 ## Quick start
 
@@ -217,11 +219,33 @@ kb stats --scope myapp --json
 kb show auth-service --scope myapp --json
 ```
 
+## Agent mode
+
+When kb runs inside an AI agent, the agent already has LLM access. Why make a separate API call? Agent mode lets the calling agent do the compilation — no API key, no extra cost.
+
+```bash
+# 1. Get compilation prompts (scans files, checks cache, outputs prompts)
+kb prepare ./src --scope myapp --pattern "*.go"
+
+# 2. Your agent processes each prompt using its own LLM
+
+# 3. Feed compiled results back
+echo '<compiled JSON>' | kb accept --scope myapp
+```
+
+`prepare` outputs JSON with an `items` array. Each item has `source`, `hash`, `raw_id`, and `prompt`. The agent compiles each prompt, then pipes the results (with `title`, `summary`, `content`, `concepts`, `categories`) to `accept`.
+
+Cache still works — unchanged files are skipped on subsequent `prepare` runs.
+
+This is how kb works as a skill inside Claude Code, Cursor, Codex, and other agents. The user's existing subscription handles the LLM work. No separate API key to manage.
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `kb build <path>` | Scan, parse AST, compile with LLM, build wiki |
+| `kb prepare <path>` | Output compilation prompts as JSON (agent mode) |
+| `kb accept` | Read compiled articles from stdin (agent mode) |
 | `kb search <query>` | BM25 search over articles |
 | `kb ingest [file]` | Ingest a file or piped stdin |
 | `kb show <id>` | Print a full article |

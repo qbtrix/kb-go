@@ -172,8 +172,56 @@ All files are human-readable. No database required.
 | `--json` | off | Machine-readable JSON output |
 | `--model` | `claude-haiku-4-5-20251001` | LLM model for compilation |
 
+## Agent Mode (no API key needed)
+
+When running inside an AI agent (Claude Code, Cursor, Codex, etc.), you can compile articles using the agent's own LLM instead of making separate API calls. This means no API key, no extra cost — the agent you're already paying for does the compilation.
+
+### Step 1: Get compilation prompts
+
+```bash
+kb prepare ./src --scope myapp --pattern "*.go,*.py,*.ts"
+```
+
+Returns JSON with a `items` array. Each item has a `prompt` field containing the compilation prompt, plus `source`, `hash`, and `raw_id` for tracking.
+
+### Step 2: Compile each prompt
+
+Process each item's `prompt` field using your own LLM. The prompt asks for JSON output with: `title`, `summary`, `content`, `concepts`, `categories`.
+
+### Step 3: Feed results back
+
+```bash
+echo '<json>' | kb accept --scope myapp
+```
+
+Input format (JSON object with articles array):
+```json
+{
+  "scope": "myapp",
+  "articles": [
+    {
+      "source": "main.go",
+      "hash": "from prepare output",
+      "raw_id": "from prepare output",
+      "title": "Main Server Entry Point",
+      "summary": "...",
+      "content": "...",
+      "concepts": ["http", "server"],
+      "categories": ["infrastructure"]
+    }
+  ]
+}
+```
+
+Also accepts a bare array or a single article object.
+
+### When to use agent mode vs direct build
+
+- **Agent mode** (`prepare` + `accept`): When running as a skill inside an AI agent. Uses the agent's LLM. No API key needed. Works with any LLM.
+- **Direct build**: When running standalone or in CI. Calls Anthropic API directly. Needs `ANTHROPIC_API_KEY`.
+
 ## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | For build/ingest/llm-lint | Anthropic API key |
+| `ANTHROPIC_API_KEY` | For build/ingest/llm-lint | Anthropic API key (not needed for prepare/accept) |

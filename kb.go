@@ -2,10 +2,10 @@
 // Headless, lean CLI. BM25 search over LLM-compiled articles.
 // No embeddings, no vectors. The LLM understands at write time, not query time.
 //
-// Changes: Added parallel compilation (goroutines), BM25 title+concept boosting,
-// multi-pattern support (*.go,*.py,*.ts), --lang flag for stdin, recompile command.
+// Changes: Added agent mode (prepare/accept) — lets calling agents like Claude Code,
+// Cursor, or Codex compile articles using their own LLM. No API key needed.
 //
-// Commands: build, search, ingest, show, list, stats, lint, recompile, watch, clear
+// Commands: build, prepare, accept, search, ingest, show, list, stats, lint, recompile, watch, clear
 // AST parsing: Go (stdlib go/ast), Python (regex), TypeScript/JS (regex)
 // Storage: markdown + JSON frontmatter (compatible with Python knowledge-base package)
 // External deps: fsnotify (watch mode only)
@@ -1690,6 +1690,236 @@ func cmdBuild(args []string) {
 	}
 }
 
+// cmdPrepare scans files and outputs compilation prompts as JSON.
+// Used in agent mode — the calling agent (Claude Code, Cursor, etc.)
+// processes each prompt using its own LLM, then pipes results to `kb accept`.
+// No API key needed.
+func cmdPrepare(args []string) {
+	if len(args) < 1 {
+		fatal("Usage: kb prepare <path> [--scope NAME] [--pattern GLOB] [--exclude GLOB]")
+	}
+
+	path := args[0]
+	scope := flagStr(args, "--scope", filepath.Base(path))
+	pattern := flagStr(args, "--pattern", "*.py")
+	exclude := flagStr(args, "--exclude", "")
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		fatal("Invalid path: %s", path)
+	}
+
+	ensureDirs(scope)
+	cache := loadCache(scope)
+
+	files := scanDir(absPath, pattern)
+	if exclude != "" {
+		files = excludeFiles(files, exclude)
+	}
+	if len(files) == 0 {
+		fatal("No files found matching %s in %s", pattern, absPath)
+	}
+
+	type prepareItem struct {
+		Source  string `json:"source"`
+		Hash   string `json:"hash"`
+		RawID  string `json:"raw_id"`
+		Prompt string `json:"prompt"`
+		IsTest bool   `json:"is_test"`
+	}
+
+	var items []prepareItem
+	var skipped int
+
+	for _, f := range files {
+		text, err := os.ReadFile(f)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: cannot read %s: %v\n", f, err)
+			continue
+		}
+
+		hash := contentHash(string(text))
+		relPath, _ := filepath.Rel(absPath, f)
+		if relPath == "" {
+			relPath = f
+		}
+
+		if entry, ok := cache.Files[relPath]; ok && entry.Hash == hash {
+			skipped++
+			continue
+		}
+
+		// Save raw doc
+		rawID := hash[:16]
+		raw := &RawDoc{
+			ID:          rawID,
+			SourceType:  "file",
+			Source:      relPath,
+			Filename:    filepath.Base(f),
+			ContentType: "text",
+			RawText:     string(text),
+			WordCount:   wordCount(string(text)),
+			IngestedAt:  time.Now().UTC().Format(time.RFC3339),
+		}
+		saveRawDoc(scope, raw)
+
+		// Build the same prompt compileLLM would use
+		codeMod := parseCode(f, string(text))
+		var contextBlock string
+		if codeMod != nil {
+			contextBlock = fmt.Sprintf("\nAST-extracted structure:\n```\n%s```\n\n", formatCodeContext(codeMod))
+		}
+
+		prompt := fmt.Sprintf(`Compile this source into a structured knowledge article.
+Source: %s
+%s
+Important:
+- Explain WHY code exists, not just what it does. For defensive patterns, edge cases, and workarounds, explain what failure they prevent.
+- Flag any TODO, FIXME, HACK, or incomplete implementations as "Known Gaps" in the content.
+- If you see idempotency guards, retry logic, or error handling, explain the failure scenario that motivated them.
+
+Output ONLY valid JSON with these exact keys:
+{"title":"descriptive title","summary":"2-3 sentence overview","content":"full markdown article with a Known Gaps section if applicable","concepts":["key","entities"],"categories":["broad","topics"]}
+
+Source text:
+%s`, relPath, contextBlock, string(text))
+
+		items = append(items, prepareItem{
+			Source: relPath,
+			Hash:   hash,
+			RawID:  rawID,
+			Prompt: prompt,
+			IsTest: isTestFile(f),
+		})
+	}
+
+	output := map[string]any{
+		"scope":   scope,
+		"items":   items,
+		"pending": len(items),
+		"cached":  skipped,
+		"total":   len(files),
+	}
+	printJSON(output)
+}
+
+// cmdAccept reads compiled article results from stdin and saves them.
+// Companion to `kb prepare` — accepts the agent's compilation output.
+// Input: JSON object with "scope" and "articles" array.
+// Each article: {"source", "hash", "raw_id", "title", "summary", "content", "concepts", "categories"}
+func cmdAccept(args []string) {
+	scope := flagStr(args, "--scope", "")
+
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fatal("Failed to read stdin: %v", err)
+	}
+
+	// Accept either a single object with "articles" array, or a bare array
+	type acceptArticle struct {
+		Source     string   `json:"source"`
+		Hash       string   `json:"hash"`
+		RawID      string   `json:"raw_id"`
+		Title      string   `json:"title"`
+		Summary    string   `json:"summary"`
+		Content    string   `json:"content"`
+		Concepts   []string `json:"concepts"`
+		Categories []string `json:"categories"`
+		IsTest     bool     `json:"is_test"`
+	}
+
+	var articles []acceptArticle
+
+	// Try wrapped format first: {"scope": "...", "articles": [...]}
+	var wrapped struct {
+		Scope    string          `json:"scope"`
+		Articles []acceptArticle `json:"articles"`
+	}
+	if err := json.Unmarshal(data, &wrapped); err == nil && len(wrapped.Articles) > 0 {
+		articles = wrapped.Articles
+		if scope == "" {
+			scope = wrapped.Scope
+		}
+	} else {
+		// Try bare array
+		if err := json.Unmarshal(data, &articles); err != nil {
+			// Try single object
+			var single acceptArticle
+			if err := json.Unmarshal(data, &single); err != nil {
+				fatal("Failed to parse input. Expected JSON with articles array, array, or single article object.")
+			}
+			articles = []acceptArticle{single}
+		}
+	}
+
+	if scope == "" {
+		scope = "default"
+	}
+
+	ensureDirs(scope)
+	cache := loadCache(scope)
+	saved := 0
+
+	for _, a := range articles {
+		if a.Title == "" || a.Content == "" {
+			fmt.Fprintf(os.Stderr, "Warning: skipping article for %s (missing title or content)\n", a.Source)
+			continue
+		}
+
+		slug := slugify(a.Title)
+		now := time.Now().UTC().Format(time.RFC3339)
+
+		article := &WikiArticle{
+			ID:           slug,
+			Title:        a.Title,
+			Summary:      a.Summary,
+			Content:      a.Content,
+			Concepts:     nilToEmpty(a.Concepts),
+			Categories:   nilToEmpty(a.Categories),
+			SourceDocs:   []string{a.RawID},
+			WordCount:    wordCount(a.Content),
+			CompiledAt:   now,
+			CompiledWith: "agent",
+			Version:      1,
+		}
+
+		// Auto-tag test files
+		if a.IsTest && !contains(article.Categories, "test") {
+			article.Categories = append(article.Categories, "test")
+		}
+
+		if existing, err := loadArticle(scope, article.ID); err == nil && existing != nil {
+			article.Version = existing.Version + 1
+		}
+		saveArticle(scope, article)
+
+		// Update cache
+		if a.Hash != "" && a.Source != "" {
+			cache.Files[a.Source] = CacheEntry{
+				Hash:       a.Hash,
+				ArticleID:  article.ID,
+				CompiledAt: now,
+			}
+		}
+		saved++
+	}
+
+	saveCache(scope, cache)
+
+	// Rebuild index
+	allArticles, _ := listArticles(scope)
+	idx := rebuildIndex(scope, allArticles)
+	saveIndex(scope, idx)
+	saveSearchIndex(scope, buildSearchIndex(allArticles))
+
+	output := map[string]any{
+		"accepted": saved,
+		"articles": len(allArticles),
+		"concepts": len(idx.Concepts),
+	}
+	printJSON(output)
+}
+
 func cmdSearch(args []string) {
 	if len(args) < 1 {
 		fatal("Usage: kb search <query> [--scope NAME] [--limit N] [--context] [--exclude-tags TAG]")
@@ -2542,6 +2772,10 @@ func main() {
 	switch cmd {
 	case "build":
 		cmdBuild(args)
+	case "prepare":
+		cmdPrepare(args)
+	case "accept":
+		cmdAccept(args)
 	case "search":
 		cmdSearch(args)
 	case "ingest":
@@ -2578,6 +2812,8 @@ Usage: kb <command> [options]
 
 Commands:
   build <path>           Scan files, compile with LLM, build KB
+  prepare <path>         Output compilation prompts as JSON (agent mode, no API key)
+  accept                 Read compiled articles from stdin (agent mode companion)
   search <query>         BM25 search over compiled articles
   ingest [file]          Ingest a file or stdin text
   show <article_id>      Show a full article
@@ -2605,7 +2841,13 @@ Examples:
   kb lint --scope myapp --llm
   kb watch ./src/ --scope myapp --pattern "*.go"
 
+Agent mode (no API key needed):
+  kb prepare ./src --scope myapp --pattern "*.go"   # Get prompts
+  echo '<compiled JSON>' | kb accept --scope myapp   # Feed results
+
 Environment:
-  ANTHROPIC_API_KEY      Required for LLM compilation and --llm lint
+  ANTHROPIC_API_KEY      Required for build/ingest/recompile and --llm lint
+                         Not needed for prepare/accept (agent mode)
 `)
+
 }

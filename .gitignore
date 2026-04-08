@@ -13,3 +13,4 @@ examples/output/bench-flask/
 
 # Benchmark results (regenerated)
 bench_results.json
+.claude
