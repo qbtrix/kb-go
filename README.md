@@ -287,6 +287,34 @@ kb stats --scope myapp --json
 kb show auth-service --scope myapp --json
 ```
 
+## Concept graph export
+
+Every wiki already has a concept graph built in — articles are connected via shared concepts. `kb graph` exports that graph in portable formats so you can visualize it with whatever tool you want.
+
+```bash
+# Overview: top N concepts by article count, edges for co-occurring concepts
+kb graph --scope myapp --limit 30
+
+# Focus on one concept (one-hop neighborhood)
+kb graph --scope myapp --concept "authentication"
+
+# Focus on one article and its concepts
+kb graph --scope myapp --article auth-service
+
+# Other formats
+kb graph --scope myapp --format dot | dot -Tpng > graph.png
+kb graph --scope myapp --format json > graph.json
+```
+
+Mermaid output works directly in GitHub READMEs, Obsidian, Notion, and anything that renders Mermaid. DOT output pipes into Graphviz. JSON is raw node/edge data for custom tooling.
+
+Flags:
+- `--format mermaid|dot|json` — output format (default `mermaid`)
+- `--concept <name>` — one-hop subgraph around a concept
+- `--article <id>` — article and all its concepts
+- `--limit N` — cap concepts in overview (default 30)
+- `--min-articles N` — only include concepts appearing in ≥N articles (default 2)
+
 ## Commands
 
 | Command | Description |
@@ -294,6 +322,7 @@ kb show auth-service --scope myapp --json
 | `kb build <path>` | Scan, parse AST, compile with LLM, build wiki |
 | `kb prepare <path>` | Output compilation prompts as JSON (agent mode) |
 | `kb accept` | Read compiled articles from stdin (agent mode) |
+| `kb graph` | Export concept graph (mermaid, dot, or json) |
 | `kb search <query>` | BM25 search over articles |
 | `kb ingest [file]` | Ingest a file or piped stdin |
 | `kb show <id>` | Print a full article |

@@ -107,6 +107,26 @@ Watches for file changes and rebuilds automatically. Uses content hashing so onl
 kb watch ./src/ --scope myproject --pattern "*.py"
 ```
 
+### Concept graph export
+
+Export the wiki's concept graph as Mermaid, Graphviz DOT, or JSON:
+
+```bash
+# Top concepts and their connections (default mermaid)
+kb graph --scope myproject --limit 30
+
+# One-hop subgraph around a concept
+kb graph --scope myproject --concept "authentication"
+
+# Article's concepts
+kb graph --scope myproject --article auth-service
+
+# Render with Graphviz
+kb graph --scope myproject --format dot | dot -Tpng > graph.png
+```
+
+Mermaid output drops directly into GitHub, Obsidian, or Notion.
+
 ### Clear
 
 ```bash
