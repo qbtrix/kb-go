@@ -315,6 +315,87 @@ Flags:
 - `--limit N` — cap concepts in overview (default 30)
 - `--min-articles N` — only include concepts appearing in ≥N articles (default 2)
 
+## Pairing with Soul Protocol
+
+kb and [Soul Protocol](https://github.com/qbtrix/soul-protocol) solve different halves of the same problem. Wire them together in your agent pipeline and you get something most AI tools don't have: memory of what happened plus a structured view of what exists now.
+
+### The split
+
+| | kb | soul |
+|---|---|---|
+| What it stores | Articles compiled from sources | Episodic, semantic, procedural memory tied to an agent's identity |
+| Where content comes from | Files (code, docs, text) | Conversations, decisions, experiences |
+| Regenerable? | Yes — re-run `kb build` | No — memory is earned, not recomputed |
+| Decays? | Never | Yes — via ACT-R activation and significance gating |
+| Search | BM25 over compiled articles | Relevance + recency + importance weighting |
+| Portable format | Markdown + JSON frontmatter | `.soul` ZIP file |
+
+kb answers "how does X work?" from the current codebase. soul answers "what did we decide about X, and why?" from accumulated conversations.
+
+### When to use which
+
+- **Ask kb when** the answer is derivable from source files: implementation details, architecture, API shapes, which module does what
+- **Ask soul when** the answer requires remembering a conversation: past decisions, user preferences, relationship context, why something was built a certain way
+- **Ask both when** you want the full picture: *why was this built (soul) AND how does it work now (kb)*
+
+### The integration pattern
+
+Keep both as standalone tools. Bridge them in your agent pipeline, not in their code. The cleanest place is wherever your agent builds its system prompt — inject soul-recalled memories alongside kb-searched articles in the same context-building step.
+
+Rough shape (pseudocode):
+
+```python
+# In your agent's context builder, run both queries in parallel
+soul_memories = await soul.recall(query, limit=5)
+kb_articles = subprocess.run(["kb", "search", query, "--scope", project, "--context"])
+
+# Merge into the system prompt with clear framing
+system_prompt += f"""
+## What we've discussed before (from memory)
+{format_soul_memories(soul_memories)}
+
+## What the codebase currently says (from knowledge base)
+{kb_articles.stdout}
+"""
+```
+
+In PocketPaw, this belongs in `src/pocketpaw/bootstrap/context_builder.py` as a new injection block alongside the existing `memory_context` and soul provider. One extra step in the pipeline, no new CLI, no tight coupling.
+
+### Workflow patterns
+
+**1. Pipe soul memories into kb**
+
+Make episodic memories searchable alongside code articles. Useful when you want BM25 search to surface past conversations by concept, not just by date.
+
+```bash
+# Pull recent important memories from soul, compile into kb as structured articles
+soul recall .soul/my-agent.soul --recent 20 --min-importance 7 --format text \
+  | kb ingest --scope my-sessions --source "soul-$(date +%Y-%m-%d)"
+```
+
+Now `kb search "authentication decisions"` returns both "this is how auth works now" (code article) and "here's when we decided JWT and why" (compiled soul memory).
+
+**2. Soul references kb articles**
+
+Instead of storing long facts in soul, store short memories with kb pointers. Soul stays lean, the agent still has access to the rich structured knowledge.
+
+```bash
+# Soul stores the decision, kb has the details
+soul remember .soul/my-agent.soul "Decided JWT auth. Details: kb://paw-cloud/auth-core" --importance 8
+```
+
+On recall, your agent sees the memory, follows the `kb://` pointer, and runs `kb show auth-core --scope paw-cloud` to get the current state.
+
+**3. Unified context injection**
+
+Both queries run on every agent request. The agent gets what was decided (soul) plus what the code currently looks like (kb). This is the pattern that matters most — it's the difference between an agent that feels like a coworker versus one that has to be re-briefed every session.
+
+### Why not merge them into one tool?
+
+Different failure modes. kb needs to rebuild from source whenever code changes — it's a cache of your files. Soul can't be rebuilt — losing a `.soul` file means losing experiences that only happened once. Keeping them separate means each one can be backed up, versioned, shared, or deleted independently. The 6MB binary stays a 6MB binary. The `.soul` file stays portable across platforms.
+
+The bridge is thin by design. Any agent pipeline can wire them together in ~20 lines.
+
 ## Commands
 
 | Command | Description |
