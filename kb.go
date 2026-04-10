@@ -3113,6 +3113,8 @@ func main() {
 		cmdRecompile(args)
 	case "watch":
 		cmdWatch(args)
+	case "convo":
+		cmdConvo(args)
 	case "version":
 		fmt.Println("kb v0.1.0")
 	case "help", "--help", "-h":
@@ -3143,6 +3145,7 @@ Commands:
   recompile <id|--all>   Force recompile article(s) from raw source
   clear                  Delete all knowledge for a scope
   watch <path>           Auto-rebuild on file changes
+  convo <sub>            Conversation mode (ingest, search, list)
   version                Show version
 
 Global flags:
