@@ -180,7 +180,13 @@ func normalizeRole(role string) string {
 }
 
 func makeSession(turns []ConvoTurn, source string) *ConvoSession {
-	h := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s", source, len(turns), time.Now().String())))
+	// Content-based hash so ingesting the same file twice is idempotent.
+	var buf strings.Builder
+	for _, t := range turns {
+		buf.WriteString(t.Role)
+		buf.WriteString(t.Content)
+	}
+	h := sha256.Sum256([]byte(buf.String()))
 	return &ConvoSession{
 		ID:       fmt.Sprintf("convo-%x", h[:8]),
 		Source:   source,
@@ -243,8 +249,14 @@ func extractEntities(text string) []ExtractedEntity {
 	freq := map[string]int{}
 
 	words := strings.Fields(text)
+	skip := 0 // words consumed by multi-word entity detection
 
 	for i, word := range words {
+		if skip > 0 {
+			skip--
+			continue
+		}
+
 		clean := strings.Trim(word, ".,;:!?\"'()[]{}")
 
 		// Technology names (case-insensitive match)
@@ -270,15 +282,18 @@ func extractEntities(text string) []ExtractedEntity {
 			if !atSentenceStart {
 				// Check for multi-word proper nouns (e.g., "Acme Corp", "New York")
 				entity := clean
+				consumed := 0
 				for j := i + 1; j < len(words) && j < i+4; j++ {
 					next := strings.Trim(words[j], ".,;:!?\"'()[]{}")
 					nextLower := strings.ToLower(next)
 					if len(next) >= 2 && unicode.IsUpper(rune(next[0])) && !commonWords[nextLower] {
 						entity += " " + next
+						consumed++
 					} else {
 						break
 					}
 				}
+				skip = consumed // skip inner words so they aren't double-counted
 				if !commonWords[strings.ToLower(entity)] {
 					eType := guessEntityType(entity)
 					counts[entity] = eType
@@ -680,8 +695,13 @@ func cmdConvoIngest(args []string) {
 	// Save raw session
 	ensureDirs(scope)
 	rawPath := filepath.Join(scopeDir(scope), "raw", session.ID+".json")
-	rawData, _ := json.MarshalIndent(session, "", "  ")
-	os.WriteFile(rawPath, rawData, 0o644)
+	rawData, err := json.MarshalIndent(session, "", "  ")
+	if err != nil {
+		fatal("Marshal session: %v", err)
+	}
+	if err := os.WriteFile(rawPath, rawData, 0o644); err != nil {
+		fatal("Save raw session: %v", err)
+	}
 
 	// Save articles
 	for _, a := range articles {

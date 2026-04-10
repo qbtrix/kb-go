@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -131,7 +132,10 @@ func TestVectorIndex_Search_TopK(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		v := make([]float32, 4)
 		v[i%4] = 1
-		idx.Add("doc"+string(rune('A'+i%26)), v)
+		idx.Add(fmt.Sprintf("doc%d", i), v)
+	}
+	if idx.Len() != 100 {
+		t.Fatalf("want 100 entries, got %d", idx.Len())
 	}
 
 	results := idx.Search([]float32{1, 0, 0, 0}, 5)

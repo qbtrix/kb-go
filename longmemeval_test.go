@@ -12,6 +12,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -209,24 +210,7 @@ func ln(x float64) float64 {
 	if x <= 0 {
 		return 0
 	}
-	// Use the same log as BM25 in kb.go
-	result := 0.0
-	for x >= 2 {
-		result += 0.6931471805599453 // ln(2)
-		x /= 2
-	}
-	// Taylor series for ln(1+y) where y = x-1, |y| < 1
-	y := x - 1
-	term := y
-	for i := 1; i <= 20; i++ {
-		if i%2 == 1 {
-			result += term / float64(i)
-		} else {
-			result -= term / float64(i)
-		}
-		term *= y
-	}
-	return result
+	return math.Log(x)
 }
 
 // recallAtK checks if ANY of the correct session IDs appear in the top-K ranked results.
