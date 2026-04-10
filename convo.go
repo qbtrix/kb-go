@@ -567,7 +567,11 @@ func generateConvoArticles(session *ConvoSession, clusters []TopicCluster, decis
 				continue
 			}
 			turn := session.Turns[idx]
-			content.WriteString(fmt.Sprintf("**%s:** %s\n\n", strings.Title(turn.Role), turn.Content))
+			role := turn.Role
+			if len(role) > 0 {
+				role = strings.ToUpper(role[:1]) + role[1:]
+			}
+			content.WriteString(fmt.Sprintf("**%s:** %s\n\n", role, turn.Content))
 		}
 
 		// Extracted decisions for this cluster
