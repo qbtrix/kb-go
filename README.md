@@ -1,6 +1,6 @@
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Release](https://img.shields.io/github/v/release/qbtrix/kb-go?color=blue)](https://github.com/qbtrix/kb-go/releases)
-[![Tests](https://img.shields.io/badge/tests-37%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-69%20passing-brightgreen)](#testing)
 [![Benchmarks](https://img.shields.io/badge/benchmarks-10-blue)](#raw-throughput)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Skills.sh](https://img.shields.io/badge/skills.sh-kb-purple)](https://skills.sh)
@@ -94,6 +94,34 @@ Cold builds run 5 compilations at a time. Warm builds check SHA256 hashes and sk
 22 for 22. BM25 with title weighting (3x) and concept weighting (2x).
 
 Test queries: [`examples/golden/search_relevance.json`](examples/golden/search_relevance.json)
+
+### LongMemEval (external benchmark)
+
+[LongMemEval](https://github.com/xiaowu0162/LongMemEval) is a 500-question benchmark for long-term conversation memory retrieval (ICLR 2025). Each question has ~50 conversation sessions as a haystack and you need to find the one that contains the answer.
+
+We ran kb's BM25 search over raw session text (no wiki compilation, just tokenize and score):
+
+| Method | R@1 | R@5 | R@10 | Time | Dependencies |
+|--------|-----|-----|------|------|-------------|
+| **kb BM25** | 85.0% | **95.0%** | 96.6% | 0.5s | zero |
+| MemPalace (raw mode) | — | 96.6% | — | minutes | ChromaDB + ONNX + sentence-transformers |
+
+95% recall at 5 with nothing but string tokenization and BM25 scoring. The 1.6-point gap to MemPalace is the gap between a full ML pipeline and a single Go binary.
+
+Breakdown by question type:
+
+| Type | R@5 | Notes |
+|------|-----|-------|
+| knowledge-update | 100% | BM25 handles fact changes well |
+| single-session-user | 98.6% | Strong keyword overlap |
+| multi-session | 95.5% | Cross-session works via shared entities |
+| temporal-reasoning | 95.5% | Date-adjacent keywords help |
+| single-session-assistant | 92.9% | Harder — user-only corpus, assistant answers implicit |
+| single-session-preference | 76.7% | Semantic gap — "cocktail" vs "gin and tonic" |
+
+Reproduce: `go test -v -run TestLongMemEval_BM25_Small -timeout 120s .` (requires downloading the dataset from [HuggingFace](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)).
+
+Full benchmark harness and error analysis in [`benchmarks/longmemeval/`](benchmarks/longmemeval/).
 
 ### Raw throughput
 
@@ -412,6 +440,9 @@ The bridge is thin by design. Any agent pipeline can wire them together in ~20 l
 | `kb lint` | Structural checks; add `--llm` for deeper analysis |
 | `kb recompile <id>` | Recompile from raw source (`--all` for everything) |
 | `kb watch <path>` | Auto-rebuild on file changes |
+| `kb convo ingest <file>` | Parse a conversation transcript, extract entities/decisions/topics, create wiki articles |
+| `kb convo search <query>` | Search conversation articles |
+| `kb convo list` | List conversation articles |
 | `kb clear` | Wipe all data for a scope |
 
 ## Flags
@@ -460,7 +491,7 @@ Articles are plain markdown with JSON frontmatter. `cat` them, `grep` them, comm
 
 ## Architecture
 
-One file: [`kb.go`](kb.go), ~2,850 lines. One dependency: `fsnotify` for watch mode.
+Three files: [`kb.go`](kb.go) (core, ~2,900 lines), [`convo.go`](convo.go) (conversation mode, ~530 lines), [`vsearch.go`](vsearch.go) (vector search primitives, ~140 lines). One dependency: `fsnotify` for watch mode.
 
 | Component | ~Lines | What it does |
 |-----------|--------|-------------|
@@ -475,7 +506,7 @@ One file: [`kb.go`](kb.go), ~2,850 lines. One dependency: `fsnotify` for watch m
 
 ## Testing
 
-37 unit tests, 10 performance benchmarks. No test dependencies beyond Go stdlib.
+69 unit tests, 13 performance benchmarks. No test dependencies beyond Go stdlib.
 
 ```bash
 go test -v ./...       # Unit tests

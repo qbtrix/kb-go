@@ -14,3 +14,38 @@ examples/output/bench-flask/
 # Benchmark results (regenerated)
 bench_results.json
 .claude
+
+# Benchmark data (download from HuggingFace)
+benchmarks/longmemeval/longmemeval_*.json
+benchmarks/longmemeval/go_bm25_rankings.json
+benchmarks/longmemeval/benchmark_results.json
+benchmarks/longmemeval/error_analysis.json
+
+# Agent skill symlinks (created by npx skills)
+.adal/
+.agents/
+.augment/
+.codebuddy/
+.commandcode/
+.continue/
+.crush/
+.factory/
+.goose/
+.iflow/
+.junie/
+.kilocode/
+.kiro/
+.kode/
+.mcpjam/
+.mux/
+.neovate/
+.openhands/
+.pochi/
+.qoder/
+.qwen/
+.roo/
+.trae/
+.vibe/
+.windsurf/
+.zencoder/
+skills/

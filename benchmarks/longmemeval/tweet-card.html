@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 40px;
+  }
+  .card {
+    width: 1200px;
+    height: 675px;
+    background: #161b22;
+    border-radius: 16px;
+    border: 1px solid #30363d;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .header {
+    padding: 32px 40px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    border-bottom: 1px solid #21262d;
+  }
+  .header .logo {
+    font-size: 32px;
+    font-weight: 800;
+    color: #58a6ff;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    letter-spacing: -1px;
+  }
+  .header .tag {
+    font-size: 13px;
+    color: #8b949e;
+    background: #21262d;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-weight: 500;
+  }
+  .header .size {
+    margin-left: auto;
+    font-size: 14px;
+    color: #7ee787;
+    font-family: monospace;
+    font-weight: 600;
+  }
+
+  .body { display: flex; flex: 1; }
+
+  /* Left: architecture + graph */
+  .left {
+    flex: 1;
+    padding: 28px 36px;
+    border-right: 1px solid #21262d;
+  }
+  .section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #8b949e;
+    margin-bottom: 16px;
+    font-weight: 600;
+  }
+
+  /* Pipeline */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+  }
+  .pipe-node {
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .pipe-node.source { border-color: #da3633; color: #f85149; }
+  .pipe-node.llm { border-color: #d29922; color: #e3b341; }
+  .pipe-node.wiki { border-color: #3fb950; color: #7ee787; }
+  .pipe-node.search { border-color: #58a6ff; color: #79c0ff; }
+  .pipe-arrow { color: #484f58; font-size: 18px; }
+
+  /* Concept graph */
+  .graph-container {
+    position: relative;
+    height: 220px;
+    margin-top: 8px;
+  }
+  .graph-node {
+    position: absolute;
+    background: #21262d;
+    border: 2px solid #30363d;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: #e6edf3;
+    z-index: 2;
+  }
+  .graph-node.primary {
+    width: 80px; height: 80px;
+    border-color: #58a6ff;
+    background: #161b22;
+    font-size: 12px;
+  }
+  .graph-node.secondary {
+    width: 62px; height: 62px;
+    border-color: #3fb950;
+    font-size: 10px;
+  }
+  .graph-node.tertiary {
+    width: 50px; height: 50px;
+    border-color: #d29922;
+    font-size: 9px;
+  }
+  svg.graph-lines {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 1;
+  }
+  svg.graph-lines line {
+    stroke: #30363d;
+    stroke-width: 3;
+  }
+
+  /* Right: benchmark */
+  .right {
+    width: 420px;
+    padding: 28px 36px;
+  }
+
+  /* Bar chart */
+  .bench-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 14px;
+    gap: 10px;
+  }
+  .bench-label {
+    width: 90px;
+    font-size: 12px;
+    color: #8b949e;
+    text-align: right;
+    flex-shrink: 0;
+    font-weight: 500;
+  }
+  .bench-bar-bg {
+    flex: 1;
+    height: 28px;
+    background: #21262d;
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+  }
+  .bench-bar {
+    height: 100%;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    padding-left: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #0d1117;
+    transition: width 1s ease;
+  }
+  .bench-bar.ours { background: linear-gradient(90deg, #238636, #7ee787); }
+  .bench-bar.theirs { background: linear-gradient(90deg, #6e40c9, #bc8cff); }
+
+  .bench-meta {
+    font-size: 11px;
+    color: #8b949e;
+    width: 60px;
+    text-align: right;
+    flex-shrink: 0;
+    font-family: monospace;
+  }
+
+  /* Stats row */
+  .stats {
+    display: flex;
+    gap: 16px;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid #21262d;
+  }
+  .stat {
+    flex: 1;
+    text-align: center;
+  }
+  .stat-value {
+    font-size: 22px;
+    font-weight: 800;
+    color: #7ee787;
+    font-family: monospace;
+  }
+  .stat-value.blue { color: #58a6ff; }
+  .stat-value.amber { color: #e3b341; }
+  .stat-label {
+    font-size: 10px;
+    color: #8b949e;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 4px;
+  }
+
+  /* Deps comparison */
+  .deps {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid #21262d;
+  }
+  .dep-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 12px;
+  }
+  .dep-icon { font-size: 14px; }
+  .dep-name { color: #8b949e; flex: 1; }
+  .dep-tag {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+  .dep-tag.none { background: #0d1117; color: #7ee787; border: 1px solid #238636; }
+  .dep-tag.required { background: #0d1117; color: #f85149; border: 1px solid #da3633; }
+
+  .footer {
+    padding: 16px 40px;
+    border-top: 1px solid #21262d;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .footer-left {
+    font-size: 12px;
+    color: #8b949e;
+  }
+  .footer-left a { color: #58a6ff; text-decoration: none; }
+  .footer-right {
+    font-size: 11px;
+    color: #484f58;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <div class="logo">kb-go</div>
+    <div class="tag">Karpathy's LLM Wiki as a CLI</div>
+    <div class="size">6MB binary &middot; 1 dep &middot; MIT</div>
+  </div>
+
+  <div class="body">
+    <div class="left">
+      <div class="section-label">Pipeline</div>
+      <div class="pipeline">
+        <div class="pipe-node source">any text</div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-node llm">LLM compile</div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-node wiki">wiki articles</div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-node search">BM25 search</div>
+      </div>
+
+      <div class="section-label">Concept graph</div>
+      <div class="graph-container">
+        <svg class="graph-lines">
+          <!-- auth hub connections -->
+          <line x1="220" y1="95" x2="95" y2="35"/>
+          <line x1="220" y1="95" x2="85" y2="145"/>
+          <line x1="220" y1="95" x2="350" y2="40"/>
+          <line x1="220" y1="95" x2="370" y2="145"/>
+          <line x1="220" y1="95" x2="155" y2="195"/>
+          <!-- API hub connections -->
+          <line x1="460" y1="90" x2="350" y2="40"/>
+          <line x1="460" y1="90" x2="370" y2="145"/>
+          <line x1="460" y1="90" x2="545" y2="40"/>
+          <line x1="460" y1="90" x2="560" y2="155"/>
+          <!-- cross links -->
+          <line x1="95" y1="35" x2="85" y2="145"/>
+          <line x1="350" y1="40" x2="370" y2="145"/>
+          <line x1="350" y1="40" x2="545" y2="40"/>
+          <line x1="370" y1="145" x2="560" y2="155"/>
+          <line x1="155" y1="195" x2="85" y2="145"/>
+          <line x1="155" y1="195" x2="290" y2="195"/>
+          <line x1="290" y1="195" x2="370" y2="145"/>
+          <line x1="560" y1="155" x2="620" y2="70"/>
+          <line x1="545" y1="40" x2="620" y2="70"/>
+        </svg>
+        <!-- primary hubs -->
+        <div class="graph-node primary" style="left:180px;top:55px;">auth</div>
+        <div class="graph-node primary" style="left:420px;top:50px;">API</div>
+        <!-- secondary -->
+        <div class="graph-node secondary" style="left:64px;top:4px;">JWT</div>
+        <div class="graph-node secondary" style="left:54px;top:114px;">OAuth</div>
+        <div class="graph-node secondary" style="left:319px;top:9px;">Postgres</div>
+        <div class="graph-node secondary" style="left:339px;top:114px;">sessions</div>
+        <div class="graph-node secondary" style="left:514px;top:9px;">GraphQL</div>
+        <!-- tertiary -->
+        <div class="graph-node tertiary" style="left:130px;top:170px;">RBAC</div>
+        <div class="graph-node tertiary" style="left:265px;top:170px;">migrate</div>
+        <div class="graph-node tertiary" style="left:535px;top:130px;">Redis</div>
+        <div class="graph-node tertiary" style="left:595px;top:45px;">cache</div>
+      </div>
+    </div>
+
+    <div class="right">
+      <div class="section-label">LongMemEval &middot; 500 questions &middot; R@5</div>
+
+      <div class="bench-row">
+        <div class="bench-label">kb (BM25)</div>
+        <div class="bench-bar-bg">
+          <div class="bench-bar ours" style="width:95%">95.0%</div>
+        </div>
+        <div class="bench-meta">0.5s</div>
+      </div>
+
+      <div class="bench-row">
+        <div class="bench-label" style="font-size:11px">MemPalace</div>
+        <div class="bench-bar-bg">
+          <div class="bench-bar theirs" style="width:96.6%">96.6%</div>
+        </div>
+        <div class="bench-meta" style="color:#f85149;">~min</div>
+      </div>
+
+      <div style="font-size:11px;color:#8b949e;text-align:center;margin-top:4px;">
+        1.6 points apart. One needs an ML pipeline. One doesn't.
+      </div>
+
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-value">0</div>
+          <div class="stat-label">Embeddings</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value blue">0</div>
+          <div class="stat-label">Vector DB</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value amber">0.5s</div>
+          <div class="stat-label">500 queries</div>
+        </div>
+      </div>
+
+      <div class="deps">
+        <div class="section-label" style="margin-bottom:10px">Dependencies</div>
+        <div class="dep-row">
+          <div class="dep-name">Embedding model</div>
+          <div class="dep-tag none">kb: none</div>
+          <div class="dep-tag required">MP: ONNX</div>
+        </div>
+        <div class="dep-row">
+          <div class="dep-name">Vector database</div>
+          <div class="dep-tag none">kb: none</div>
+          <div class="dep-tag required">MP: ChromaDB</div>
+        </div>
+        <div class="dep-row">
+          <div class="dep-name">ML runtime</div>
+          <div class="dep-tag none">kb: none</div>
+          <div class="dep-tag required">MP: PyTorch</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-left">
+      <a href="https://github.com/qbtrix/kb-go">github.com/qbtrix/kb-go</a>
+      &nbsp;&middot;&nbsp; Understanding happens at write time, not query time
+    </div>
+    <div class="footer-right">LongMemEval benchmark (xiaowu0162/LongMemEval, ICLR 2025)</div>
+  </div>
+</div>
+</body>
+</html>
