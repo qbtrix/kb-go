@@ -387,7 +387,7 @@ system_prompt += f"""
 """
 ```
 
-In PocketPaw, this belongs in `src/pocketpaw/bootstrap/context_builder.py` as a new injection block alongside the existing `memory_context` and soul provider. One extra step in the pipeline, no new CLI, no tight coupling.
+For example, in any agent framework with a context-builder step — PocketPaw's `src/pocketpaw/bootstrap/context_builder.py` is one such place — drop the kb lookup alongside existing memory/soul providers. One extra step in the pipeline, no new CLI, no tight coupling.
 
 ### Workflow patterns
 
@@ -409,10 +409,10 @@ Instead of storing long facts in soul, store short memories with kb pointers. So
 
 ```bash
 # Soul stores the decision, kb has the details
-soul remember .soul/my-agent.soul "Decided JWT auth. Details: kb://paw-cloud/auth-core" --importance 8
+soul remember .soul/my-agent.soul "Decided JWT auth. Details: kb://myapp/auth-core" --importance 8
 ```
 
-On recall, your agent sees the memory, follows the `kb://` pointer, and runs `kb show auth-core --scope paw-cloud` to get the current state.
+On recall, your agent sees the memory, follows the `kb://` pointer, and runs `kb show auth-core --scope myapp` to get the current state.
 
 **3. Unified context injection**
 

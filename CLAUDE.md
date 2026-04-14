@@ -9,7 +9,7 @@ Headless knowledge base engine. Single-file Go CLI, no frameworks.
 - `kb_bench_test.go` — 10 performance benchmarks
 - `bench.sh` — Integration benchmark script (full pipeline with LLM)
 - `SKILL.md` — skills.sh distribution
-- `go.mod` — Module: `github.com/pocketpaw/kb-go`, one dep: fsnotify
+- `go.mod` — Module: `github.com/qbtrix/kb-go`, one dep: fsnotify
 
 ## Commands
 
