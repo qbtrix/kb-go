@@ -3,7 +3,7 @@ name: kb
 description: Build searchable knowledge bases from any source — codebases, docs, markdown, text. LLM-compiled articles with BM25 search. No embeddings, no vectors. Use when the user needs to build, search, ingest, or manage a knowledge base.
 compatibility: Requires Go 1.21+ or pre-built kb binary. ANTHROPIC_API_KEY env var for LLM compilation.
 metadata:
-  author: pocketpaw
+  author: qbtrix
   version: 0.1.0
   tags: knowledge-base search bm25 llm documentation
 ---
@@ -138,16 +138,16 @@ kb clear --scope myproject
 ### Build a project wiki from scratch
 
 ```bash
-kb build ./ee/cloud --scope paw-cloud
-kb lint --scope paw-cloud
-kb search "authentication" --scope paw-cloud
+kb build ./ee/cloud --scope myapp
+kb lint --scope myapp
+kb search "authentication" --scope myapp
 ```
 
 ### Incremental updates after code changes
 
 ```bash
 # Only changed files get recompiled (content hash cache)
-kb build ./ee/cloud --scope paw-cloud
+kb build ./ee/cloud --scope myapp
 ```
 
 ### Feed extracted content from external sources
