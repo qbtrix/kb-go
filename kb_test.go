@@ -1,6 +1,8 @@
 // kb_test.go — Tests for the kb knowledge base engine.
 // Covers: storage, BM25 search, content hashing, caching, slugify, tokenize,
 // frontmatter parsing, index building, structural lint.
+// Updated: added TestFrontmatterAudienceDepthRoundTrip, TestFrontmatterLoadBackwardCompat,
+// TestCompilePromptTerseModeShorterTarget for --terse flag and audience/depth frontmatter.
 package main
 
 import (
@@ -1040,5 +1042,121 @@ func TestEscapeMermaid(t *testing.T) {
 	}
 	if got := escapeMermaid("line1\nline2"); got != "line1 line2" {
 		t.Errorf("escapeMermaid newline = %q", got)
+	}
+}
+
+// --- Terse flag + audience/depth frontmatter ---
+
+// TestFrontmatterAudienceDepthRoundTrip verifies that Audience, Depth, and
+// TargetWords survive a save→load round-trip intact.
+func TestFrontmatterAudienceDepthRoundTrip(t *testing.T) {
+	scope := "test-terse-rt-" + contentHash(t.Name())[:8]
+	defer func() { os.RemoveAll(scopeDir(scope)) }()
+
+	original := &WikiArticle{
+		ID:           "terse-article",
+		Title:        "Terse Article",
+		Summary:      "Short overview",
+		Content:      "# Overview\n\nWhat it does.",
+		Concepts:     []string{"auth"},
+		Categories:   []string{"code"},
+		SourceDocs:   []string{"raw001"},
+		WordCount:    5,
+		CompiledAt:   "2026-04-23T10:00:00Z",
+		CompiledWith: "test",
+		Version:      1,
+		Audience:     "agent",
+		Depth:        "overview",
+		TargetWords:  150,
+	}
+
+	if err := saveArticle(scope, original); err != nil {
+		t.Fatalf("saveArticle failed: %v", err)
+	}
+
+	loaded, err := loadArticle(scope, "terse-article")
+	if err != nil {
+		t.Fatalf("loadArticle failed: %v", err)
+	}
+
+	if loaded.Audience != "agent" {
+		t.Errorf("Audience = %q, want %q", loaded.Audience, "agent")
+	}
+	if loaded.Depth != "overview" {
+		t.Errorf("Depth = %q, want %q", loaded.Depth, "overview")
+	}
+	if loaded.TargetWords != 150 {
+		t.Errorf("TargetWords = %d, want 150", loaded.TargetWords)
+	}
+}
+
+// TestFrontmatterLoadBackwardCompat verifies that old .md files without
+// audience/depth/target_words fields load with sensible defaults.
+func TestFrontmatterLoadBackwardCompat(t *testing.T) {
+	scope := "test-terse-compat-" + contentHash(t.Name())[:8]
+	defer func() { os.RemoveAll(scopeDir(scope)) }()
+
+	// Write a .md file that looks like it was produced before the terse feature.
+	oldFmt := `---
+{
+  "title": "Old Article",
+  "summary": "A legacy summary",
+  "concepts": ["legacy"],
+  "categories": ["code"],
+  "source_docs": ["abc123"],
+  "backlinks": [],
+  "word_count": 100,
+  "compiled_at": "2026-01-01T00:00:00Z",
+  "compiled_with": "claude-haiku-4-5-20251001",
+  "version": 1
+}
+---
+
+# Old Article
+
+This article predates the terse feature.`
+
+	ensureDirs(scope)
+	wikiDir := filepath.Join(scopeDir(scope), "wiki")
+	os.MkdirAll(wikiDir, 0o755)
+	if err := os.WriteFile(filepath.Join(wikiDir, "old-article.md"), []byte(oldFmt), 0o644); err != nil {
+		t.Fatalf("failed to write test fixture: %v", err)
+	}
+
+	loaded, err := loadArticle(scope, "old-article")
+	if err != nil {
+		t.Fatalf("loadArticle failed: %v", err)
+	}
+
+	// Defaults: audience=human, depth=deep, target_words=500
+	if loaded.Audience != "human" {
+		t.Errorf("Audience = %q, want %q (default)", loaded.Audience, "human")
+	}
+	if loaded.Depth != "deep" {
+		t.Errorf("Depth = %q, want %q (default)", loaded.Depth, "deep")
+	}
+	if loaded.TargetWords != 500 {
+		t.Errorf("TargetWords = %d, want 500 (default)", loaded.TargetWords)
+	}
+}
+
+// TestCompilePromptTerseModeShorterTarget confirms buildCompilePrompt varies
+// the word-count target based on the terse flag.
+func TestCompilePromptTerseModeShorterTarget(t *testing.T) {
+	tersePrompt := buildCompilePrompt("src/main.go", "", "// some code", true)
+	defaultPrompt := buildCompilePrompt("src/main.go", "", "// some code", false)
+
+	if !strings.Contains(tersePrompt, "120-180 words") {
+		t.Errorf("terse prompt should contain '120-180 words', got:\n%s", tersePrompt)
+	}
+	if strings.Contains(tersePrompt, "400-800") {
+		t.Errorf("terse prompt should not mention '400-800' word range")
+	}
+
+	if !strings.Contains(defaultPrompt, "400-800 words") {
+		t.Errorf("default prompt should contain '400-800 words', got:\n%s", defaultPrompt)
+	}
+	if strings.Contains(defaultPrompt, "120-180") {
+		t.Errorf("default prompt should not mention terse range '120-180'")
 	}
 }
