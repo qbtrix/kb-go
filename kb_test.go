@@ -1,12 +1,18 @@
 // kb_test.go — Tests for the kb knowledge base engine.
 // Covers: storage, BM25 search, content hashing, caching, slugify, tokenize,
 // frontmatter parsing, index building, structural lint.
-// Updated: added TestFrontmatterAudienceDepthRoundTrip, TestFrontmatterLoadBackwardCompat,
-// TestCompilePromptTerseModeShorterTarget for --terse flag and audience/depth frontmatter.
+// Updated: added --since flag tests (TestBuildSinceRefSkipsUnchanged,
+// TestBuildSinceNonGitFallback, TestChangedFilesSinceRef,
+// TestChangedFilesSinceRefRejectsOptionLikeRef,
+// TestChangedFilesSinceRefNonexistentRef).
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1045,6 +1051,7 @@ func TestEscapeMermaid(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 // --- Terse flag + audience/depth frontmatter ---
 
 // TestFrontmatterAudienceDepthRoundTrip verifies that Audience, Depth, and
@@ -1158,5 +1165,187 @@ func TestCompilePromptTerseModeShorterTarget(t *testing.T) {
 	}
 	if strings.Contains(defaultPrompt, "120-180") {
 		t.Errorf("default prompt should not mention terse range '120-180'")
+	}
+}
+
+// --- --since flag ---
+
+// initGitRepo initialises a bare git repo in dir so we can commit files.
+// Returns an error if git is not available on PATH.
+func initGitRepo(t *testing.T, dir string) error {
+	t.Helper()
+	cmds := [][]string{
+		{"git", "init", dir},
+		{"git", "-C", dir, "config", "user.email", "test@example.com"},
+		{"git", "-C", dir, "config", "user.name", "Test"},
+	}
+	for _, c := range cmds {
+		out, err := exec.Command(c[0], c[1:]...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%v: %s", err, out)
+		}
+	}
+	return nil
+}
+
+// gitCommitAll stages and commits all files in dir with the given message.
+func gitCommitAll(t *testing.T, dir, msg string) error {
+	t.Helper()
+	cmds := [][]string{
+		{"git", "-C", dir, "add", "."},
+		{"git", "-C", dir, "commit", "-m", msg},
+	}
+	for _, c := range cmds {
+		out, err := exec.Command(c[0], c[1:]...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%v: %s", err, out)
+		}
+	}
+	return nil
+}
+
+// TestChangedFilesSinceRef unit-tests the helper on a crafted git repo.
+func TestChangedFilesSinceRef(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	dir := t.TempDir()
+	if err := initGitRepo(t, dir); err != nil {
+		t.Fatalf("initGitRepo: %v", err)
+	}
+
+	// Write and commit two files.
+	os.WriteFile(filepath.Join(dir, "alpha.py"), []byte("# alpha v1\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "beta.py"), []byte("# beta v1\n"), 0o644)
+	if err := gitCommitAll(t, dir, "initial"); err != nil {
+		t.Fatalf("commit initial: %v", err)
+	}
+
+	// Modify only alpha.
+	os.WriteFile(filepath.Join(dir, "alpha.py"), []byte("# alpha v2\n"), 0o644)
+
+	changed, err := changedFilesSinceRef(dir, "HEAD")
+	if err != nil {
+		t.Fatalf("changedFilesSinceRef: %v", err)
+	}
+
+	if !changed["alpha.py"] {
+		t.Error("expected alpha.py in changed set")
+	}
+	if changed["beta.py"] {
+		t.Error("beta.py should NOT be in changed set (not modified)")
+	}
+}
+
+// TestBuildSinceRefSkipsUnchanged verifies that --since filters unchanged files.
+// We use cmdPrepare (no API key required) which follows the same scan+cache path.
+func TestBuildSinceRefSkipsUnchanged(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	dir := t.TempDir()
+	if err := initGitRepo(t, dir); err != nil {
+		t.Fatalf("initGitRepo: %v", err)
+	}
+
+	// Two .py files, both committed.
+	os.WriteFile(filepath.Join(dir, "alpha.py"), []byte("# alpha v1\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "beta.py"), []byte("# beta v1\n"), 0o644)
+	if err := gitCommitAll(t, dir, "initial"); err != nil {
+		t.Fatalf("commit initial: %v", err)
+	}
+
+	// Modify only alpha (unstaged — git diff HEAD shows it as modified).
+	os.WriteFile(filepath.Join(dir, "alpha.py"), []byte("# alpha v2\n"), 0o644)
+
+	scope := "test-since-" + contentHash(dir)[:8]
+	defer func() { os.RemoveAll(scopeDir(scope)) }()
+
+	// Capture stdout from cmdPrepare.
+	origStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	cmdPrepare([]string{dir, "--scope", scope, "--pattern", "*.py", "--since", "HEAD"})
+
+	w.Close()
+	os.Stdout = origStdout
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+
+	var out struct {
+		Pending int `json:"pending"`
+		Cached  int `json:"cached"`
+		Total   int `json:"total"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("failed to parse prepare output: %v\nraw: %s", err, buf.String())
+	}
+
+	if out.Total != 2 {
+		t.Errorf("total = %d, want 2", out.Total)
+	}
+	// Only alpha.py is in the changed set, so only 1 item should be pending.
+	if out.Pending != 1 {
+		t.Errorf("pending = %d, want 1 (only the modified file)", out.Pending)
+	}
+	if out.Cached != 1 {
+		t.Errorf("cached (since-filtered) = %d, want 1 (unchanged beta.py)", out.Cached)
+	}
+}
+
+// TestBuildSinceNonGitFallback verifies that a non-git path triggers a warning
+// on stderr and falls back to a full build (all files pending).
+func TestBuildSinceNonGitFallback(t *testing.T) {
+	dir := t.TempDir() // plain directory, not a git repo
+
+	os.WriteFile(filepath.Join(dir, "main.py"), []byte("# main\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "util.py"), []byte("# util\n"), 0o644)
+
+	scope := "test-since-fallback-" + contentHash(dir)[:8]
+	defer func() { os.RemoveAll(scopeDir(scope)) }()
+
+	// Capture stderr for the warning.
+	origStderr := os.Stderr
+	sr, sw, _ := os.Pipe()
+	os.Stderr = sw
+
+	// Capture stdout so cmdPrepare JSON doesn't bleed.
+	origStdout := os.Stdout
+	or, ow, _ := os.Pipe()
+	os.Stdout = ow
+
+	cmdPrepare([]string{dir, "--scope", scope, "--pattern", "*.py", "--since", "HEAD"})
+
+	sw.Close()
+	ow.Close()
+	os.Stderr = origStderr
+	os.Stdout = origStdout
+
+	var stderrBuf, stdoutBuf bytes.Buffer
+	stderrBuf.ReadFrom(sr)
+	stdoutBuf.ReadFrom(or)
+
+	stderrStr := stderrBuf.String()
+	if !strings.Contains(stderrStr, "falling back to full build") {
+		t.Errorf("expected fallback warning in stderr, got: %q", stderrStr)
+	}
+
+	var out struct {
+		Pending int `json:"pending"`
+		Total   int `json:"total"`
+	}
+	if err := json.Unmarshal(stdoutBuf.Bytes(), &out); err != nil {
+		t.Fatalf("failed to parse prepare output: %v\nraw: %s", err, stdoutBuf.String())
+	}
+	// Full build: all files included.
+	if out.Pending != 2 {
+		t.Errorf("pending = %d, want 2 (full fallback build)", out.Pending)
+	}
+	if out.Total != 2 {
+		t.Errorf("total = %d, want 2", out.Total)
 	}
 }
