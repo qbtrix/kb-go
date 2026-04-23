@@ -2,11 +2,13 @@
 // Headless, lean CLI. BM25 search over LLM-compiled articles.
 // No embeddings, no vectors. The LLM understands at write time, not query time.
 //
-// Changes: Added --terse flag on build/prepare/recompile and audience/depth/target_words
-// frontmatter fields on articles. Terse mode targets ~150-word overview articles for agent
-// context budgets. Existing articles without these fields load with defaults (human/deep/500).
-// Extracted buildCompilePrompt() helper shared by compileLLM and cmdPrepare.
+// Changes: Added `--since <git-ref>` flag to `kb build` and `kb prepare`. When
+// set, only files changed since the given ref (via git diff + ls-files) are
+// compiled; unchanged files pass through silently. Ref is validated with
+// git rev-parse before use so option-like strings can't slip through. Graceful
+// fallback to a full build when git is unavailable or the ref doesn't resolve.
 //
+
 // Commands: build, prepare, accept, graph, search, ingest, show, list, stats, lint, recompile, watch, clear
 // AST parsing: Go (stdlib go/ast), Python (regex), TypeScript/JS (regex)
 // Storage: markdown + JSON frontmatter (compatible with Python knowledge-base package)
@@ -25,6 +27,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -1566,6 +1569,7 @@ func cmdBuild(args []string) {
 	jsonOut := flagBool(args, "--json")
 	terse := flagBool(args, "--terse")
 	outputDir := flagStr(args, "--output", "")
+	sinceRef := flagStr(args, "--since", "")
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 
 	absPath, err := filepath.Abs(path)
@@ -1582,6 +1586,18 @@ func cmdBuild(args []string) {
 	}
 	if len(files) == 0 {
 		fatal("No files found matching %s in %s", pattern, absPath)
+	}
+
+	// Compute --since allow-list before the scan loop.
+	// On any failure, warn and fall back to a full build (allow-list = nil).
+	var sinceAllowList map[string]bool
+	if sinceRef != "" {
+		list, err := changedFilesSinceRef(absPath, sinceRef)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "--since: git lookup failed (%v); falling back to full build\n", err)
+		} else {
+			sinceAllowList = list
+		}
 	}
 
 	concurrency := flagInt(args, "--concurrency", 5)
@@ -1608,6 +1624,13 @@ func cmdBuild(args []string) {
 		relPath, _ := filepath.Rel(absPath, f)
 		if relPath == "" {
 			relPath = f
+		}
+
+		// --since filter: skip files not in the changed allow-list.
+		// The existing hash cache still applies as an inner filter below.
+		if sinceAllowList != nil && !sinceAllowList[relPath] {
+			skipped++
+			continue
 		}
 
 		if entry, ok := cache.Files[relPath]; ok && entry.Hash == hash {
@@ -1767,6 +1790,7 @@ func cmdPrepare(args []string) {
 	pattern := flagStr(args, "--pattern", "*.py")
 	exclude := flagStr(args, "--exclude", "")
 	terse := flagBool(args, "--terse")
+	sinceRef := flagStr(args, "--since", "")
 
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -1782,6 +1806,18 @@ func cmdPrepare(args []string) {
 	}
 	if len(files) == 0 {
 		fatal("No files found matching %s in %s", pattern, absPath)
+	}
+
+	// Compute --since allow-list before the scan loop.
+	// On any failure, warn and fall back to a full build (allow-list = nil).
+	var sinceAllowList map[string]bool
+	if sinceRef != "" {
+		list, err := changedFilesSinceRef(absPath, sinceRef)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "--since: git lookup failed (%v); falling back to full build\n", err)
+		} else {
+			sinceAllowList = list
+		}
 	}
 
 	type prepareItem struct {
@@ -1807,6 +1843,12 @@ func cmdPrepare(args []string) {
 		relPath, _ := filepath.Rel(absPath, f)
 		if relPath == "" {
 			relPath = f
+		}
+
+		// --since filter: skip files not in the changed allow-list.
+		if sinceAllowList != nil && !sinceAllowList[relPath] {
+			skipped++
+			continue
 		}
 
 		if entry, ok := cache.Files[relPath]; ok && entry.Hash == hash {
@@ -2924,6 +2966,65 @@ func newRecursiveWatcher(root string) (*fsnotify.Watcher, error) {
 }
 
 // --- File Scanning ---
+
+// changedFilesSinceRef returns the set of file paths (relative to srcPath)
+// that have changed since the given git ref. It unions two sets:
+//   - files reported by `git diff --name-only <ref>` (modified vs working tree since ref)
+//   - files reported by `git ls-files --others --exclude-standard` (untracked new files)
+//
+// Using the two-argument form without HEAD lets us pick up both committed
+// changes (since ref) and working-tree modifications in a single command.
+//
+// Paths are normalised with filepath.FromSlash so they match the relPath values
+// used elsewhere in the build loop.
+//
+// The ref is first resolved to a concrete commit SHA via `git rev-parse
+// --verify <ref>^{commit}`. This serves two purposes: it validates the ref
+// exists, and it prevents an arbitrary ref string starting with "-" from
+// being interpreted as a git option flag on the subsequent diff call.
+//
+// Any failure (git not on PATH, not a git repo, ref doesn't exist or doesn't
+// resolve to a commit) returns an error with enough context to emit a useful
+// warning.
+func changedFilesSinceRef(srcPath, ref string) (map[string]bool, error) {
+	result := make(map[string]bool)
+
+	// Resolve ref to a concrete commit SHA first. rev-parse rejects anything
+	// it can't interpret as a valid ref — including strings starting with "-"
+	// that would otherwise be treated as options on the diff call below.
+	shaOut, err := exec.Command("git", "-C", srcPath, "rev-parse", "--verify", ref+"^{commit}").Output()
+	if err != nil {
+		return nil, fmt.Errorf("git rev-parse %q: %w", ref, err)
+	}
+	sha := strings.TrimSpace(string(shaOut))
+
+	// git diff --name-only <sha> — files changed between resolved ref and working tree.
+	// This picks up both committed changes since ref AND unstaged local edits.
+	diffOut, err := exec.Command("git", "-C", srcPath, "diff", "--name-only", sha).Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --name-only %s: %w", sha, err)
+	}
+
+	// git ls-files --others --exclude-standard — new untracked files.
+	untrackedOut, err := exec.Command("git", "-C", srcPath, "ls-files", "--others", "--exclude-standard").Output()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files --others: %w", err)
+	}
+
+	for _, line := range strings.Split(string(diffOut), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			result[filepath.FromSlash(line)] = true
+		}
+	}
+	for _, line := range strings.Split(string(untrackedOut), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			result[filepath.FromSlash(line)] = true
+		}
+	}
+	return result, nil
+}
 
 func scanDir(root, pattern string) []string {
 	var files []string
