@@ -2,8 +2,10 @@
 // Headless, lean CLI. BM25 search over LLM-compiled articles.
 // No embeddings, no vectors. The LLM understands at write time, not query time.
 //
-// Changes: Added `graph` command — exports concept graph as Mermaid/DOT/JSON
-// for visualization. Supports --concept and --article for focused subgraphs.
+// Changes: Added --terse flag on build/prepare/recompile and audience/depth/target_words
+// frontmatter fields on articles. Terse mode targets ~150-word overview articles for agent
+// context budgets. Existing articles without these fields load with defaults (human/deep/500).
+// Extracted buildCompilePrompt() helper shared by compileLLM and cmdPrepare.
 //
 // Commands: build, prepare, accept, graph, search, ingest, show, list, stats, lint, recompile, watch, clear
 // AST parsing: Go (stdlib go/ast), Python (regex), TypeScript/JS (regex)
@@ -70,6 +72,11 @@ type WikiArticle struct {
 	CompiledAt   string   `json:"compiled_at"`
 	CompiledWith string   `json:"compiled_with"`
 	Version      int      `json:"version"`
+	// Terse-mode metadata: audience (agent|human), depth (overview|deep), target_words.
+	// Defaults when loading legacy articles: audience=human, depth=deep, target_words=500.
+	Audience    string `json:"audience,omitempty"`
+	Depth       string `json:"depth,omitempty"`
+	TargetWords int    `json:"target_words,omitempty"`
 }
 
 // Frontmatter is the JSON block at the top of .md files.
@@ -84,6 +91,10 @@ type Frontmatter struct {
 	CompiledAt   string   `json:"compiled_at"`
 	CompiledWith string   `json:"compiled_with"`
 	Version      int      `json:"version"`
+	// Terse-mode metadata — mirrors WikiArticle fields.
+	Audience    string `json:"audience,omitempty"`
+	Depth       string `json:"depth,omitempty"`
+	TargetWords int    `json:"target_words,omitempty"`
 }
 
 type Concept struct {
@@ -744,6 +755,9 @@ func saveArticle(scope string, a *WikiArticle) error {
 		CompiledAt:   a.CompiledAt,
 		CompiledWith: a.CompiledWith,
 		Version:      a.Version,
+		Audience:     a.Audience,
+		Depth:        a.Depth,
+		TargetWords:  a.TargetWords,
 	}
 	fmData, err := json.MarshalIndent(fm, "", "  ")
 	if err != nil {
@@ -790,6 +804,20 @@ func parseArticle(id, text string) (*WikiArticle, error) {
 		return nil, fmt.Errorf("bad frontmatter in %s: %w", id, err)
 	}
 
+	// Apply defaults for terse-mode fields so legacy articles load cleanly.
+	audience := fm.Audience
+	if audience == "" {
+		audience = "human"
+	}
+	depth := fm.Depth
+	if depth == "" {
+		depth = "deep"
+	}
+	targetWords := fm.TargetWords
+	if targetWords == 0 {
+		targetWords = 500
+	}
+
 	content := strings.TrimSpace(parts[2])
 	return &WikiArticle{
 		ID:           id,
@@ -804,6 +832,9 @@ func parseArticle(id, text string) (*WikiArticle, error) {
 		CompiledAt:   fm.CompiledAt,
 		CompiledWith: fm.CompiledWith,
 		Version:      fm.Version,
+		Audience:     audience,
+		Depth:        depth,
+		TargetWords:  targetWords,
 	}, nil
 }
 
@@ -1192,7 +1223,34 @@ type TokenUsage struct {
 	OutputTokens int `json:"output_tokens"`
 }
 
-func compileLLM(rawText, source, model, apiKey string, codeMod *CodeModule) (*WikiArticle, *TokenUsage, error) {
+// buildCompilePrompt constructs the LLM compilation prompt shared by compileLLM and cmdPrepare.
+// When terse is true, the prompt targets 120-180 words for agent context budgets.
+// When terse is false, the prompt targets 400-800 words for full human documentation.
+func buildCompilePrompt(source, contextBlock, rawText string, terse bool) string {
+	var instructions string
+	if terse {
+		instructions = `Target 120-180 words. Write an overview, not a deep explanation.
+Cover: what the component does (1 sentence), its role in the system (1-2 sentences),
+key entry points (bullet list, max 5).`
+	} else {
+		instructions = `Target 400-800 words of thorough explanation.
+- Explain WHY code exists, not just what it does. For defensive patterns, edge cases, and workarounds, explain what failure they prevent.
+- Flag any TODO, FIXME, HACK, or incomplete implementations as "Known Gaps" in the content.
+- If you see idempotency guards, retry logic, or error handling, explain the failure scenario that motivated them.`
+	}
+	return fmt.Sprintf(`Compile this source into a structured knowledge article.
+Source: %s
+%s
+%s
+
+Output ONLY valid JSON with these exact keys:
+{"title":"descriptive title","summary":"2-3 sentence overview","content":"full markdown article with a Known Gaps section if applicable","concepts":["key","entities"],"categories":["broad","topics"]}
+
+Source text:
+%s`, source, contextBlock, instructions, rawText)
+}
+
+func compileLLM(rawText, source, model, apiKey string, codeMod *CodeModule, terse bool) (*WikiArticle, *TokenUsage, error) {
 	if apiKey == "" {
 		return nil, nil, fmt.Errorf("ANTHROPIC_API_KEY not set")
 	}
@@ -1202,19 +1260,7 @@ func compileLLM(rawText, source, model, apiKey string, codeMod *CodeModule) (*Wi
 		contextBlock = fmt.Sprintf("\nAST-extracted structure:\n```\n%s```\n\n", formatCodeContext(codeMod))
 	}
 
-	prompt := fmt.Sprintf(`Compile this source into a structured knowledge article.
-Source: %s
-%s
-Important:
-- Explain WHY code exists, not just what it does. For defensive patterns, edge cases, and workarounds, explain what failure they prevent.
-- Flag any TODO, FIXME, HACK, or incomplete implementations as "Known Gaps" in the content.
-- If you see idempotency guards, retry logic, or error handling, explain the failure scenario that motivated them.
-
-Output ONLY valid JSON with these exact keys:
-{"title":"descriptive title","summary":"2-3 sentence overview","content":"full markdown article with a Known Gaps section if applicable","concepts":["key","entities"],"categories":["broad","topics"]}
-
-Source text:
-%s`, source, contextBlock, rawText)
+	prompt := buildCompilePrompt(source, contextBlock, rawText, terse)
 
 	body, _ := json.Marshal(map[string]any{
 		"model":      model,
@@ -1288,6 +1334,12 @@ Source text:
 	slug := slugify(result.Title)
 	now := time.Now().UTC().Format(time.RFC3339)
 
+	// Set audience/depth/target_words based on terse mode.
+	audience, depth, targetWords := "human", "deep", 500
+	if terse {
+		audience, depth, targetWords = "agent", "overview", 150
+	}
+
 	return &WikiArticle{
 		ID:           slug,
 		Title:        result.Title,
@@ -1301,6 +1353,9 @@ Source text:
 		CompiledAt:   now,
 		CompiledWith: model,
 		Version:      1,
+		Audience:     audience,
+		Depth:        depth,
+		TargetWords:  targetWords,
 	}, usage, nil
 }
 
@@ -1509,6 +1564,7 @@ func cmdBuild(args []string) {
 	exclude := flagStr(args, "--exclude", "")
 	model := flagStr(args, "--model", defaultModel)
 	jsonOut := flagBool(args, "--json")
+	terse := flagBool(args, "--terse")
 	outputDir := flagStr(args, "--output", "")
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 
@@ -1610,9 +1666,13 @@ func cmdBuild(args []string) {
 			codeMod := parseCode(j.filePath, j.text)
 
 			// Compile with LLM
-			article, usage, err := compileLLM(j.text, j.relPath, model, apiKey, codeMod)
+			article, usage, err := compileLLM(j.text, j.relPath, model, apiKey, codeMod, terse)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: compilation failed for %s: %v\n", j.relPath, err)
+				audience, depth, targetWords := "human", "deep", 500
+				if terse {
+					audience, depth, targetWords = "agent", "overview", 150
+				}
 				article = &WikiArticle{
 					ID:           slugify(filepath.Base(j.filePath)),
 					Title:        filepath.Base(j.filePath),
@@ -1622,6 +1682,9 @@ func cmdBuild(args []string) {
 					CompiledAt:   time.Now().UTC().Format(time.RFC3339),
 					CompiledWith: "none (fallback)",
 					Version:      1,
+					Audience:     audience,
+					Depth:        depth,
+					TargetWords:  targetWords,
 				}
 			}
 			article.SourceDocs = []string{j.rawID}
@@ -1703,6 +1766,7 @@ func cmdPrepare(args []string) {
 	scope := flagStr(args, "--scope", filepath.Base(path))
 	pattern := flagStr(args, "--pattern", "*.py")
 	exclude := flagStr(args, "--exclude", "")
+	terse := flagBool(args, "--terse")
 
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -1722,10 +1786,11 @@ func cmdPrepare(args []string) {
 
 	type prepareItem struct {
 		Source  string `json:"source"`
-		Hash   string `json:"hash"`
-		RawID  string `json:"raw_id"`
-		Prompt string `json:"prompt"`
-		IsTest bool   `json:"is_test"`
+		Hash    string `json:"hash"`
+		RawID   string `json:"raw_id"`
+		Prompt  string `json:"prompt"`
+		IsTest  bool   `json:"is_test"`
+		IsTerse bool   `json:"is_terse"`
 	}
 
 	var items []prepareItem
@@ -1763,33 +1828,22 @@ func cmdPrepare(args []string) {
 		}
 		saveRawDoc(scope, raw)
 
-		// Build the same prompt compileLLM would use
+		// Build the same prompt compileLLM would use — shared helper keeps them in sync.
 		codeMod := parseCode(f, string(text))
 		var contextBlock string
 		if codeMod != nil {
 			contextBlock = fmt.Sprintf("\nAST-extracted structure:\n```\n%s```\n\n", formatCodeContext(codeMod))
 		}
 
-		prompt := fmt.Sprintf(`Compile this source into a structured knowledge article.
-Source: %s
-%s
-Important:
-- Explain WHY code exists, not just what it does. For defensive patterns, edge cases, and workarounds, explain what failure they prevent.
-- Flag any TODO, FIXME, HACK, or incomplete implementations as "Known Gaps" in the content.
-- If you see idempotency guards, retry logic, or error handling, explain the failure scenario that motivated them.
-
-Output ONLY valid JSON with these exact keys:
-{"title":"descriptive title","summary":"2-3 sentence overview","content":"full markdown article with a Known Gaps section if applicable","concepts":["key","entities"],"categories":["broad","topics"]}
-
-Source text:
-%s`, relPath, contextBlock, string(text))
+		prompt := buildCompilePrompt(relPath, contextBlock, string(text), terse)
 
 		items = append(items, prepareItem{
-			Source: relPath,
-			Hash:   hash,
-			RawID:  rawID,
-			Prompt: prompt,
-			IsTest: isTestFile(f),
+			Source:  relPath,
+			Hash:    hash,
+			RawID:   rawID,
+			Prompt:  prompt,
+			IsTest:  isTestFile(f),
+			IsTerse: terse,
 		})
 	}
 
@@ -1815,17 +1869,24 @@ func cmdAccept(args []string) {
 		fatal("Failed to read stdin: %v", err)
 	}
 
-	// Accept either a single object with "articles" array, or a bare array
+	// Accept either a single object with "articles" array, or a bare array.
+	// audience/depth/target_words are optional — set by the agent if compiling
+	// from a terse-mode prepare. accept detects terse mode from these fields
+	// rather than requiring a separate --terse flag (cleaner: the payload is
+	// self-describing, no flag state to thread through multiple hops).
 	type acceptArticle struct {
-		Source     string   `json:"source"`
-		Hash       string   `json:"hash"`
-		RawID      string   `json:"raw_id"`
-		Title      string   `json:"title"`
-		Summary    string   `json:"summary"`
-		Content    string   `json:"content"`
-		Concepts   []string `json:"concepts"`
-		Categories []string `json:"categories"`
-		IsTest     bool     `json:"is_test"`
+		Source      string   `json:"source"`
+		Hash        string   `json:"hash"`
+		RawID       string   `json:"raw_id"`
+		Title       string   `json:"title"`
+		Summary     string   `json:"summary"`
+		Content     string   `json:"content"`
+		Concepts    []string `json:"concepts"`
+		Categories  []string `json:"categories"`
+		IsTest      bool     `json:"is_test"`
+		Audience    string   `json:"audience,omitempty"`
+		Depth       string   `json:"depth,omitempty"`
+		TargetWords int      `json:"target_words,omitempty"`
 	}
 
 	var articles []acceptArticle
@@ -1869,6 +1930,28 @@ func cmdAccept(args []string) {
 		slug := slugify(a.Title)
 		now := time.Now().UTC().Format(time.RFC3339)
 
+		// Infer terse mode from the depth field in the payload. An agent that
+		// compiled from a terse-mode prepare prompt sets depth=overview. This
+		// avoids needing a separate --terse flag on accept.
+		audience, depth, targetWords := a.Audience, a.Depth, a.TargetWords
+		if audience == "" {
+			if depth == "overview" {
+				audience = "agent"
+			} else {
+				audience = "human"
+			}
+		}
+		if depth == "" {
+			depth = "deep"
+		}
+		if targetWords == 0 {
+			if depth == "overview" {
+				targetWords = 150
+			} else {
+				targetWords = 500
+			}
+		}
+
 		article := &WikiArticle{
 			ID:           slug,
 			Title:        a.Title,
@@ -1881,6 +1964,9 @@ func cmdAccept(args []string) {
 			CompiledAt:   now,
 			CompiledWith: "agent",
 			Version:      1,
+			Audience:     audience,
+			Depth:        depth,
+			TargetWords:  targetWords,
 		}
 
 		// Auto-tag test files
@@ -2443,8 +2529,8 @@ func cmdIngest(args []string) {
 		codeMod = parseCode(fakeFile, text)
 	}
 
-	// Compile
-	article, _, err := compileLLM(text, source, model, apiKey, codeMod)
+	// Compile — ingest always uses non-terse mode (full documentation).
+	article, _, err := compileLLM(text, source, model, apiKey, codeMod, false)
 	if err != nil {
 		// Fallback
 		article = &WikiArticle{
@@ -2659,6 +2745,7 @@ func cmdRecompile(args []string) {
 	scope := flagStr(args, "--scope", "default")
 	model := flagStr(args, "--model", defaultModel)
 	jsonOut := flagBool(args, "--json")
+	terse := flagBool(args, "--terse")
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	recompileAll := flagBool(args, "--all") || args[0] == "--all"
 
@@ -2696,7 +2783,7 @@ func cmdRecompile(args []string) {
 			fmt.Printf("Recompiling: %s\n", a.Title)
 		}
 
-		newArticle, _, err := compileLLM(combined, source, model, apiKey, nil)
+		newArticle, _, err := compileLLM(combined, source, model, apiKey, nil, terse)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: recompilation failed for %s: %v\n", a.ID, err)
 			continue
