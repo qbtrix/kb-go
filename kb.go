@@ -2977,16 +2977,32 @@ func newRecursiveWatcher(root string) (*fsnotify.Watcher, error) {
 //
 // Paths are normalised with filepath.FromSlash so they match the relPath values
 // used elsewhere in the build loop.
-// Any failure (git not on PATH, not a git repo, ref doesn't exist) returns an
-// error with enough context to emit a useful warning.
+//
+// The ref is first resolved to a concrete commit SHA via `git rev-parse
+// --verify <ref>^{commit}`. This serves two purposes: it validates the ref
+// exists, and it prevents an arbitrary ref string starting with "-" from
+// being interpreted as a git option flag on the subsequent diff call.
+//
+// Any failure (git not on PATH, not a git repo, ref doesn't exist or doesn't
+// resolve to a commit) returns an error with enough context to emit a useful
+// warning.
 func changedFilesSinceRef(srcPath, ref string) (map[string]bool, error) {
 	result := make(map[string]bool)
 
-	// git diff --name-only <ref> — files changed between ref and the working tree.
-	// This picks up both committed changes since ref AND unstaged local edits.
-	diffOut, err := exec.Command("git", "-C", srcPath, "diff", "--name-only", ref).Output()
+	// Resolve ref to a concrete commit SHA first. rev-parse rejects anything
+	// it can't interpret as a valid ref — including strings starting with "-"
+	// that would otherwise be treated as options on the diff call below.
+	shaOut, err := exec.Command("git", "-C", srcPath, "rev-parse", "--verify", ref+"^{commit}").Output()
 	if err != nil {
-		return nil, fmt.Errorf("git diff --name-only %s: %w", ref, err)
+		return nil, fmt.Errorf("git rev-parse %q: %w", ref, err)
+	}
+	sha := strings.TrimSpace(string(shaOut))
+
+	// git diff --name-only <sha> — files changed between resolved ref and working tree.
+	// This picks up both committed changes since ref AND unstaged local edits.
+	diffOut, err := exec.Command("git", "-C", srcPath, "diff", "--name-only", sha).Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --name-only %s: %w", sha, err)
 	}
 
 	// git ls-files --others --exclude-standard — new untracked files.

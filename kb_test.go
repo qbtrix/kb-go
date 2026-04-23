@@ -1349,3 +1349,53 @@ func TestBuildSinceNonGitFallback(t *testing.T) {
 		t.Errorf("total = %d, want 2", out.Total)
 	}
 }
+
+// TestChangedFilesSinceRefRejectsOptionLikeRef verifies that a ref value
+// starting with "-" (which would otherwise be interpreted as a git option
+// on the diff call) is rejected at the rev-parse stage.
+func TestChangedFilesSinceRefRejectsOptionLikeRef(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	dir := t.TempDir()
+	if err := initGitRepo(t, dir); err != nil {
+		t.Fatalf("initGitRepo: %v", err)
+	}
+	os.WriteFile(filepath.Join(dir, "one.py"), []byte("# one\n"), 0o644)
+	if err := gitCommitAll(t, dir, "initial"); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// A ref that looks like a git option must be rejected by rev-parse,
+	// not forwarded to git diff where it would be interpreted as a flag.
+	for _, badRef := range []string{"--upload-pack=evil", "-p", "--help"} {
+		_, err := changedFilesSinceRef(dir, badRef)
+		if err == nil {
+			t.Errorf("changedFilesSinceRef(%q) should reject option-like ref", badRef)
+		}
+	}
+}
+
+// TestChangedFilesSinceRefNonexistentRef verifies that a ref that doesn't
+// exist in the repo produces an error so the caller can fall back to a
+// full build.
+func TestChangedFilesSinceRefNonexistentRef(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	dir := t.TempDir()
+	if err := initGitRepo(t, dir); err != nil {
+		t.Fatalf("initGitRepo: %v", err)
+	}
+	os.WriteFile(filepath.Join(dir, "one.py"), []byte("# one\n"), 0o644)
+	if err := gitCommitAll(t, dir, "initial"); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	_, err := changedFilesSinceRef(dir, "no-such-ref-exists-here")
+	if err == nil {
+		t.Error("changedFilesSinceRef should fail on nonexistent ref")
+	}
+}
