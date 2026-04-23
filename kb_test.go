@@ -1051,7 +1051,6 @@ func TestEscapeMermaid(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 // --- Terse flag + audience/depth frontmatter ---
 
 // TestFrontmatterAudienceDepthRoundTrip verifies that Audience, Depth, and
