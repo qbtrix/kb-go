@@ -2889,7 +2889,7 @@ func runCategoryNormalize(scope string, apply, jsonOut bool) {
 	}
 
 	if len(noisy) == 0 {
-		fmt.Printf("No category variants found in %q — %d categories across %d articles are already consistent.\n",
+		fmt.Printf("No category variants found in %q — %d normalized group(s) across %d article(s) are already consistent.\n",
 			scope, len(clusters), len(articles))
 		return
 	}
