@@ -1398,3 +1398,213 @@ func TestChangedFilesSinceRefNonexistentRef(t *testing.T) {
 		t.Error("changedFilesSinceRef should fail on nonexistent ref")
 	}
 }
+
+// --- SourcePath round-trip ---
+
+func TestSourcePathRoundTrip(t *testing.T) {
+	scope := "test-src-" + contentHash(t.Name())[:8]
+	defer func() { os.RemoveAll(scopeDir(scope)) }()
+
+	original := &WikiArticle{
+		ID:         "src-round",
+		Title:      "Src Round",
+		Content:    "# body",
+		SourcePath: "src/auth/login.go",
+		SourceDocs: []string{"raw-x"},
+		Version:    1,
+	}
+	if err := saveArticle(scope, original); err != nil {
+		t.Fatalf("saveArticle: %v", err)
+	}
+	loaded, err := loadArticle(scope, "src-round")
+	if err != nil {
+		t.Fatalf("loadArticle: %v", err)
+	}
+	if loaded.SourcePath != "src/auth/login.go" {
+		t.Errorf("SourcePath = %q, want %q", loaded.SourcePath, "src/auth/login.go")
+	}
+}
+
+func TestSourcePathEmptyOmitsFromJSON(t *testing.T) {
+	// Backward compat: legacy articles without SourcePath should parse cleanly
+	// and the omitted field should stay out of the serialized frontmatter.
+	scope := "test-src-empty-" + contentHash(t.Name())[:8]
+	defer func() { os.RemoveAll(scopeDir(scope)) }()
+
+	a := &WikiArticle{ID: "legacy", Title: "Legacy", Content: "body", Version: 1}
+	if err := saveArticle(scope, a); err != nil {
+		t.Fatalf("saveArticle: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(scopeDir(scope), "wiki", "legacy.md"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if strings.Contains(string(data), `"source_path"`) {
+		t.Error("empty SourcePath should be omitted from JSON (omitempty)")
+	}
+}
+
+// --- Category normalization ---
+
+func TestNormalizeCategory(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"CLI", "cli"},
+		{"CLI tool", "cli tool"},
+		{"cli tool", "cli tool"},
+		{"  cli  tool  ", "cli tool"},
+		{"Database.", "database"},
+		{"Storage--", "storage"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := normalizeCategory(tt.in); got != tt.want {
+			t.Errorf("normalizeCategory(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestPickCanonicalVariant(t *testing.T) {
+	// Count dominates
+	got := pickCanonicalVariant(map[string]int{"cli": 10, "CLI": 2, "CLI tool": 1})
+	if got != "cli" {
+		t.Errorf("expected 'cli' (highest count), got %q", got)
+	}
+	// Count tie → shortest wins
+	got = pickCanonicalVariant(map[string]int{"database": 3, "Database engine": 3})
+	if got != "database" {
+		t.Errorf("expected 'database' (shortest on tie), got %q", got)
+	}
+	// All tied on count + length, all already-normalized → alphabetical
+	got = pickCanonicalVariant(map[string]int{"zebra": 1, "alpha": 1, "bravo": 1})
+	if got != "alpha" {
+		t.Errorf("expected 'alpha' (alphabetical fallback), got %q", got)
+	}
+	// Tied on count + length, one matches its own normalize() → clean form wins
+	got = pickCanonicalVariant(map[string]int{"Storage": 1, "storage": 1})
+	if got != "storage" {
+		t.Errorf("expected 'storage' (clean form preferred on tie), got %q", got)
+	}
+}
+
+func TestApplyCategoryCanonical(t *testing.T) {
+	scope := "test-norm-" + contentHash(t.Name())[:8]
+	defer func() { os.RemoveAll(scopeDir(scope)) }()
+
+	articles := []*WikiArticle{
+		{ID: "a1", Title: "A1", Content: "x", Categories: []string{"CLI", "storage"}, Version: 1},
+		{ID: "a2", Title: "A2", Content: "x", Categories: []string{"cli", "Storage"}, Version: 1},
+		{ID: "a3", Title: "A3", Content: "x", Categories: []string{"cli tool", "database"}, Version: 1},
+		{ID: "a4", Title: "A4", Content: "x", Categories: []string{"cli"}, Version: 1},
+	}
+	for _, a := range articles {
+		if err := saveArticle(scope, a); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+
+	// Build clusters manually mirroring runCategoryNormalize's logic so the
+	// test exercises applyCategoryCanonical in isolation.
+	all, _ := listArticles(scope)
+	clusterMap := map[string]*categoryCluster{}
+	for _, a := range all {
+		for _, cat := range a.Categories {
+			key := normalizeCategory(cat)
+			c, ok := clusterMap[key]
+			if !ok {
+				c = &categoryCluster{Key: key, Variants: map[string]int{}}
+				clusterMap[key] = c
+			}
+			c.Variants[cat]++
+			c.Total++
+		}
+	}
+	var noisy []*categoryCluster
+	for _, c := range clusterMap {
+		if len(c.Variants) > 1 {
+			c.Canonical = pickCanonicalVariant(c.Variants)
+			noisy = append(noisy, c)
+		}
+	}
+
+	changed := applyCategoryCanonical(scope, all, noisy)
+	if changed == 0 {
+		t.Fatal("expected at least one article rewritten")
+	}
+
+	// Verify: after apply, only canonical variants remain from multi-variant clusters.
+	// Cluster "cli" has variants {CLI, cli} → canonical "cli" (ASCII sort tie; "cli" is clean form)
+	// Cluster "storage" has variants {storage, Storage} → canonical "storage" (clean form preferred on tie)
+	// "cli tool" and "database" are singleton clusters — not noisy, unchanged.
+	after, _ := listArticles(scope)
+	seenVariants := map[string]bool{}
+	for _, a := range after {
+		for _, cat := range a.Categories {
+			seenVariants[cat] = true
+		}
+	}
+	for _, bad := range []string{"CLI", "Storage"} {
+		if seenVariants[bad] {
+			t.Errorf("%q should have been canonicalized out", bad)
+		}
+	}
+	for _, good := range []string{"cli", "storage", "cli tool", "database"} {
+		if !seenVariants[good] {
+			t.Errorf("expected %q to remain after normalization", good)
+		}
+	}
+}
+
+func TestApplyCategoryCanonicalDedupesCollapsed(t *testing.T) {
+	// Article with ["CLI", "cli"] should collapse to ["cli"] — no dupes.
+	scope := "test-norm-dedup-" + contentHash(t.Name())[:8]
+	defer func() { os.RemoveAll(scopeDir(scope)) }()
+
+	a := &WikiArticle{
+		ID:         "d1",
+		Title:      "D1",
+		Content:    "x",
+		Categories: []string{"CLI", "cli"},
+		Version:    1,
+	}
+	if err := saveArticle(scope, a); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	all, _ := listArticles(scope)
+	noisy := []*categoryCluster{
+		{
+			Key:       "cli",
+			Variants:  map[string]int{"CLI": 1, "cli": 1},
+			Total:     2,
+			Canonical: "cli",
+		},
+	}
+	if changed := applyCategoryCanonical(scope, all, noisy); changed != 1 {
+		t.Errorf("expected 1 article changed, got %d", changed)
+	}
+	loaded, _ := loadArticle(scope, "d1")
+	if len(loaded.Categories) != 1 || loaded.Categories[0] != "cli" {
+		t.Errorf("categories = %v, want [cli]", loaded.Categories)
+	}
+}
+
+func TestAffectedArticleCount(t *testing.T) {
+	articles := []*WikiArticle{
+		{ID: "a1", Categories: []string{"cli"}},             // already canonical
+		{ID: "a2", Categories: []string{"CLI"}},             // needs rewrite
+		{ID: "a3", Categories: []string{"storage"}},         // not in clusters
+		{ID: "a4", Categories: []string{"cli", "Storage"}},  // one needs rewrite
+	}
+	clusters := []*categoryCluster{
+		{
+			Key:       "cli",
+			Variants:  map[string]int{"cli": 10, "CLI": 1},
+			Canonical: "cli",
+		},
+	}
+	got := affectedArticleCount(articles, clusters)
+	if got != 1 {
+		t.Errorf("affectedArticleCount = %d, want 1", got)
+	}
+}
