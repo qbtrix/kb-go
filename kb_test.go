@@ -306,9 +306,9 @@ func TestSaveLoadIndex(t *testing.T) {
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	idx := &KnowledgeIndex{
-		Scope:    scope,
-		Articles: map[string]any{"a1": map[string]any{"title": "Test"}},
-		Concepts: map[string]*Concept{"go": {Name: "Go", Articles: []string{"a1"}}},
+		Scope:      scope,
+		Articles:   map[string]any{"a1": map[string]any{"title": "Test"}},
+		Concepts:   map[string]*Concept{"go": {Name: "Go", Articles: []string{"a1"}}},
 		Categories: []string{"code"},
 	}
 
@@ -1589,12 +1589,58 @@ func TestApplyCategoryCanonicalDedupesCollapsed(t *testing.T) {
 	}
 }
 
+func TestApplyCategoryPersistsIndex(t *testing.T) {
+	// Regression: after --apply rewrites categories, the on-disk BM25 index
+	// must reflect the new category set. Earlier version built the index in
+	// memory but forgot to save it, so `kb stats` kept showing stale counts.
+	scope := "test-norm-idx-" + contentHash(t.Name())[:8]
+	defer func() { os.RemoveAll(scopeDir(scope)) }()
+
+	articles := []*WikiArticle{
+		{ID: "a1", Title: "A1", Content: "x", Categories: []string{"CLI"}, Version: 1},
+		{ID: "a2", Title: "A2", Content: "x", Categories: []string{"cli"}, Version: 1},
+	}
+	for _, a := range articles {
+		if err := saveArticle(scope, a); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+	// Initial index with both variants
+	all, _ := listArticles(scope)
+	_ = saveIndex(scope, rebuildIndex(scope, all))
+
+	noisy := []*categoryCluster{{
+		Key:       "cli",
+		Variants:  map[string]int{"CLI": 1, "cli": 1},
+		Canonical: "cli",
+	}}
+	if changed := applyCategoryCanonical(scope, all, noisy); changed == 0 {
+		t.Fatal("expected apply to rewrite")
+	}
+
+	// Load the persisted index from disk and verify it reflects the collapse.
+	data, err := os.ReadFile(filepath.Join(scopeDir(scope), "index.json"))
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	var persisted KnowledgeIndex
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatalf("parse index: %v", err)
+	}
+	if len(persisted.Categories) != 1 {
+		t.Errorf("persisted categories = %v, want [cli] only", persisted.Categories)
+	}
+	if persisted.Categories[0] != "cli" {
+		t.Errorf("persisted category = %q, want 'cli'", persisted.Categories[0])
+	}
+}
+
 func TestAffectedArticleCount(t *testing.T) {
 	articles := []*WikiArticle{
-		{ID: "a1", Categories: []string{"cli"}},             // already canonical
-		{ID: "a2", Categories: []string{"CLI"}},             // needs rewrite
-		{ID: "a3", Categories: []string{"storage"}},         // not in clusters
-		{ID: "a4", Categories: []string{"cli", "Storage"}},  // one needs rewrite
+		{ID: "a1", Categories: []string{"cli"}},            // already canonical
+		{ID: "a2", Categories: []string{"CLI"}},            // needs rewrite
+		{ID: "a3", Categories: []string{"storage"}},        // not in clusters
+		{ID: "a4", Categories: []string{"cli", "Storage"}}, // one needs rewrite
 	}
 	clusters := []*categoryCluster{
 		{

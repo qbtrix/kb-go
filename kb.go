@@ -63,12 +63,12 @@ type RawDoc struct {
 }
 
 type WikiArticle struct {
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	Summary      string   `json:"summary"`
-	Content      string   `json:"-"`
-	Concepts     []string `json:"concepts"`
-	Categories   []string `json:"categories"`
+	ID         string   `json:"id"`
+	Title      string   `json:"title"`
+	Summary    string   `json:"summary"`
+	Content    string   `json:"-"`
+	Concepts   []string `json:"concepts"`
+	Categories []string `json:"categories"`
 	// SourcePath is the human-readable relative path of the source file this
 	// article was compiled from (e.g. "src/auth/login.go"). Optional for
 	// backward compatibility — legacy articles load with an empty string.
@@ -132,10 +132,10 @@ type Cache struct {
 }
 
 type LintIssue struct {
-	Type      string `json:"type"`
-	Severity  string `json:"severity"`
-	Message   string `json:"message"`
-	ArticleID string `json:"article_id,omitempty"`
+	Type       string `json:"type"`
+	Severity   string `json:"severity"`
+	Message    string `json:"message"`
+	ArticleID  string `json:"article_id,omitempty"`
 	Suggestion string `json:"suggestion,omitempty"`
 }
 
@@ -143,14 +143,14 @@ type LintIssue struct {
 
 // CodeModule holds extracted structure from a source file.
 type CodeModule struct {
-	Language  string       `json:"language"`  // go, python, typescript
-	FilePath  string       `json:"file_path"`
-	Package   string       `json:"package,omitempty"`
-	Imports   []string     `json:"imports,omitempty"`
-	Types     []CodeType   `json:"types,omitempty"`     // structs, classes, interfaces
-	Functions []CodeFunc   `json:"functions,omitempty"`
-	Constants []string     `json:"constants,omitempty"`
-	Docstring string       `json:"docstring,omitempty"` // module/package doc
+	Language  string     `json:"language"` // go, python, typescript
+	FilePath  string     `json:"file_path"`
+	Package   string     `json:"package,omitempty"`
+	Imports   []string   `json:"imports,omitempty"`
+	Types     []CodeType `json:"types,omitempty"` // structs, classes, interfaces
+	Functions []CodeFunc `json:"functions,omitempty"`
+	Constants []string   `json:"constants,omitempty"`
+	Docstring string     `json:"docstring,omitempty"` // module/package doc
 }
 
 type CodeType struct {
@@ -353,11 +353,11 @@ func exprName(expr ast.Expr) string {
 // --- Python Parser (regex-based) ---
 
 var (
-	pyClassRe    = regexp.MustCompile(`(?m)^class\s+(\w+)\s*(?:\(([^)]*)\))?\s*:`)
-	pyFuncRe     = regexp.MustCompile(`(?m)^(\s*)(async\s+)?def\s+(\w+)\s*\(([^)]*)\)(?:\s*->\s*([^\s:]+))?\s*:`)
-	pyImportRe   = regexp.MustCompile(`(?m)^(?:from\s+(\S+)\s+)?import\s+(.+)$`)
+	pyClassRe     = regexp.MustCompile(`(?m)^class\s+(\w+)\s*(?:\(([^)]*)\))?\s*:`)
+	pyFuncRe      = regexp.MustCompile(`(?m)^(\s*)(async\s+)?def\s+(\w+)\s*\(([^)]*)\)(?:\s*->\s*([^\s:]+))?\s*:`)
+	pyImportRe    = regexp.MustCompile(`(?m)^(?:from\s+(\S+)\s+)?import\s+(.+)$`)
 	pyDocstringRe = regexp.MustCompile(`(?m)^\s*"""((?s:.*?))"""`)
-	pyConstRe    = regexp.MustCompile(`(?m)^([A-Z][A-Z0-9_]+)\s*=`)
+	pyConstRe     = regexp.MustCompile(`(?m)^([A-Z][A-Z0-9_]+)\s*=`)
 )
 
 func parsePython(path, source string) *CodeModule {
@@ -2815,9 +2815,9 @@ func normalizeCategory(c string) string {
 // per-variant article counts so we can pick the most popular form as canonical.
 type categoryCluster struct {
 	Key       string         `json:"key"`
-	Variants  map[string]int `json:"variants"`   // original → article count
-	Total     int            `json:"total"`      // sum of article counts
-	Canonical string         `json:"canonical"`  // chosen form for --apply
+	Variants  map[string]int `json:"variants"`  // original → article count
+	Total     int            `json:"total"`     // sum of article counts
+	Canonical string         `json:"canonical"` // chosen form for --apply
 }
 
 // runCategoryNormalize scans every article in the scope, clusters category
@@ -3024,11 +3024,13 @@ func applyCategoryCanonical(scope string, articles []*WikiArticle, clusters []*c
 			changed++
 		}
 	}
-	// Rebuild the BM25 index since categories flow into it.
+	// Rebuild and persist the BM25 index since categories flow into it.
 	if changed > 0 {
 		all, _ := listArticles(scope)
 		idx := rebuildIndex(scope, all)
-		_ = idx // saved by rebuildIndex
+		if err := saveIndex(scope, idx); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save index after category normalization: %v\n", err)
+		}
 	}
 	return changed
 }
