@@ -437,7 +437,7 @@ The bridge is thin by design. Any agent pipeline can wire them together in ~20 l
 | `kb show <id>` | Print a full article |
 | `kb list` | List all articles |
 | `kb stats` | Counts for articles, concepts, words |
-| `kb lint` | Structural checks; add `--llm` for deeper analysis |
+| `kb lint` | Structural checks; `--llm` for deep LLM check; `--normalize-categories [--apply]` to collapse variant labels ("CLI"/"cli") into one |
 | `kb recompile <id>` | Recompile from raw source (`--all` for everything) |
 | `kb watch <path>` | Auto-rebuild on file changes |
 | `kb convo ingest <file>` | Parse a conversation transcript, extract entities/decisions/topics, create wiki articles |
