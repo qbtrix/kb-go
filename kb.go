@@ -2372,15 +2372,58 @@ func escapeMermaid(s string) string {
 
 func cmdSearch(args []string) {
 	if len(args) < 1 {
-		fatal("Usage: kb search <query> [--scope NAME] [--limit N] [--context] [--exclude-tags TAG]")
+		fatal("Usage: kb search <query> [--scope NAME] [--limit N] [--context] [--exclude-tags TAG] [--query-vec PATH] [--hybrid] [--topk N]")
 	}
 
-	query := args[0]
+	// First non-flag arg is the text query. May be empty in pure vector mode.
+	// (We can't just take args[0] anymore because `kb search --query-vec ...`
+	// has no positional text arg.)
+	query := ""
+	for _, a := range args {
+		if !strings.HasPrefix(a, "--") {
+			query = a
+			break
+		}
+	}
 	scope := flagStr(args, "--scope", "default")
 	limit := flagInt(args, "--limit", 5)
 	jsonOut := flagBool(args, "--json")
 	contextMode := flagBool(args, "--context")
 	excludeTags := flagStr(args, "--exclude-tags", "")
+	queryVecPath := flagStr(args, "--query-vec", "")
+	hybridMode := flagBool(args, "--hybrid")
+	topK := flagInt(args, "--topk", limit)
+
+	// Vector / hybrid path. When --query-vec is set we route here and skip
+	// the existing BM25-only code below — keeping the BM25-only path
+	// byte-identical preserves its JSON output shape (no new keys for
+	// existing consumers).
+	if queryVecPath != "" {
+		// Multi-scope vector search isn't in scope yet (see brief). Reject
+		// instead of silently picking a default — wrong result silently is
+		// worse than a clear error.
+		if scope == "*" || strings.Contains(scope, ",") {
+			fatal("vector search requires a single --scope, got %q", scope)
+		}
+		queryVec, err := loadVectorFromFile(queryVecPath)
+		if err != nil {
+			fatal("load query vector: %v", err)
+		}
+		var results []vectorSearchResult
+		if hybridMode {
+			if query == "" {
+				fatal("--hybrid requires a text query alongside --query-vec")
+			}
+			results, err = runHybridSearch(scope, query, queryVec, topK)
+		} else {
+			results, err = runVectorSearch(scope, queryVec, topK)
+		}
+		if err != nil {
+			fatal("%v", err)
+		}
+		emitVectorResults(results, hybridMode, jsonOut)
+		return
+	}
 
 	// Resolve scopes: "*" = all, "a,b,c" = specific, else single
 	scopes := resolveScopes(scope)
@@ -2508,6 +2551,15 @@ func cmdIngest(args []string) {
 	model := flagStr(args, "--model", defaultModel)
 	jsonOut := flagBool(args, "--json")
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+
+	// Vector-attach mode: `kb ingest --vec <path> --id <id> --scope <s>`
+	// attaches an externally-computed embedding to an existing article.
+	// No LLM compilation, no raw-doc creation — pure metadata write.
+	if vecPath := flagStr(args, "--vec", ""); vecPath != "" {
+		articleID := flagStr(args, "--id", "")
+		runIngestVec(scope, articleID, vecPath, jsonOut)
+		return
+	}
 
 	ensureDirs(scope)
 
@@ -2718,6 +2770,7 @@ func cmdStats(args []string) {
 	for _, a := range articles {
 		totalWords += a.WordCount
 	}
+	vectorCount := vectorIndexCount(scope)
 
 	if jsonOut {
 		printJSON(map[string]any{
@@ -2727,6 +2780,7 @@ func cmdStats(args []string) {
 			"words":      totalWords,
 			"concepts":   len(idx.Concepts),
 			"categories": len(idx.Categories),
+			"vectors":    vectorCount,
 		})
 	} else {
 		fmt.Printf("Knowledge Base: %s\n", scope)
@@ -2735,6 +2789,7 @@ func cmdStats(args []string) {
 		fmt.Printf("  Words:      %d\n", totalWords)
 		fmt.Printf("  Concepts:   %d\n", len(idx.Concepts))
 		fmt.Printf("  Categories: %d\n", len(idx.Categories))
+		fmt.Printf("  Vectors:    %d\n", vectorCount)
 	}
 }
 
@@ -3608,6 +3663,9 @@ Examples:
   kb search "auth middleware" --scope myapp
   kb ingest ./README.md --scope myapp
   echo "some text" | kb ingest --scope myapp --source "notes"
+  kb ingest --vec ./vec.json --id article-1 --scope myapp        # attach embedding
+  kb search --query-vec ./qvec.json --scope myapp --topk 5       # cosine search
+  kb search "rate limit" --hybrid --query-vec ./qvec.json --scope myapp --topk 5
   kb lint --scope myapp --llm
   kb lint --scope myapp --normalize-categories          # Dry run: report clusters
   kb lint --scope myapp --normalize-categories --apply  # Rewrite to canonical
