@@ -4,8 +4,9 @@ Headless knowledge base engine. Single-file Go CLI, no frameworks.
 
 ## Structure
 
-- `kb.go` — All logic in one file (build, search, ingest, show, list, stats, lint, recompile, watch, clear)
-- `kb_test.go` — 37 unit tests
+- `kb.go` — Core logic (build, search, ingest, show, list, stats, lint, recompile, watch, clear)
+- `glossary.go` — Domain glossary support (skip-LLM passthrough + list/show/validate commands)
+- `kb_test.go`, `glossary_test.go`, `convo_test.go`, `vsearch_test.go`, `vector_cli_test.go` — unit tests
 - `kb_bench_test.go` — 10 performance benchmarks
 - `bench.sh` — Integration benchmark script (full pipeline with LLM)
 - `SKILL.md` — skills.sh distribution
@@ -32,6 +33,9 @@ kb lint --scope <name> --llm    # deep LLM-powered
 kb recompile <id> --scope <name>
 kb recompile --all --scope <name>
 kb watch <path> --scope <name>
+kb glossary list --scope <name>
+kb glossary show <term> --scope <name>
+kb glossary validate --scope <name>
 kb clear --scope <name>
 ```
 
@@ -44,7 +48,8 @@ kb clear --scope <name>
 - Content hash caching (SHA256) for incremental builds
 - Parallel LLM compilation (5 concurrent goroutines, configurable via --concurrency)
 - AST parsing: Go via go/ast (stdlib), Python via regex, TypeScript/JS via regex
-- BM25 search with title (3x) and concept (2x) boosting
+- BM25 search with title (3x), concept (2x), and glossary exact-Term/Alias (10x) boosting
+- Glossary articles: files under any `glossary/` directory skip LLM compilation and round-trip verbatim
 - `--json` flag for machine-readable output on all commands
 - Multi-pattern support: `"*.go,*.py,*.ts"` in a single build
 
@@ -66,6 +71,7 @@ go test -bench=. -benchmem    # Performance benchmarks
 - **Lint:** empty KB, missing concepts, broken backlinks
 - **Scanning:** pattern matching, directory skipping, multi-pattern
 - **Compatibility:** Python knowledge-base format interop
+- **Glossary:** frontmatter round-trip, build-skip-LLM verbatim, exact-Term/Alias search boost, list/show/validate
 
 ## Relationship to Other Projects
 
