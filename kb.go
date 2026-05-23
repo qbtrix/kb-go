@@ -86,6 +86,14 @@ type WikiArticle struct {
 	Audience    string `json:"audience,omitempty"`
 	Depth       string `json:"depth,omitempty"`
 	TargetWords int    `json:"target_words,omitempty"`
+	// Glossary metadata (issue #15). Kind == "" is the default module article;
+	// Kind == "glossary" marks a hand-curated definition that round-trips through
+	// the wiki without LLM rewriting. All optional for backward compatibility.
+	Kind     string   `json:"kind,omitempty"`     // "" = module article (default), "glossary" = hand-curated
+	Term     string   `json:"term,omitempty"`     // glossary: canonical term
+	Aliases  []string `json:"aliases,omitempty"`  // glossary: alternative names
+	Category string   `json:"category,omitempty"` // glossary: single category (distinct from Categories []string)
+	Related  []string `json:"related,omitempty"`  // glossary: refs to other terms/aliases
 }
 
 // Frontmatter is the JSON block at the top of .md files.
@@ -105,6 +113,12 @@ type Frontmatter struct {
 	Audience    string `json:"audience,omitempty"`
 	Depth       string `json:"depth,omitempty"`
 	TargetWords int    `json:"target_words,omitempty"`
+	// Glossary metadata — mirrors WikiArticle fields (issue #15).
+	Kind     string   `json:"kind,omitempty"`
+	Term     string   `json:"term,omitempty"`
+	Aliases  []string `json:"aliases,omitempty"`
+	Category string   `json:"category,omitempty"`
+	Related  []string `json:"related,omitempty"`
 }
 
 type Concept struct {
@@ -769,6 +783,11 @@ func saveArticle(scope string, a *WikiArticle) error {
 		Audience:     a.Audience,
 		Depth:        a.Depth,
 		TargetWords:  a.TargetWords,
+		Kind:         a.Kind,
+		Term:         a.Term,
+		Aliases:      a.Aliases,
+		Category:     a.Category,
+		Related:      a.Related,
 	}
 	fmData, err := json.MarshalIndent(fm, "", "  ")
 	if err != nil {
@@ -847,6 +866,11 @@ func parseArticle(id, text string) (*WikiArticle, error) {
 		Audience:     audience,
 		Depth:        depth,
 		TargetWords:  targetWords,
+		Kind:         fm.Kind,
+		Term:         fm.Term,
+		Aliases:      fm.Aliases,
+		Category:     fm.Category,
+		Related:      fm.Related,
 	}, nil
 }
 
@@ -1184,7 +1208,10 @@ func bm25SearchWithIndex(articles []*WikiArticle, query string, limit int, si *S
 		idfs[term] = math.Log((float64(len(docs))-float64(df)+0.5)/(float64(df)+0.5) + 1)
 	}
 
-	// Score each doc with title (3x) and concept (2x) boosting
+	// Score each doc with title (3x), concept (2x), and glossary (10x) boosting.
+	// The glossary boost lets hand-curated definitions outrank module articles
+	// that merely mention the term — see issue #15.
+	const glossaryExactBoost = 10.0
 	type scored struct {
 		idx   int
 		score float64
@@ -1209,6 +1236,42 @@ func bm25SearchWithIndex(articles []*WikiArticle, query string, limit int, si *S
 				s += base * 1.0
 			}
 		}
+
+		// Glossary exact-Term / Alias boost (case-insensitive). Applied at most
+		// once per document. Both adds a baseline (so alias-only matches with
+		// zero organic BM25 still rank) and multiplies the result, so a glossary
+		// hit consistently outranks mention-heavy module articles.
+		if articles[i].Kind == "glossary" {
+			matched := false
+			termLower := strings.ToLower(articles[i].Term)
+			aliasesLower := make([]string, len(articles[i].Aliases))
+			for k, al := range articles[i].Aliases {
+				aliasesLower[k] = strings.ToLower(al)
+			}
+			for _, qt := range queryTerms {
+				qLower := strings.ToLower(qt)
+				if termLower != "" && termLower == qLower {
+					matched = true
+					break
+				}
+				for _, al := range aliasesLower {
+					if al == qLower {
+						matched = true
+						break
+					}
+				}
+				if matched {
+					break
+				}
+			}
+			if matched {
+				// Add a baseline so alias-only matches (TF=0 in docs) still rank
+				// positive, then multiply so we dominate any module article that
+				// merely mentions the term in body text.
+				s = (s + 1.0) * glossaryExactBoost
+			}
+		}
+
 		scores[i] = scored{i, s}
 	}
 
@@ -1694,29 +1757,69 @@ func cmdBuild(args []string) {
 			}
 			saveRawDoc(scope, raw)
 
-			// Parse AST if supported language
-			codeMod := parseCode(j.filePath, j.text)
+			var article *WikiArticle
+			var usage *TokenUsage
 
-			// Compile with LLM
-			article, usage, err := compileLLM(j.text, j.relPath, model, apiKey, codeMod, terse)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: compilation failed for %s: %v\n", j.relPath, err)
-				audience, depth, targetWords := "human", "deep", 500
-				if terse {
-					audience, depth, targetWords = "agent", "overview", 150
+			if isGlossarySource(j.relPath) {
+				// Glossary sources are hand-curated: parse frontmatter directly,
+				// preserve body verbatim, do NOT call compileLLM.
+				gArt, gErr := parseGlossarySource([]byte(j.text), j.relPath)
+				if gErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: glossary parse failed for %s: %v\n", j.relPath, gErr)
+					article = &WikiArticle{
+						ID:           slugify(strings.TrimSuffix(filepath.Base(j.filePath), filepath.Ext(j.filePath))),
+						Title:        strings.TrimSuffix(filepath.Base(j.filePath), filepath.Ext(j.filePath)),
+						Content:      j.text,
+						Kind:         "glossary",
+						WordCount:    wordCount(j.text),
+						CompiledAt:   time.Now().UTC().Format(time.RFC3339),
+						CompiledWith: "none (glossary fallback)",
+						Version:      1,
+					}
+				} else {
+					article = gArt
+					article.Kind = "glossary"
+					if article.CompiledAt == "" {
+						article.CompiledAt = time.Now().UTC().Format(time.RFC3339)
+					}
+					if article.CompiledWith == "" {
+						article.CompiledWith = "glossary (verbatim)"
+					}
+					if article.Version == 0 {
+						article.Version = 1
+					}
+					if article.WordCount == 0 {
+						article.WordCount = wordCount(article.Content)
+					}
 				}
-				article = &WikiArticle{
-					ID:           slugify(filepath.Base(j.filePath)),
-					Title:        filepath.Base(j.filePath),
-					Summary:      truncate(j.text, 200),
-					Content:      j.text,
-					WordCount:    wordCount(j.text),
-					CompiledAt:   time.Now().UTC().Format(time.RFC3339),
-					CompiledWith: "none (fallback)",
-					Version:      1,
-					Audience:     audience,
-					Depth:        depth,
-					TargetWords:  targetWords,
+			} else {
+				// Parse AST if supported language
+				codeMod := parseCode(j.filePath, j.text)
+
+				// Compile with LLM
+				compArticle, compUsage, err := compileLLM(j.text, j.relPath, model, apiKey, codeMod, terse)
+				usage = compUsage
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: compilation failed for %s: %v\n", j.relPath, err)
+					audience, depth, targetWords := "human", "deep", 500
+					if terse {
+						audience, depth, targetWords = "agent", "overview", 150
+					}
+					article = &WikiArticle{
+						ID:           slugify(filepath.Base(j.filePath)),
+						Title:        filepath.Base(j.filePath),
+						Summary:      truncate(j.text, 200),
+						Content:      j.text,
+						WordCount:    wordCount(j.text),
+						CompiledAt:   time.Now().UTC().Format(time.RFC3339),
+						CompiledWith: "none (fallback)",
+						Version:      1,
+						Audience:     audience,
+						Depth:        depth,
+						TargetWords:  targetWords,
+					}
+				} else {
+					article = compArticle
 				}
 			}
 			article.SourcePath = j.relPath
@@ -3615,6 +3718,8 @@ func main() {
 		cmdWatch(args)
 	case "convo":
 		cmdConvo(args)
+	case "glossary":
+		cmdGlossary(args)
 	case "version":
 		fmt.Println("kb v0.1.0")
 	case "help", "--help", "-h":
@@ -3648,6 +3753,7 @@ Commands:
   clear                  Delete all knowledge for a scope
   watch <path>           Auto-rebuild on file changes
   convo <sub>            Conversation mode (ingest, search, list)
+  glossary <sub>         Domain glossary (list, show, validate)
   version                Show version
 
 Global flags:
