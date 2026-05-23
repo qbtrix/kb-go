@@ -127,6 +127,22 @@ kb graph --scope myproject --format dot | dot -Tpng > graph.png
 
 Mermaid output drops directly into GitHub, Obsidian, or Notion.
 
+### Domain glossary
+
+Hand-curate definitions for project-specific terms LLMs default to misreading (Pocket, Soul, Fabric, etc.). Drop markdown files into any `glossary/` directory and `kb build` indexes them without LLM rewriting — body preserved byte-for-byte.
+
+```bash
+# Frontmatter shape: kind/term/aliases/category/related
+# (see README "Domain glossary" section for the full schema)
+
+kb glossary list --scope myproject
+kb glossary show Pocket --scope myproject       # by canonical term
+kb glossary show pkt --scope myproject          # or by alias (case-insensitive)
+kb glossary validate --scope myproject          # dup terms, alias collisions, dangling refs
+```
+
+`kb search` boosts glossary entries 10× when a query token exactly matches a `Term` or `Alias`, so hand-curated definitions outrank mention-heavy module articles.
+
 ### Clear
 
 ```bash

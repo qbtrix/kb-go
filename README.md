@@ -343,6 +343,78 @@ Flags:
 - `--limit N` — cap concepts in overview (default 30)
 - `--min-articles N` — only include concepts appearing in ≥N articles (default 2)
 
+## Domain glossary
+
+Every project carries vocabulary that LLMs misread by default — a "Pocket" that is not clothing, a "Soul" that is not religious, a "Fabric" that is not textile. Burying those definitions in chat-time prompts doesn't scale past five or six terms. kb-go hosts the full glossary as a first-class article type that round-trips through the wiki without LLM rewriting.
+
+### Placement
+
+Drop hand-curated markdown files in any directory whose immediate parent is named `glossary`. `kb build` recognizes the convention and skips LLM compilation for those files.
+
+```
+docs/
+  wiki/
+    glossary/
+      pocket.md
+      soul.md
+      fabric.md
+    ...
+src/
+  ... (your code)
+```
+
+### Frontmatter shape
+
+```markdown
+---
+{"id":"pocket","title":"Pocket","kind":"glossary","term":"Pocket","aliases":["pkt","pocket"],"category":"workspace-primitives","related":["Soul","Fabric"]}
+---
+
+A Pocket is a workspace container that holds agents, data, tools, connectors,
+and rules. The "app" primitive of the agentic OS.
+
+**Not:** clothing.
+**Related:** Soul, Fabric.
+```
+
+Glossary-only fields:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `kind` | string | `"glossary"` marks this article as hand-curated (auto-set when parent dir is `glossary/`) |
+| `term` | string | Canonical name surfaced in `list`, matched in `show`, boosted in `search` |
+| `aliases` | string[] | Alternative names — all also match in `show` and `search` |
+| `category` | string | Bucket label (e.g. `workspace-primitives`); shown in `list` |
+| `related` | string[] | Cross-references to other terms or aliases; validated by `glossary validate` |
+
+The body below the frontmatter is preserved byte-for-byte. No LLM call.
+
+### Commands
+
+```bash
+# Enumerate the glossary
+kb glossary list --scope myproject
+
+# TERM     CATEGORY              ALIASES        FILE
+# Pocket   workspace-primitives  pkt,pocket     pocket.md
+# Soul     identity              spirit         soul.md
+# Fabric   ontology              -              fabric.md
+
+# Print one entry (matches Term or any Alias, case-insensitive)
+kb glossary show Pocket --scope myproject
+kb glossary show pkt    --scope myproject   # alias works
+kb glossary show POCKET --scope myproject   # case-insensitive
+
+# Structural checks
+kb glossary validate --scope myproject
+# Reports: duplicate terms, duplicate aliases, alias↔term collisions,
+# dangling `related` references. Exit code 2 when issues are found.
+```
+
+### Search ranking
+
+`kb search` applies a 10× boost on top of the normal BM25 score whenever a query token exactly matches a glossary article's `Term` or any `Alias` (case-insensitive). Hand-curated definitions outrank module articles that merely mention the term in passing.
+
 ## Pairing with Soul Protocol
 
 kb and [Soul Protocol](https://github.com/qbtrix/soul-protocol) solve different halves of the same problem. Wire them together in your agent pipeline and you get something most AI tools don't have: memory of what happened plus a structured view of what exists now.
@@ -443,6 +515,9 @@ The bridge is thin by design. Any agent pipeline can wire them together in ~20 l
 | `kb convo ingest <file>` | Parse a conversation transcript, extract entities/decisions/topics, create wiki articles |
 | `kb convo search <query>` | Search conversation articles |
 | `kb convo list` | List conversation articles |
+| `kb glossary list` | List hand-curated glossary entries in the scope |
+| `kb glossary show <term>` | Print a glossary entry's body (matches Term or Alias, case-insensitive) |
+| `kb glossary validate` | Check for duplicate terms, alias collisions, dangling references |
 | `kb clear` | Wipe all data for a scope |
 
 ## Flags
