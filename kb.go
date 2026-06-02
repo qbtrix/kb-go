@@ -3615,6 +3615,8 @@ func main() {
 		cmdWatch(args)
 	case "convo":
 		cmdConvo(args)
+	case "serve":
+		cmdServe(args)
 	case "version":
 		fmt.Println("kb v0.1.0")
 	case "help", "--help", "-h":
@@ -3648,6 +3650,7 @@ Commands:
   clear                  Delete all knowledge for a scope
   watch <path>           Auto-rebuild on file changes
   convo <sub>            Conversation mode (ingest, search, list)
+  serve                  Expose read-only KB tools over MCP on stdio
   version                Show version
 
 Global flags:
