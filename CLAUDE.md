@@ -6,6 +6,7 @@ Headless knowledge base engine. Single-file Go CLI, no frameworks.
 
 - `kb.go` — Core logic (build, search, ingest, show, list, stats, lint, recompile, watch, clear)
 - `glossary.go` — Domain glossary support (skip-LLM passthrough + list/show/validate commands)
+- `contradiction.go` — Cross-source definition contradiction detection (offline; flags terms two sources define differently)
 - `kb_test.go`, `glossary_test.go`, `convo_test.go`, `vsearch_test.go`, `vector_cli_test.go` — unit tests
 - `kb_bench_test.go` — 10 performance benchmarks
 - `bench.sh` — Integration benchmark script (full pipeline with LLM)

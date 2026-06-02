@@ -405,11 +405,37 @@ kb glossary show Pocket --scope myproject
 kb glossary show pkt    --scope myproject   # alias works
 kb glossary show POCKET --scope myproject   # case-insensitive
 
-# Structural checks
+# Structural and semantic checks
 kb glossary validate --scope myproject
 # Reports: duplicate terms, duplicate aliases, alias↔term collisions,
-# dangling `related` references. Exit code 2 when issues are found.
+# dangling `related` references, and cross-source contradictions.
+# Exit code 2 when issues are found.
 ```
+
+### Cross-source contradictions
+
+Structural checks catch a term defined twice. They don't catch the worse case: two sources that both define the same term but *disagree on what it means*. That's the failure mode the glossary exists to prevent — a "Soul" that one source treats as spiritual and another as the agent-identity layer. Left alone, the build picks a winner by save order and the loser disappears with no warning.
+
+`kb build` now scans glossary definitions for these conflicts and flags them instead of merging silently:
+
+```bash
+kb build ./docs --scope myproject --pattern "*.md"
+# ...
+# 1 glossary contradiction(s) — sources disagree on a definition:
+#   contradiction: term "Soul" defined differently across sources [...]
+```
+
+The tool flags, it does not resolve. A human decides which definition is canonical. Behavior:
+
+- Detected during `kb build` and re-listed by `kb glossary validate`.
+- `kb build` exits `3` when contradictions are found (CI-gateable); `--json` emits a `contradictions` array instead of exiting non-zero.
+- Threshold is tunable via `--contradiction-mode`:
+  - `strict` (default) — flags when the definitions' first sentences differ.
+  - `loose` — flags only when the full definition bodies differ.
+  - `off` — skip the scan.
+- Fully offline. No LLM, no network. An optional LLM-assisted similarity pass can layer on later as a flag, never a hard dependency.
+
+**Caveat — this compares wording, not meaning.** The scan keys on the normalized text (first sentence in `strict`, full body in `loose`), so it measures whether two definitions are *worded* differently, not whether they actually *disagree*. Two sources that mean the same thing but phrase it differently — a paraphrase, a reordered clause, a synonym — will be flagged as a contradiction even though they agree. Because `kb build` exits `3` on a finding, a paraphrase-only divergence can fail a CI gate. If `strict` is too aggressive for your build, drop to `loose` (which only fires when the whole body differs) or `off`, and lean on `kb glossary validate` for a non-gating review instead.
 
 ### Search ranking
 
@@ -517,7 +543,7 @@ The bridge is thin by design. Any agent pipeline can wire them together in ~20 l
 | `kb convo list` | List conversation articles |
 | `kb glossary list` | List hand-curated glossary entries in the scope |
 | `kb glossary show <term>` | Print a glossary entry's body (matches Term or Alias, case-insensitive) |
-| `kb glossary validate` | Check for duplicate terms, alias collisions, dangling references |
+| `kb glossary validate` | Check for duplicate terms, alias collisions, dangling references, and cross-source contradictions |
 | `kb clear` | Wipe all data for a scope |
 
 ## Flags
@@ -530,6 +556,7 @@ The bridge is thin by design. Any agent pipeline can wire them together in ~20 l
 | `--pattern` | `*.py` | File patterns, comma-separated |
 | `--concurrency` | `5` | Parallel compilations |
 | `--output` | | Export wiki to directory |
+| `--contradiction-mode` | `strict` | Glossary contradiction threshold on `kb build`: `strict`, `loose`, or `off` |
 | `--lang` | auto | Language for stdin ingest |
 
 ## AST parsing

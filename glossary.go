@@ -13,6 +13,11 @@
 // round-trip through the wiki without LLM rewriting. The Kind="glossary" flag
 // on WikiArticle distinguishes them from module articles at search time
 // (10x exact-Term/Alias boost in bm25SearchWithIndex).
+//
+// Changes (issue #19): glossaryValidate now also surfaces cross-source semantic
+// contradictions (two sources defining the same term differently) by delegating
+// to detectContradictions in contradiction.go and appending CONTRADICTION
+// findings to its issue list.
 package main
 
 import (
@@ -135,7 +140,7 @@ func glossaryUsage() {
 Sub-commands:
   list                    List all glossary entries in the scope
   show <term>             Print a glossary entry's body
-  validate                Check for duplicates, alias collisions, dangling refs
+  validate                Check duplicates, alias collisions, dangling refs, contradictions
 
 Flags:
   --scope NAME            Knowledge scope (default: "default")`)
@@ -390,6 +395,15 @@ func glossaryValidate(scope string) ([]string, error) {
 				issues = append(issues, fmt.Sprintf("related reference %q in %s not found", ref, a.ID))
 			}
 		}
+	}
+
+	// Cross-source semantic contradictions (issue #19): same term/alias defined
+	// with materially different definitions across two or more sources. Strict
+	// threshold by default — see contradiction.go. This is additive to the
+	// structural checks above; a duplicate-term collision can also be a
+	// contradiction, and both findings are reported.
+	for _, c := range detectContradictions(candidatesFromArticles(entries), ContradictionConfig{Mode: "strict"}) {
+		issues = append(issues, formatContradictionIssue(c))
 	}
 
 	return issues, nil

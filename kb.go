@@ -1642,6 +1642,9 @@ func cmdBuild(args []string) {
 	terse := flagBool(args, "--terse")
 	outputDir := flagStr(args, "--output", "")
 	sinceRef := flagStr(args, "--since", "")
+	// strict | loose | off (issue #19). NB: matching is on wording, not meaning —
+	// paraphrased-but-agreeing sources can be flagged. See contradiction.go.
+	contraMode := flagStr(args, "--contradiction-mode", "strict")
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 
 	absPath, err := filepath.Abs(path)
@@ -1864,15 +1867,42 @@ func cmdBuild(args []string) {
 	saveIndex(scope, idx)
 	saveSearchIndex(scope, buildSearchIndex(allArticles))
 
+	// Cross-source contradiction scan (issue #19). We feed the detector this
+	// run's compiled glossary results plus the on-disk set (allArticles). The
+	// case the scan catches is the common one: two glossary sources with DISTINCT
+	// ids that define the same Term — both survive on disk, so allArticles carries
+	// the pair and the disagreement is flagged. (The harder same-id case, where
+	// two sources resolve to one wiki/<id>.md and the later write silently
+	// overwrites the earlier, is NOT recovered here: detectContradictions dedupes
+	// on nameKey+sourceID, and same-id candidates share a sourceID, so they
+	// collapse to one member whether they arrive via results or allArticles.) The
+	// per-results pass is thus redundant with allArticles for the distinct-id case
+	// and a no-op for the same-id case; it is kept only as a cheap guard for a
+	// future change that lets results carry a glossary article not yet on disk.
+	// Within a single run `results` is append-only — no in-run duplicates to
+	// recover. Detection lives in contradiction.go.
+	var contradictions []Contradiction
+	if contraMode != "off" {
+		var buildCands []ContradictionCandidate
+		for _, r := range results {
+			if r.article != nil && r.article.Kind == "glossary" {
+				buildCands = append(buildCands, candidatesFromArticles([]*WikiArticle{r.article})...)
+			}
+		}
+		buildCands = append(buildCands, candidatesFromArticles(allArticles)...)
+		contradictions = detectContradictions(buildCands, ContradictionConfig{Mode: contraMode})
+	}
+
 	if jsonOut {
 		out := map[string]any{
-			"changed":       changed,
-			"cached":        skipped,
-			"total":         len(files),
-			"articles":      len(allArticles),
-			"input_tokens":  totalInput,
-			"output_tokens": totalOutput,
-			"total_tokens":  totalInput + totalOutput,
+			"changed":        changed,
+			"cached":         skipped,
+			"total":          len(files),
+			"articles":       len(allArticles),
+			"input_tokens":   totalInput,
+			"output_tokens":  totalOutput,
+			"total_tokens":   totalInput + totalOutput,
+			"contradictions": contradictions,
 		}
 		printJSON(out)
 	} else {
@@ -1881,11 +1911,25 @@ func cmdBuild(args []string) {
 		if totalInput > 0 {
 			fmt.Printf("Tokens: %d input + %d output = %d total\n", totalInput, totalOutput, totalInput+totalOutput)
 		}
+		if len(contradictions) > 0 {
+			fmt.Fprintf(os.Stderr, "\n%d glossary contradiction(s) — sources disagree on a definition:\n", len(contradictions))
+			for _, c := range contradictions {
+				fmt.Fprintln(os.Stderr, "  "+formatContradictionIssue(c))
+			}
+			fmt.Fprintln(os.Stderr, "Resolve which definition is canonical, then rebuild. (`kb glossary validate` re-lists these.)")
+		}
 	}
 
 	// Export wiki to output directory if specified
 	if outputDir != "" {
 		exportWiki(scope, outputDir)
+	}
+
+	// Non-zero signal so CI can gate on unresolved contradictions. Runs after
+	// export so the wiki is still written. Suppressed in --json mode (the
+	// "contradictions" array already carries the machine-readable signal).
+	if len(contradictions) > 0 && !jsonOut {
+		os.Exit(3)
 	}
 }
 
