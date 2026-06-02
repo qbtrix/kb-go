@@ -798,7 +798,27 @@ func saveArticle(scope string, a *WikiArticle) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
+// containedID rejects article ids that could escape the scope's wiki dir once
+// joined and cleaned by filepath.Join (issue #23). Every id kb-go generates is
+// slug-like — slugify() emits only [a-z0-9-], contentHash emits hex, and
+// glossary term ids are slugs — so none legitimately carry a path separator or
+// "..". The CLI (`kb show`, `kb recompile`) and the MCP surface (`kb_show`,
+// `kb_glossary`, and any path that resolves a stored id) all funnel through
+// loadArticle, so guarding here closes traversal for every caller in one place.
+func containedID(id string) error {
+	if id == "" {
+		return fmt.Errorf("article id is empty")
+	}
+	if strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
+		return fmt.Errorf("invalid article id %q: must not contain path separators or %q", id, "..")
+	}
+	return nil
+}
+
 func loadArticle(scope, id string) (*WikiArticle, error) {
+	if err := containedID(id); err != nil {
+		return nil, err
+	}
 	path := filepath.Join(scopeDir(scope), "wiki", id+".md")
 	data, err := os.ReadFile(path)
 	if err != nil {

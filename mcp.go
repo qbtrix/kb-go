@@ -392,7 +392,9 @@ func mcpSearch(args map[string]any, defaultScope string) (any, error) {
 		if scope == "*" || strings.Contains(scope, ",") {
 			return nil, fmt.Errorf("vector search requires a single scope, got %q", scope)
 		}
-		queryVec, err := loadVectorFromFile(queryVecPath)
+		// Agent-controlled path over a persistent connection — contain it to
+		// the kb base dir so it can't be used as a read-oracle (issue #23).
+		queryVec, err := loadVectorFromContainedFile(queryVecPath)
 		if err != nil {
 			return nil, fmt.Errorf("load query vector: %v", err)
 		}
