@@ -1642,6 +1642,7 @@ func cmdBuild(args []string) {
 	terse := flagBool(args, "--terse")
 	outputDir := flagStr(args, "--output", "")
 	sinceRef := flagStr(args, "--since", "")
+	contraMode := flagStr(args, "--contradiction-mode", "strict") // strict | loose | off (issue #19)
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 
 	absPath, err := filepath.Abs(path)
@@ -1864,15 +1865,33 @@ func cmdBuild(args []string) {
 	saveIndex(scope, idx)
 	saveSearchIndex(scope, buildSearchIndex(allArticles))
 
+	// Cross-source contradiction scan (issue #19). buildContradictionCandidates
+	// pulls definitions from this run's results — which still contain same-ID
+	// duplicates that saveArticle silently collapsed — plus the on-disk set, so
+	// we flag disagreements that would otherwise vanish into a last-writer-wins
+	// merge. Detection lives in contradiction.go; this is the build hook.
+	var contradictions []Contradiction
+	if contraMode != "off" {
+		var buildCands []ContradictionCandidate
+		for _, r := range results {
+			if r.article != nil && r.article.Kind == "glossary" {
+				buildCands = append(buildCands, candidatesFromArticles([]*WikiArticle{r.article})...)
+			}
+		}
+		buildCands = append(buildCands, candidatesFromArticles(allArticles)...)
+		contradictions = detectContradictions(buildCands, ContradictionConfig{Mode: contraMode})
+	}
+
 	if jsonOut {
 		out := map[string]any{
-			"changed":       changed,
-			"cached":        skipped,
-			"total":         len(files),
-			"articles":      len(allArticles),
-			"input_tokens":  totalInput,
-			"output_tokens": totalOutput,
-			"total_tokens":  totalInput + totalOutput,
+			"changed":        changed,
+			"cached":         skipped,
+			"total":          len(files),
+			"articles":       len(allArticles),
+			"input_tokens":   totalInput,
+			"output_tokens":  totalOutput,
+			"total_tokens":   totalInput + totalOutput,
+			"contradictions": contradictions,
 		}
 		printJSON(out)
 	} else {
@@ -1881,11 +1900,25 @@ func cmdBuild(args []string) {
 		if totalInput > 0 {
 			fmt.Printf("Tokens: %d input + %d output = %d total\n", totalInput, totalOutput, totalInput+totalOutput)
 		}
+		if len(contradictions) > 0 {
+			fmt.Fprintf(os.Stderr, "\n%d glossary contradiction(s) — sources disagree on a definition:\n", len(contradictions))
+			for _, c := range contradictions {
+				fmt.Fprintln(os.Stderr, "  "+formatContradictionIssue(c))
+			}
+			fmt.Fprintln(os.Stderr, "Resolve which definition is canonical, then rebuild. (`kb glossary validate` re-lists these.)")
+		}
 	}
 
 	// Export wiki to output directory if specified
 	if outputDir != "" {
 		exportWiki(scope, outputDir)
+	}
+
+	// Non-zero signal so CI can gate on unresolved contradictions. Runs after
+	// export so the wiki is still written. Suppressed in --json mode (the
+	// "contradictions" array already carries the machine-readable signal).
+	if len(contradictions) > 0 && !jsonOut {
+		os.Exit(3)
 	}
 }
 
