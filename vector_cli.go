@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // rrfK is the standard reciprocal-rank-fusion constant from Cormack et al.
@@ -78,6 +79,7 @@ func saveVectorIndex(scope string, idx *VectorIndex) error {
 func loadVectorFromFile(path string) ([]float32, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		// os.ReadFile errors echo only the path, never file bytes — safe to keep.
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	// Try object form first: {"vector": [...]}
@@ -87,15 +89,44 @@ func loadVectorFromFile(path string) ([]float32, error) {
 	if err := json.Unmarshal(data, &asObj); err == nil && len(asObj.Vector) > 0 {
 		return asObj.Vector, nil
 	}
-	// Fall back to bare-array form: [...]
+	// Fall back to bare-array form: [...]. Do NOT wrap the json error (issue
+	// #23): encoding/json's messages embed the offending input bytes, which
+	// would echo file contents back to an agent over the MCP surface. A generic
+	// shape message is enough for a human to fix a hand-written fixture.
 	var asArr []float32
 	if err := json.Unmarshal(data, &asArr); err != nil {
-		return nil, fmt.Errorf("parse %s: not {\"vector\": [...]} or [...]: %w", path, err)
+		return nil, fmt.Errorf("parse %s: not {\"vector\": [...]} or [...]", path)
 	}
 	if len(asArr) == 0 {
 		return nil, fmt.Errorf("parse %s: vector is empty", path)
 	}
 	return asArr, nil
+}
+
+// loadVectorFromContainedFile is the agent-reachable variant of
+// loadVectorFromFile (issue #23). The MCP `kb_search` query_vec_path arg is
+// agent-controlled over a persistent connection, so unlike the human-typed CLI
+// `--query-vec`/`--vec` flags it must not read arbitrary disk paths. The query
+// vector must resolve inside the kb base dir (~/.knowledge-base). On rejection
+// the error names only the offending path, never the contained dir's contents.
+func loadVectorFromContainedFile(path string) ([]float32, error) {
+	if path == "" {
+		return nil, fmt.Errorf("query vector path is empty")
+	}
+	base, err := filepath.Abs(basePath())
+	if err != nil {
+		return nil, fmt.Errorf("resolve base dir: %w", err)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid query vector path")
+	}
+	// filepath.Abs already cleans, collapsing any ".." so the prefix check is
+	// sound. Require a path-segment boundary so "<base>-evil" can't slip past.
+	if abs != base && !strings.HasPrefix(abs, base+string(filepath.Separator)) {
+		return nil, fmt.Errorf("query vector path must be inside the knowledge base directory")
+	}
+	return loadVectorFromFile(abs)
 }
 
 // attachVectorToArticle is the non-fatal core of `kb ingest --vec`. Validates
