@@ -158,13 +158,25 @@ func cmdGlossary(args []string) {
 			os.Exit(1)
 		}
 	case "show":
-		// First non-flag arg is the term; allow `--scope` to appear anywhere.
+		// First positional arg is the term. Skip flags and the value
+		// that follows a value-taking flag, so `--scope <name>` can
+		// appear before or after the term without being read as the term.
 		term := ""
+		skipNext := false
 		for _, a := range rest {
-			if !strings.HasPrefix(a, "--") {
-				term = a
-				break
+			if skipNext {
+				skipNext = false
+				continue
 			}
+			if a == "--scope" {
+				skipNext = true
+				continue
+			}
+			if strings.HasPrefix(a, "--") {
+				continue
+			}
+			term = a
+			break
 		}
 		if term == "" {
 			fmt.Fprintln(os.Stderr, "usage: kb glossary show <term> [--scope <scope>]")
