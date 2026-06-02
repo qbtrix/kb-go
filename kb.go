@@ -1642,7 +1642,9 @@ func cmdBuild(args []string) {
 	terse := flagBool(args, "--terse")
 	outputDir := flagStr(args, "--output", "")
 	sinceRef := flagStr(args, "--since", "")
-	contraMode := flagStr(args, "--contradiction-mode", "strict") // strict | loose | off (issue #19)
+	// strict | loose | off (issue #19). NB: matching is on wording, not meaning —
+	// paraphrased-but-agreeing sources can be flagged. See contradiction.go.
+	contraMode := flagStr(args, "--contradiction-mode", "strict")
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 
 	absPath, err := filepath.Abs(path)
@@ -1865,11 +1867,20 @@ func cmdBuild(args []string) {
 	saveIndex(scope, idx)
 	saveSearchIndex(scope, buildSearchIndex(allArticles))
 
-	// Cross-source contradiction scan (issue #19). buildContradictionCandidates
-	// pulls definitions from this run's results — which still contain same-ID
-	// duplicates that saveArticle silently collapsed — plus the on-disk set, so
-	// we flag disagreements that would otherwise vanish into a last-writer-wins
-	// merge. Detection lives in contradiction.go; this is the build hook.
+	// Cross-source contradiction scan (issue #19). We feed the detector this
+	// run's compiled glossary results plus the on-disk set (allArticles). The
+	// case the scan catches is the common one: two glossary sources with DISTINCT
+	// ids that define the same Term — both survive on disk, so allArticles carries
+	// the pair and the disagreement is flagged. (The harder same-id case, where
+	// two sources resolve to one wiki/<id>.md and the later write silently
+	// overwrites the earlier, is NOT recovered here: detectContradictions dedupes
+	// on nameKey+sourceID, and same-id candidates share a sourceID, so they
+	// collapse to one member whether they arrive via results or allArticles.) The
+	// per-results pass is thus redundant with allArticles for the distinct-id case
+	// and a no-op for the same-id case; it is kept only as a cheap guard for a
+	// future change that lets results carry a glossary article not yet on disk.
+	// Within a single run `results` is append-only — no in-run duplicates to
+	// recover. Detection lives in contradiction.go.
 	var contradictions []Contradiction
 	if contraMode != "off" {
 		var buildCands []ContradictionCandidate

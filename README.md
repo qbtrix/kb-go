@@ -435,6 +435,8 @@ The tool flags, it does not resolve. A human decides which definition is canonic
   - `off` — skip the scan.
 - Fully offline. No LLM, no network. An optional LLM-assisted similarity pass can layer on later as a flag, never a hard dependency.
 
+**Caveat — this compares wording, not meaning.** The scan keys on the normalized text (first sentence in `strict`, full body in `loose`), so it measures whether two definitions are *worded* differently, not whether they actually *disagree*. Two sources that mean the same thing but phrase it differently — a paraphrase, a reordered clause, a synonym — will be flagged as a contradiction even though they agree. Because `kb build` exits `3` on a finding, a paraphrase-only divergence can fail a CI gate. If `strict` is too aggressive for your build, drop to `loose` (which only fires when the whole body differs) or `off`, and lean on `kb glossary validate` for a non-gating review instead.
+
 ### Search ranking
 
 `kb search` applies a 10× boost on top of the normal BM25 score whenever a query token exactly matches a glossary article's `Term` or any `Alias` (case-insensitive). Hand-curated definitions outrank module articles that merely mention the term in passing.

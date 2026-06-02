@@ -19,6 +19,12 @@
 //   - "loose": definitions conflict only when the full normalized body differs.
 //     Fewer findings; use when first-sentence drift is expected/acceptable.
 //
+// Caveat — this compares WORDING, not MEANING. The key is normalized text, so
+// two sources that agree but are phrased differently (a paraphrase, reordered
+// clause, or synonym) read as a contradiction. Since cmdBuild exits 3 on a
+// finding, a paraphrase-only divergence can fail a CI gate; drop to "loose" or
+// "off" if strict is too aggressive for the gate.
+//
 // An optional LLM-assisted similarity check can be layered on later as a flag;
 // it is intentionally NOT a hard dependency here.
 package main
@@ -73,9 +79,9 @@ func detectContradictions(candidates []ContradictionCandidate, cfg Contradiction
 		definition string
 		defKey     string
 	}
-	groups := map[string][]member{}     // nameKey -> members
-	displayTerm := map[string]string{}  // nameKey -> first-seen display term
-	seenInKey := map[string]bool{}      // nameKey|sourceID -> already added
+	groups := map[string][]member{}    // nameKey -> members
+	displayTerm := map[string]string{} // nameKey -> first-seen display term
+	seenInKey := map[string]bool{}     // nameKey|sourceID -> already added
 
 	addToGroup := func(nameKey, display string, m member) {
 		dedupe := nameKey + "\x00" + m.sourceID
