@@ -2,11 +2,11 @@
 // Headless, lean CLI. BM25 search over LLM-compiled articles.
 // No embeddings, no vectors. The LLM understands at write time, not query time.
 //
-// Changes: Added `--since <git-ref>` flag to `kb build` and `kb prepare`. When
-// set, only files changed since the given ref (via git diff + ls-files) are
-// compiled; unchanged files pass through silently. Ref is validated with
-// git rev-parse before use so option-like strings can't slip through. Graceful
-// fallback to a full build when git is unavailable or the ref doesn't resolve.
+// Changes: tokenize() now Porter-stems every token (see porter.go), so BM25
+// matches morphological variants — the query "open" retrieves a doc that only
+// says "opens". Index-time and query-time tokens share the one stemmer, and the
+// glossary exact-Term/Alias boost stems both sides to stay consistent. Existing
+// persisted indexes must be rebuilt to benefit (fresh indexes work immediately).
 //
 
 // Commands: build, prepare, accept, graph, search, ingest, show, list, stats, lint, recompile, watch, clear
@@ -1161,12 +1161,26 @@ func loadSearchIndex(scope string) *SearchIndex {
 
 // --- BM25 Search ---
 
+// tokenize lowercases, splits on non-alphanumeric runes, and Porter-stems each
+// token. Stemming is the SINGLE shared step that makes BM25 match morphological
+// variants: because both the index (buildSearchIndex) and the query
+// (bm25SearchWithIndex) tokenize through here, "opens" in a doc and the query
+// "open" both reduce to "open" and match. See porter.go.
+//
+// Rollout note: stemming changes the tokens stored in the persisted search
+// index (cache/search_index.json), so EXISTING indexes must be rebuilt to
+// benefit — a fresh index works immediately. porterStem leaves digits and
+// <=2-letter tokens untouched, so numeric/short tokens behave as before.
 func tokenize(text string) []string {
 	lower := strings.ToLower(text)
 	splitter := func(c rune) bool {
 		return !unicode.IsLetter(c) && !unicode.IsDigit(c)
 	}
-	tokens := strings.FieldsFunc(lower, splitter)
+	fields := strings.FieldsFunc(lower, splitter)
+	tokens := make([]string, len(fields))
+	for i, f := range fields {
+		tokens[i] = porterStem(f)
+	}
 	return tokens
 }
 
@@ -1263,10 +1277,18 @@ func bm25SearchWithIndex(articles []*WikiArticle, query string, limit int, si *S
 		// hit consistently outranks mention-heavy module articles.
 		if articles[i].Kind == "glossary" {
 			matched := false
-			termLower := strings.ToLower(articles[i].Term)
+			// queryTerms are Porter-stemmed (via tokenize), so the Term/Alias
+			// sides must be stemmed too or a stemmed query token could never
+			// equal a raw term. Stemming both sides is safe: identical raw
+			// inputs stem identically, so every previously-exact hit survives
+			// (an exact/alias hit still ranks first) and morphological variants
+			// like alias "opens" vs query "open" now also match. porterStem
+			// leaves multi-word terms (containing a space) untouched, matching
+			// the pre-stemming single-token behavior.
+			termLower := porterStem(strings.ToLower(articles[i].Term))
 			aliasesLower := make([]string, len(articles[i].Aliases))
 			for k, al := range articles[i].Aliases {
-				aliasesLower[k] = strings.ToLower(al)
+				aliasesLower[k] = porterStem(strings.ToLower(al))
 			}
 			for _, qt := range queryTerms {
 				qLower := strings.ToLower(qt)
