@@ -72,7 +72,9 @@ func TestSlugifyLongTitle(t *testing.T) {
 
 func TestTokenize(t *testing.T) {
 	tokens := tokenize("Hello, World! This is a TEST-123.")
-	expected := []string{"hello", "world", "this", "is", "a", "test", "123"}
+	// "this" -> "thi": tokenize now Porter-stems (feat/bm25-stemming); the
+	// <=2-letter guard leaves "is"/"a" and the digit token "123" unchanged.
+	expected := []string{"hello", "world", "thi", "is", "a", "test", "123"}
 	if len(tokens) != len(expected) {
 		t.Fatalf("tokenize got %d tokens, want %d: %v", len(tokens), len(expected), tokens)
 	}
