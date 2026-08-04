@@ -51,7 +51,7 @@ kb clear --scope <name>
 - Content hash caching (SHA256) for incremental builds
 - Parallel LLM compilation (5 concurrent goroutines, configurable via --concurrency)
 - AST parsing: Go via go/ast (stdlib), Python via regex, TypeScript/JS via regex
-- BM25 search with title (3x), concept (2x), and glossary exact-Term/Alias (10x) boosting
+- BM25 search with title (3x), concept (2x), and glossary exact-Term/Alias (10x) boosting, scored from a versioned inverted index (`cache/search_index.json`, `{"v":2, postings: term -> [(docIdx, tf)]}`); old-format index files are ignored and search falls back to tokenize-on-the-fly until the next index write upgrades them
 - Glossary articles: files under any `glossary/` directory skip LLM compilation and round-trip verbatim
 - Loud-fail ingest: a failed LLM compile keeps the raw doc, writes NO article, and exits 1 (a silent verbatim fallback poisons search — proven on a 4M-word scope). `--allow-fallback` opts back into verbatim storage; `--article-json` accepts an externally compiled article on stdin (no `ANTHROPIC_API_KEY`); ingest `--json` output reports `compiled_with`
 - `--json` flag for machine-readable output on all commands
