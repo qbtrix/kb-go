@@ -13,6 +13,11 @@
 // than cmdIngest itself, because cmdIngest routes errors through fatal()
 // (os.Exit) which would abort the test binary. Storage is isolated by
 // pointing HOME at t.TempDir(), same pattern as delete_test.go.
+//
+// Updated: validation cases now also pin rawDocCount == 0 per rejected
+// payload (nothing is written before validation passes), and a hostile
+// path-traversal title ("../../../etc/passwd") is driven end-to-end to prove
+// the article lands inside the scope's wiki dir under a sanitized slug.
 package main
 
 import (
@@ -225,11 +230,76 @@ func TestIngestArticleJSONValidation(t *testing.T) {
 			if err := ingestArticleJSON(scope, []byte(tc.payload), false); err == nil {
 				t.Errorf("ingestArticleJSON(%s) should fail validation", tc.name)
 			}
+			// A rejected payload must write NOTHING — validation runs before
+			// the raw doc is saved, and this pins that ordering.
+			if got := rawDocCount(t, scope); got != 0 {
+				t.Errorf("raw doc count = %d after rejected payload %s, want 0", got, tc.name)
+			}
+			if got := wikiArticleCount(t, scope); got != 0 {
+				t.Errorf("wiki article count = %d after rejected payload %s, want 0", got, tc.name)
+			}
 		})
 	}
 
 	// Nothing was written by any of the rejected payloads.
 	if got := wikiArticleCount(t, scope); got != 0 {
 		t.Errorf("wiki article count = %d after rejected payloads, want 0", got)
+	}
+	if got := rawDocCount(t, scope); got != 0 {
+		t.Errorf("raw doc count = %d after rejected payloads, want 0", got)
+	}
+}
+
+// --- --article-json: hostile title stays contained in the scope ---
+
+func TestIngestArticleJSONHostileTitleContained(t *testing.T) {
+	scope := tempHomeScope(t, "ingest-artjson-hostile")
+
+	// Plant a sentinel where a naive filepath.Join(wiki, title+".md") would
+	// land if the title escaped the scope, so we can prove it is untouched.
+	sentinel := filepath.Join(basePath(), "..", "etc-passwd-sentinel")
+	sentinelAbs := filepath.Clean(sentinel)
+	if err := os.WriteFile(sentinelAbs, []byte("sentinel"), 0o644); err != nil {
+		t.Fatalf("plant sentinel: %v", err)
+	}
+
+	payload := `{
+		"raw_text": "hostile raw",
+		"article": {"title": "../../../etc/passwd", "content": "payload body", "source": "../../evil.md"}
+	}`
+	if err := ingestArticleJSON(scope, []byte(payload), false); err != nil {
+		t.Fatalf("ingestArticleJSON with hostile title should still succeed (slug is sanitized): %v", err)
+	}
+
+	// The slug must carry no path separators or traversal components...
+	slug := slugify("../../../etc/passwd")
+	for _, bad := range []string{"/", `\`, ".."} {
+		if strings.Contains(slug, bad) {
+			t.Fatalf("slugify(hostile title) = %q still contains %q", slug, bad)
+		}
+	}
+	// ...and the article must land inside THIS scope's wiki dir.
+	wikiPath := filepath.Join(scopeDir(scope), "wiki", slug+".md")
+	if _, err := os.Stat(wikiPath); err != nil {
+		t.Fatalf("article not found inside scope wiki dir at %s: %v", wikiPath, err)
+	}
+	article, err := loadArticle(scope, slug)
+	if err != nil || article == nil || article.Content != "payload body" {
+		t.Fatalf("article should round-trip from inside the scope: %v", err)
+	}
+
+	// Exactly one article, in the scope — nothing anywhere else.
+	if got := wikiArticleCount(t, scope); got != 1 {
+		t.Errorf("wiki article count = %d, want 1", got)
+	}
+	data, err := os.ReadFile(sentinelAbs)
+	if err != nil || string(data) != "sentinel" {
+		t.Errorf("sentinel outside the KB base dir was touched: %v", err)
+	}
+	// A naive filepath.Join(wiki, title+".md") would resolve to
+	// $HOME/etc/passwd.md — prove no "etc" tree appeared outside the base dir.
+	escaped := filepath.Join(basePath(), "..", "etc")
+	if _, err := os.Stat(filepath.Clean(escaped)); err == nil {
+		t.Errorf("hostile title escaped the KB base dir: %s exists", filepath.Clean(escaped))
 	}
 }
