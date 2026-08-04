@@ -250,6 +250,33 @@ func TestIngestArticleJSONValidation(t *testing.T) {
 	}
 }
 
+// --- save failure is loud, not swallowed ---
+
+func TestIngestArticleJSONSaveFailureIsLoud(t *testing.T) {
+	scope := tempHomeScope(t, "ingest-savefail")
+
+	// Replace the wiki dir with a regular file so saveArticle's WriteFile
+	// fails (ensureDirs' MkdirAll also fails, silently — that's the trap this
+	// guards: without the error check, ingest would print "Ingested:" and
+	// exit 0 with no article on disk).
+	wikiDir := filepath.Join(scopeDir(scope), "wiki")
+	if err := os.RemoveAll(wikiDir); err != nil {
+		t.Fatalf("remove wiki dir: %v", err)
+	}
+	if err := os.WriteFile(wikiDir, []byte("not a dir"), 0o644); err != nil {
+		t.Fatalf("plant wiki file: %v", err)
+	}
+
+	payload := `{"raw_text": "r", "article": {"title": "T", "content": "C body"}}`
+	err := ingestArticleJSON(scope, []byte(payload), false)
+	if err == nil {
+		t.Fatalf("ingestArticleJSON should fail when the article cannot be written")
+	}
+	if !strings.Contains(err.Error(), "failed to save article") {
+		t.Errorf("error should name the save failure, got: %v", err)
+	}
+}
+
 // --- --article-json: hostile title stays contained in the scope ---
 
 func TestIngestArticleJSONHostileTitleContained(t *testing.T) {

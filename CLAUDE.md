@@ -25,7 +25,9 @@ kb build <path> --scope <name> --pattern "*.go,*.py,*.ts"
 kb prepare <path> --scope <name> --pattern "*.go"   # Agent mode: output prompts
 kb accept --scope <name>                             # Agent mode: read compiled articles from stdin
 kb search <query> --scope <name>
-kb ingest [file] --scope <name>
+kb ingest [file] --scope <name>                      # Fails loudly (exit 1) if LLM compile fails: raw doc kept, NO article
+kb ingest [file] --scope <name> --allow-fallback     # Old behavior: store raw text verbatim as the article
+kb ingest --article-json --scope <name>              # Read {"raw_text","article"} from stdin — caller supplies the compiled article, no API key
 kb show <id> --scope <name>
 kb list --scope <name>
 kb stats --scope <name>
@@ -51,6 +53,7 @@ kb clear --scope <name>
 - AST parsing: Go via go/ast (stdlib), Python via regex, TypeScript/JS via regex
 - BM25 search with title (3x), concept (2x), and glossary exact-Term/Alias (10x) boosting
 - Glossary articles: files under any `glossary/` directory skip LLM compilation and round-trip verbatim
+- Loud-fail ingest: a failed LLM compile keeps the raw doc, writes NO article, and exits 1 (a silent verbatim fallback poisons search — proven on a 4M-word scope). `--allow-fallback` opts back into verbatim storage; `--article-json` accepts an externally compiled article on stdin (no `ANTHROPIC_API_KEY`); ingest `--json` output reports `compiled_with`
 - `--json` flag for machine-readable output on all commands
 - Multi-pattern support: `"*.go,*.py,*.ts"` in a single build
 

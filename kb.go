@@ -2860,7 +2860,9 @@ func ingestText(scope, source, model, apiKey, lang, filePath, text string, allow
 		article.Version = existing.Version + 1
 	}
 
-	saveArticle(scope, article)
+	if err := saveArticle(scope, article); err != nil {
+		return fmt.Errorf("failed to save article %s: %v", article.ID, err)
+	}
 	finishIngest(scope, article, jsonOut)
 	return nil
 }
@@ -2948,7 +2950,9 @@ func ingestArticleJSON(scope string, data []byte, jsonOut bool) error {
 		article.Version = existing.Version + 1
 	}
 
-	saveArticle(scope, article)
+	if err := saveArticle(scope, article); err != nil {
+		return fmt.Errorf("failed to save article %s: %v", article.ID, err)
+	}
 	finishIngest(scope, article, jsonOut)
 	return nil
 }
