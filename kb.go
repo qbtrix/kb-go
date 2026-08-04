@@ -2,12 +2,18 @@
 // Headless, lean CLI. BM25 search over LLM-compiled articles.
 // No embeddings, no vectors. The LLM understands at write time, not query time.
 //
-// Changes: `kb ingest` no longer falls back silently to a verbatim article
-// when LLM compilation fails — it keeps the raw doc, writes NO article, and
-// exits 1 with an error naming the raw doc id (opt back into the old behavior
-// with --allow-fallback). New `--article-json` mode reads {"raw_text", "article"}
-// from stdin so an external caller can supply the compiled article without an
-// ANTHROPIC_API_KEY. Ingest --json output now includes "compiled_with".
+// Changes: replaced the token-dump search index (v1: every article's full
+// token slice serialized to JSON) with a real inverted index (v2: per-term
+// postings term -> [(docIdx, tf)], per-doc lengths, title/concept token sets).
+// BM25 now scores only from postings — df = postings length, tf from entries —
+// so search cost scales with matching docs, not total corpus tokens. Old-format
+// index files are ignored on load (slow path) and upgraded on the next index
+// write. Ranking semantics are unchanged (same boosts, same scores). Search
+// self-heals: a full-scope single-scope query that finds a missing/stale/old
+// index rebuilds it and best-effort persists it (loadOrHealSearchIndex), so
+// read-only consumers regain the fast path without waiting for an ingest.
+// Previous: loud-fail ingest (--allow-fallback, --article-json, compiled_with
+// in ingest --json output).
 //
 
 // Commands: build, prepare, accept, graph, search, ingest, show, list, stats, lint, recompile, watch, clear
@@ -1102,37 +1108,70 @@ func exportWiki(scope, outputDir string) {
 	fmt.Printf("Exported %d articles + index.md to %s/\n", len(articles), outputDir)
 }
 
-// --- Search Index (pre-tokenized) ---
+// --- Search Index (inverted) ---
 
-// SearchIndex stores pre-tokenized article data for fast BM25 search.
+// searchIndexVersion is bumped whenever the on-disk shape changes. Old-format
+// files (the v1 token dump: {"articles": [...]}) unmarshal with V == 0 and are
+// ignored — search falls back to on-the-fly tokenization and the next index
+// write replaces the file with the current format.
+const searchIndexVersion = 2
+
+// Posting is one (docIdx, termFrequency) pair in a term's postings list.
+// Encoded as a 2-element JSON array to keep the index file compact.
+type Posting [2]int
+
+// SearchIndex is an inverted index over the articles of a scope. BM25 scoring
+// reads ONLY the postings lists of the query terms — document frequency is
+// the postings length, term frequency is stored per entry — instead of
+// scanning every document's full token slice. Per-doc title/concept token
+// sets are kept for the title/concept boosts; the glossary boost reads
+// Kind/Term/Aliases from the articles themselves, so nothing else is needed.
 type SearchIndex struct {
-	Articles []SearchEntry `json:"articles"`
-	AvgDL    float64       `json:"avg_dl"`
-}
-
-type SearchEntry struct {
-	ID            string   `json:"id"`
-	AllTokens     []string `json:"all"`
-	TitleTokens   []string `json:"title"`
-	ConceptTokens []string `json:"concepts"`
+	V             int                  `json:"v"`
+	DocIDs        []string             `json:"doc_ids"`
+	DocLens       []int                `json:"doc_lens"`
+	AvgDL         float64              `json:"avg_dl"`
+	Postings      map[string][]Posting `json:"postings"`
+	TitleTokens   [][]string           `json:"title_tokens"`
+	ConceptTokens [][]string           `json:"concept_tokens"`
 }
 
 func buildSearchIndex(articles []*WikiArticle) *SearchIndex {
-	si := &SearchIndex{Articles: make([]SearchEntry, len(articles))}
+	n := len(articles)
+	si := &SearchIndex{
+		V:             searchIndexVersion,
+		DocIDs:        make([]string, n),
+		DocLens:       make([]int, n),
+		Postings:      make(map[string][]Posting),
+		TitleTokens:   make([][]string, n),
+		ConceptTokens: make([][]string, n),
+	}
 	totalLen := 0
 	for i, a := range articles {
 		all := tokenize(a.Title + " " + a.Summary + " " + a.Content +
 			" " + strings.Join(a.Concepts, " ") + " " + strings.Join(a.Categories, " "))
-		si.Articles[i] = SearchEntry{
-			ID:            a.ID,
-			AllTokens:     all,
-			TitleTokens:   tokenize(a.Title),
-			ConceptTokens: tokenize(strings.Join(a.Concepts, " ")),
-		}
+		si.DocIDs[i] = a.ID
+		si.DocLens[i] = len(all)
+		si.TitleTokens[i] = tokenize(a.Title)
+		si.ConceptTokens[i] = tokenize(strings.Join(a.Concepts, " "))
 		totalLen += len(all)
+
+		tfs := make(map[string]int)
+		for _, tok := range all {
+			tfs[tok]++
+		}
+		for term, tf := range tfs {
+			si.Postings[term] = append(si.Postings[term], Posting{i, tf})
+		}
 	}
-	if len(articles) > 0 {
-		si.AvgDL = float64(totalLen) / float64(len(articles))
+	// Postings lists are appended in doc order per term; sort for a
+	// deterministic file (map iteration order above is per-doc, so entries
+	// are already in doc order — this is belt and braces for future writers).
+	for _, plist := range si.Postings {
+		sort.Slice(plist, func(a, b int) bool { return plist[a][0] < plist[b][0] })
+	}
+	if n > 0 {
+		si.AvgDL = float64(totalLen) / float64(n)
 	}
 	return si
 }
@@ -1157,7 +1196,53 @@ func loadSearchIndex(scope string) *SearchIndex {
 	if err := json.Unmarshal(data, &si); err != nil {
 		return nil
 	}
+	if si.V != searchIndexVersion {
+		// Old-format (or future-format) index: ignore it. Search runs the
+		// on-the-fly slow path; the next index write upgrades the file.
+		return nil
+	}
 	return &si
+}
+
+// loadOrHealSearchIndex returns a search index that matches the given
+// articles, rebuilding and best-effort persisting it when the on-disk one is
+// missing, old-format, or stale. This lets read-only consumers (plain `kb
+// search`, MCP serve) regain the fast path after a format upgrade discarded
+// their v1 file — without it, a scope that never sees another ingest/build
+// would pay the slow path forever. Callers MUST pass the scope's FULL article
+// slice in listArticles order (never a tag-filtered or multi-scope slice),
+// since the persisted index describes the whole scope.
+func loadOrHealSearchIndex(scope string, articles []*WikiArticle) *SearchIndex {
+	si := loadSearchIndex(scope)
+	if indexMatches(si, articles) {
+		return si
+	}
+	if len(articles) == 0 {
+		// Nothing to index — and healing here would create scope dirs on a
+		// pure read (e.g. searching a scope that doesn't exist).
+		return nil
+	}
+	si = buildSearchIndex(articles)
+	// Best-effort: the index is a cache. A failed write (read-only FS,
+	// permissions) must not fail the search — scoring proceeds from the
+	// freshly built in-memory index either way.
+	_ = saveSearchIndex(scope, si)
+	return si
+}
+
+// indexMatches reports whether si describes exactly the given article slice
+// (same length, same ids, same order). A stale index — e.g. articles were
+// added or removed without a rebuild — must not be trusted for scoring.
+func indexMatches(si *SearchIndex, articles []*WikiArticle) bool {
+	if si == nil || si.V != searchIndexVersion || len(si.DocIDs) != len(articles) {
+		return false
+	}
+	for i, a := range articles {
+		if si.DocIDs[i] != a.ID {
+			return false
+		}
+	}
+	return true
 }
 
 // --- BM25 Search ---
@@ -1175,6 +1260,10 @@ func bm25Search(articles []*WikiArticle, query string, limit int) []*WikiArticle
 	return bm25SearchWithIndex(articles, query, limit, nil)
 }
 
+// glossaryExactBoost multiplies (and baselines) the score of a glossary
+// article whose Term or an Alias exactly matches a query term — see issue #15.
+const glossaryExactBoost = 10.0
+
 func bm25SearchWithIndex(articles []*WikiArticle, query string, limit int, si *SearchIndex) []*WikiArticle {
 	if len(articles) == 0 || query == "" {
 		return nil
@@ -1185,37 +1274,73 @@ func bm25SearchWithIndex(articles []*WikiArticle, query string, limit int, si *S
 		return nil
 	}
 
-	// Use pre-tokenized index if available, otherwise tokenize on the fly
-	var docs [][]string
-	var titleTokens, conceptTokens [][]string
-	var avgDL float64
-
-	if si != nil && len(si.Articles) == len(articles) {
-		// Fast path: use cached tokens
-		docs = make([][]string, len(si.Articles))
-		titleTokens = make([][]string, len(si.Articles))
-		conceptTokens = make([][]string, len(si.Articles))
-		for i, entry := range si.Articles {
-			docs[i] = entry.AllTokens
-			titleTokens[i] = entry.TitleTokens
-			conceptTokens[i] = entry.ConceptTokens
-		}
-		avgDL = si.AvgDL
+	var scores []float64
+	if indexMatches(si, articles) {
+		scores = bm25ScoresFromPostings(queryTerms, si)
 	} else {
-		// Slow path: tokenize everything
-		docs = make([][]string, len(articles))
-		titleTokens = make([][]string, len(articles))
-		conceptTokens = make([][]string, len(articles))
-		totalLen := 0
-		for i, a := range articles {
-			docs[i] = tokenize(a.Title + " " + a.Summary + " " + a.Content +
-				" " + strings.Join(a.Concepts, " ") + " " + strings.Join(a.Categories, " "))
-			titleTokens[i] = tokenize(a.Title)
-			conceptTokens[i] = tokenize(strings.Join(a.Concepts, " "))
-			totalLen += len(docs[i])
-		}
-		avgDL = float64(totalLen) / float64(len(docs))
+		scores = bm25ScoresSlow(articles, queryTerms)
 	}
+
+	applyGlossaryBoost(articles, queryTerms, scores)
+	return rankByScore(articles, scores, limit)
+}
+
+// bm25ScoresFromPostings computes BM25 + title/concept-boost scores reading
+// ONLY the query terms' postings lists: df is the postings length, tf comes
+// from the postings entries. Documents that contain none of the query terms
+// are never touched, so cost scales with matching docs, not corpus size.
+// Semantics match bm25ScoresSlow exactly — a term absent from a doc
+// contributes base = 0 there (tf = 0), and a term present in a doc's title or
+// concepts is by construction in that doc's postings (the "all" token stream
+// includes title and concepts), so boosts apply to the same docs.
+func bm25ScoresFromPostings(queryTerms []string, si *SearchIndex) []float64 {
+	nDocs := float64(len(si.DocIDs))
+
+	idfs := map[string]float64{}
+	for _, term := range queryTerms {
+		df := float64(len(si.Postings[term]))
+		idfs[term] = math.Log((nDocs-df+0.5)/(df+0.5) + 1)
+	}
+
+	scores := make([]float64, len(si.DocIDs))
+	for _, term := range queryTerms {
+		idf := idfs[term]
+		for _, p := range si.Postings[term] {
+			docIdx, tf := p[0], float64(p[1])
+			dl := float64(si.DocLens[docIdx])
+			num := tf * (bm25K1 + 1)
+			den := tf + bm25K1*(1-bm25B+bm25B*dl/si.AvgDL)
+			base := idf * num / den
+			s := base
+			// Title boost: 3x for terms appearing in the title
+			if containsStr(si.TitleTokens[docIdx], term) {
+				s += base * 2.0
+			}
+			// Concept boost: 2x for terms matching concepts
+			if containsStr(si.ConceptTokens[docIdx], term) {
+				s += base * 1.0
+			}
+			scores[docIdx] += s
+		}
+	}
+	return scores
+}
+
+// bm25ScoresSlow tokenizes every article on the fly and scores it. Used when
+// no (matching, current-format) search index is available.
+func bm25ScoresSlow(articles []*WikiArticle, queryTerms []string) []float64 {
+	docs := make([][]string, len(articles))
+	titleTokens := make([][]string, len(articles))
+	conceptTokens := make([][]string, len(articles))
+	totalLen := 0
+	for i, a := range articles {
+		docs[i] = tokenize(a.Title + " " + a.Summary + " " + a.Content +
+			" " + strings.Join(a.Concepts, " ") + " " + strings.Join(a.Categories, " "))
+		titleTokens[i] = tokenize(a.Title)
+		conceptTokens[i] = tokenize(strings.Join(a.Concepts, " "))
+		totalLen += len(docs[i])
+	}
+	avgDL := float64(totalLen) / float64(len(docs))
 
 	// IDF per query term
 	idfs := map[string]float64{}
@@ -1229,15 +1354,8 @@ func bm25SearchWithIndex(articles []*WikiArticle, query string, limit int, si *S
 		idfs[term] = math.Log((float64(len(docs))-float64(df)+0.5)/(float64(df)+0.5) + 1)
 	}
 
-	// Score each doc with title (3x), concept (2x), and glossary (10x) boosting.
-	// The glossary boost lets hand-curated definitions outrank module articles
-	// that merely mention the term — see issue #15.
-	const glossaryExactBoost = 10.0
-	type scored struct {
-		idx   int
-		score float64
-	}
-	scores := make([]scored, len(articles))
+	// Score each doc with title (3x) and concept (2x) boosting.
+	scores := make([]float64, len(articles))
 	for i, doc := range docs {
 		s := 0.0
 		dl := float64(len(doc))
@@ -1257,49 +1375,68 @@ func bm25SearchWithIndex(articles []*WikiArticle, query string, limit int, si *S
 				s += base * 1.0
 			}
 		}
+		scores[i] = s
+	}
+	return scores
+}
 
-		// Glossary exact-Term / Alias boost (case-insensitive). Applied at most
-		// once per document. Both adds a baseline (so alias-only matches with
-		// zero organic BM25 still rank) and multiplies the result, so a glossary
-		// hit consistently outranks mention-heavy module articles.
-		if articles[i].Kind == "glossary" {
-			matched := false
-			termLower := strings.ToLower(articles[i].Term)
-			aliasesLower := make([]string, len(articles[i].Aliases))
-			for k, al := range articles[i].Aliases {
-				aliasesLower[k] = strings.ToLower(al)
+// applyGlossaryBoost applies the glossary exact-Term / Alias boost
+// (case-insensitive), at most once per document. It both adds a baseline (so
+// alias-only matches with zero organic BM25 still rank) and multiplies the
+// result, so a glossary hit consistently outranks mention-heavy module
+// articles. Runs over the articles slice — glossary metadata lives on the
+// articles, not in the search index — and is shared by both scoring paths.
+func applyGlossaryBoost(articles []*WikiArticle, queryTerms []string, scores []float64) {
+	for i := range articles {
+		if articles[i].Kind != "glossary" {
+			continue
+		}
+		matched := false
+		termLower := strings.ToLower(articles[i].Term)
+		aliasesLower := make([]string, len(articles[i].Aliases))
+		for k, al := range articles[i].Aliases {
+			aliasesLower[k] = strings.ToLower(al)
+		}
+		for _, qt := range queryTerms {
+			qLower := strings.ToLower(qt)
+			if termLower != "" && termLower == qLower {
+				matched = true
+				break
 			}
-			for _, qt := range queryTerms {
-				qLower := strings.ToLower(qt)
-				if termLower != "" && termLower == qLower {
+			for _, al := range aliasesLower {
+				if al == qLower {
 					matched = true
-					break
-				}
-				for _, al := range aliasesLower {
-					if al == qLower {
-						matched = true
-						break
-					}
-				}
-				if matched {
 					break
 				}
 			}
 			if matched {
-				// Add a baseline so alias-only matches (TF=0 in docs) still rank
-				// positive, then multiply so we dominate any module article that
-				// merely mentions the term in body text.
-				s = (s + 1.0) * glossaryExactBoost
+				break
 			}
 		}
-
-		scores[i] = scored{i, s}
+		if matched {
+			// Add a baseline so alias-only matches (TF=0 in docs) still rank
+			// positive, then multiply so we dominate any module article that
+			// merely mentions the term in body text.
+			scores[i] = (scores[i] + 1.0) * glossaryExactBoost
+		}
 	}
+}
 
-	sort.Slice(scores, func(i, j int) bool { return scores[i].score > scores[j].score })
+// rankByScore sorts descending and returns up to limit articles with a
+// strictly positive score.
+func rankByScore(articles []*WikiArticle, scores []float64, limit int) []*WikiArticle {
+	type scored struct {
+		idx   int
+		score float64
+	}
+	ranked := make([]scored, len(articles))
+	for i, s := range scores {
+		ranked[i] = scored{i, s}
+	}
+	sort.Slice(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
 
 	var result []*WikiArticle
-	for _, sc := range scores {
+	for _, sc := range ranked {
 		if sc.score <= 0 {
 			break
 		}
@@ -2637,10 +2774,19 @@ func cmdSearch(args []string) {
 		scopeMap = filteredScopes
 	}
 
-	// Search with pre-tokenized index (only works for single scope)
+	// Search with the inverted index (only works for single scope)
 	var results []*WikiArticle
 	if len(scopes) == 1 {
-		si := loadSearchIndex(scopes[0])
+		var si *SearchIndex
+		if excludeTags == "" {
+			// Full-scope search: self-heal a missing/stale/old-format index
+			// so the next search takes the fast path (best-effort write).
+			si = loadOrHealSearchIndex(scopes[0], allArticles)
+		} else {
+			// Tag-filtered slice — the full-scope index can't match it, so
+			// this runs the slow path and must not overwrite the index.
+			si = loadSearchIndex(scopes[0])
+		}
 		results = bm25SearchWithIndex(allArticles, query, limit, si)
 	} else {
 		results = bm25Search(allArticles, query, limit)

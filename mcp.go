@@ -1,5 +1,10 @@
 // mcp.go — Read-only MCP (Model Context Protocol) server for kb-go.
 //
+// Changes: kb_search now self-heals the scope's search index on full-scope
+// single-scope queries (loadOrHealSearchIndex) — best-effort cache write so a
+// long-lived server regains the fast path after a v1-format index was
+// discarded; read semantics of every tool are otherwise unchanged.
+//
 // Exposes the existing knowledge-base read paths over a hand-rolled JSON-RPC
 // 2.0 server on stdio, so an in-loop agent can query the index without
 // shelling out to `kb` once per question. No external MCP library: the binary
@@ -452,7 +457,16 @@ func mcpSearch(args map[string]any, defaultScope string) (any, error) {
 
 	var results []*WikiArticle
 	if len(scopes) == 1 {
-		si := loadSearchIndex(scopes[0])
+		var si *SearchIndex
+		if excludeTags == "" {
+			// Full-scope search: self-heal a missing/stale/old-format index
+			// (best-effort cache write; failure never fails the search) so
+			// long-lived read-only servers regain the fast path.
+			si = loadOrHealSearchIndex(scopes[0], allArticles)
+		} else {
+			// Tag-filtered slice — full-scope index can't match; slow path.
+			si = loadSearchIndex(scopes[0])
+		}
 		results = bm25SearchWithIndex(allArticles, query, limit, si)
 	} else {
 		results = bm25Search(allArticles, query, limit)

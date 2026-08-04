@@ -1,5 +1,8 @@
 // kb_bench_test.go — Performance benchmarks for kb-go.
 // All offline, no API key needed. Run: go test -bench=. -benchmem
+// Updated: added BenchmarkSearchLargeCorpus (50 docs x 50k words) comparing
+// the v2 inverted-index fast path against the tokenize-on-the-fly slow path,
+// plus generateLargeCorpus helper.
 package main
 
 import (
@@ -209,6 +212,57 @@ func BenchmarkParseTypeScript(b *testing.B) {
 			}
 		}
 		b.ReportMetric(float64(len(sources)*b.N)/b.Elapsed().Seconds(), "files/sec")
+	})
+}
+
+// generateLargeCorpus builds nDocs articles of wordsPerDoc words each — the
+// shape of a scope poisoned by verbatim raw-dump ingests (few articles, huge
+// bodies). Deterministic via a fixed seed.
+func generateLargeCorpus(nDocs, wordsPerDoc int) []*WikiArticle {
+	rng := rand.New(rand.NewSource(7))
+	vocab := []string{"authentication", "database", "routing", "middleware", "config",
+		"logging", "cache", "queue", "storage", "api", "service", "handler",
+		"the", "a", "is", "with", "for", "and", "to", "from", "in", "on",
+		"function", "returns", "handles", "processes", "manages", "creates",
+		"session", "token", "request", "response", "error", "retry", "timeout"}
+	articles := make([]*WikiArticle, nDocs)
+	for i := 0; i < nDocs; i++ {
+		words := make([]string, wordsPerDoc)
+		for j := range words {
+			words[j] = vocab[rng.Intn(len(vocab))]
+		}
+		title := fmt.Sprintf("raw dump %d", i)
+		articles[i] = &WikiArticle{
+			ID:         slugify(title),
+			Title:      title,
+			Summary:    "verbatim raw text",
+			Content:    strings.Join(words, " "),
+			Concepts:   []string{vocab[i%12]},
+			Categories: []string{"raw"},
+			WordCount:  wordsPerDoc,
+			Version:    1,
+		}
+	}
+	return articles
+}
+
+// BenchmarkSearchLargeCorpus measures one search over a 50-doc x 50k-word
+// corpus (2.5M words — the poisoned-scope shape) with the inverted index vs
+// the tokenize-on-the-fly slow path.
+func BenchmarkSearchLargeCorpus(b *testing.B) {
+	corpus := generateLargeCorpus(50, 50000)
+	query := "authentication session timeout"
+
+	si := buildSearchIndex(corpus)
+	b.Run("inverted_index", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			bm25SearchWithIndex(corpus, query, 5, si)
+		}
+	})
+	b.Run("slow_path", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			bm25SearchWithIndex(corpus, query, 5, nil)
+		}
 	})
 }
 
