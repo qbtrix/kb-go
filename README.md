@@ -531,7 +531,7 @@ The bridge is thin by design. Any agent pipeline can wire them together in ~20 l
 | `kb accept` | Read compiled articles from stdin (agent mode) |
 | `kb graph` | Export concept graph (mermaid, dot, or json) |
 | `kb search <query>` | BM25 search over articles |
-| `kb ingest [file]` | Ingest a file or piped stdin |
+| `kb ingest [file]` | Ingest a file or piped stdin. Fails (exit 1) if LLM compilation fails — the raw doc is kept, no article is written. `--allow-fallback` stores the raw text verbatim as an article instead. `--article-json` reads `{"raw_text", "article"}` from stdin so an external caller supplies the compiled article (no API key needed) |
 | `kb show <id>` | Print a full article |
 | `kb list` | List all articles |
 | `kb stats` | Counts for articles, concepts, words |
@@ -558,6 +558,8 @@ The bridge is thin by design. Any agent pipeline can wire them together in ~20 l
 | `--output` | | Export wiki to directory |
 | `--contradiction-mode` | `strict` | Glossary contradiction threshold on `kb build`: `strict`, `loose`, or `off` |
 | `--lang` | auto | Language for stdin ingest |
+| `--allow-fallback` | off | On `kb ingest`: if LLM compilation fails, store the raw text verbatim as an article instead of failing |
+| `--article-json` | off | On `kb ingest`: read `{"raw_text": "...", "article": {"title", "summary", "content", "concepts", "categories", "source", "compiled_with"}}` from stdin; kb saves raw doc + article without calling the LLM |
 
 ## AST parsing
 

@@ -64,6 +64,18 @@ echo "extracted text here" | kb ingest --scope myproject --source "https://docs.
 cat README.md | kb ingest --scope myproject --source "readme"
 ```
 
+If LLM compilation fails (e.g. no `ANTHROPIC_API_KEY`), ingest keeps the raw
+doc but writes NO article and exits 1. Two ways forward:
+
+```bash
+# Store the raw text verbatim as an article anyway (old fallback behavior)
+cat notes.md | kb ingest --scope myproject --allow-fallback
+
+# Supply an externally compiled article — no API key needed
+echo '{"raw_text": "original text", "article": {"title": "My Doc", "summary": "…", "content": "compiled article body", "concepts": ["a"], "categories": ["b"], "source": "notes.md", "compiled_with": "my-backend"}}' \
+  | kb ingest --article-json --scope myproject
+```
+
 ### Show a full article
 
 ```bash
@@ -260,4 +272,4 @@ Also accepts a bare array or a single article object.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | For build/ingest/llm-lint | Anthropic API key (not needed for prepare/accept) |
+| `ANTHROPIC_API_KEY` | For build/ingest/llm-lint | Anthropic API key (not needed for prepare/accept or `ingest --article-json`) |

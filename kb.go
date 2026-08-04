@@ -2,11 +2,12 @@
 // Headless, lean CLI. BM25 search over LLM-compiled articles.
 // No embeddings, no vectors. The LLM understands at write time, not query time.
 //
-// Changes: Added `--since <git-ref>` flag to `kb build` and `kb prepare`. When
-// set, only files changed since the given ref (via git diff + ls-files) are
-// compiled; unchanged files pass through silently. Ref is validated with
-// git rev-parse before use so option-like strings can't slip through. Graceful
-// fallback to a full build when git is unavailable or the ref doesn't resolve.
+// Changes: `kb ingest` no longer falls back silently to a verbatim article
+// when LLM compilation fails — it keeps the raw doc, writes NO article, and
+// exits 1 with an error naming the raw doc id (opt back into the old behavior
+// with --allow-fallback). New `--article-json` mode reads {"raw_text", "article"}
+// from stdin so an external caller can supply the compiled article without an
+// ANTHROPIC_API_KEY. Ingest --json output now includes "compiled_with".
 //
 
 // Commands: build, prepare, accept, graph, search, ingest, show, list, stats, lint, recompile, watch, clear
@@ -2717,6 +2718,7 @@ func cmdIngest(args []string) {
 	source := flagStr(args, "--source", "manual")
 	model := flagStr(args, "--model", defaultModel)
 	jsonOut := flagBool(args, "--json")
+	allowFallback := flagBool(args, "--allow-fallback")
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 
 	// Vector-attach mode: `kb ingest --vec <path> --id <id> --scope <s>`
@@ -2725,6 +2727,21 @@ func cmdIngest(args []string) {
 	if vecPath := flagStr(args, "--vec", ""); vecPath != "" {
 		articleID := flagStr(args, "--id", "")
 		runIngestVec(scope, articleID, vecPath, jsonOut)
+		return
+	}
+
+	// External-compile mode: `kb ingest --article-json --scope <s>` reads
+	// {"raw_text": ..., "article": {...}} from stdin. The caller did the LLM
+	// compilation; kb stores raw doc + article and refreshes indexes. No
+	// ANTHROPIC_API_KEY needed.
+	if flagBool(args, "--article-json") {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fatal("Cannot read stdin: %v", err)
+		}
+		if err := ingestArticleJSON(scope, data, jsonOut); err != nil {
+			fatal("%v", err)
+		}
 		return
 	}
 
@@ -2772,9 +2789,24 @@ func cmdIngest(args []string) {
 		text = string(data)
 	}
 
-	if strings.TrimSpace(text) == "" {
-		fatal("No content to ingest")
+	lang := flagStr(args, "--lang", "")
+	if err := ingestText(scope, source, model, apiKey, lang, filePath, text, allowFallback, jsonOut); err != nil {
+		fatal("%v", err)
 	}
+}
+
+// ingestText saves the raw doc, compiles it into an article (LLM), and
+// refreshes the indexes. When compilation fails: with allowFallback the old
+// verbatim-article behavior is kept (CompiledWith "none (fallback)"); without
+// it an error is returned — the raw doc is already persisted at that point,
+// so no content is lost, but NO article is written. Split out of cmdIngest so
+// the failure contract is testable in-process (fatal calls os.Exit).
+func ingestText(scope, source, model, apiKey, lang, filePath, text string, allowFallback, jsonOut bool) error {
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("No content to ingest")
+	}
+
+	ensureDirs(scope)
 
 	// Save raw doc
 	hash := contentHash(text)
@@ -2788,10 +2820,11 @@ func cmdIngest(args []string) {
 		WordCount:   wordCount(text),
 		IngestedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
-	saveRawDoc(scope, raw)
+	if err := saveRawDoc(scope, raw); err != nil {
+		return fmt.Errorf("failed to save raw doc: %v", err)
+	}
 
 	// Parse AST if it's a code file
-	lang := flagStr(args, "--lang", "")
 	var codeMod *CodeModule
 	if filePath != "" {
 		codeMod = parseCode(filePath, text)
@@ -2804,7 +2837,12 @@ func cmdIngest(args []string) {
 	// Compile — ingest always uses non-terse mode (full documentation).
 	article, _, err := compileLLM(text, source, model, apiKey, codeMod, false)
 	if err != nil {
-		// Fallback
+		if !allowFallback {
+			// Loud fail: a verbatim fallback article poisons the scope (raw
+			// dumps rank in search and bloat every BM25 pass). Keep the raw
+			// doc, write no article, tell the caller how to proceed.
+			return fmt.Errorf("LLM compilation failed: %v\nRaw doc %s is saved in scope %q — no article was written.\nRe-run with --allow-fallback to store the raw text verbatim as an article, or use --article-json to supply an externally compiled article.", err, raw.ID, scope)
+		}
 		article = &WikiArticle{
 			ID:           slugify(filepath.Base(source)),
 			Title:        filepath.Base(source),
@@ -2823,8 +2861,101 @@ func cmdIngest(args []string) {
 	}
 
 	saveArticle(scope, article)
+	finishIngest(scope, article, jsonOut)
+	return nil
+}
 
-	// Update index
+// ingestArticleJSON implements `kb ingest --article-json`: the stdin payload
+// carries both the raw text and the already-compiled article, so external
+// callers (e.g. PocketPaw's own LLM backend) can populate a scope without an
+// ANTHROPIC_API_KEY. Deliberately a separate single-doc contract from
+// cmdAccept: accept assumes prepare already wrote the raw docs and is a
+// multi-article batch keyed by source hash; this mode owns raw-doc creation
+// and linking for one doc.
+func ingestArticleJSON(scope string, data []byte, jsonOut bool) error {
+	var payload struct {
+		RawText string `json:"raw_text"`
+		Article struct {
+			Title        string   `json:"title"`
+			Summary      string   `json:"summary"`
+			Content      string   `json:"content"`
+			Concepts     []string `json:"concepts"`
+			Categories   []string `json:"categories"`
+			Source       string   `json:"source"`
+			CompiledWith string   `json:"compiled_with"`
+		} `json:"article"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return fmt.Errorf("--article-json: invalid JSON on stdin: %v", err)
+	}
+	if strings.TrimSpace(payload.RawText) == "" {
+		return fmt.Errorf("--article-json: raw_text is required")
+	}
+	if strings.TrimSpace(payload.Article.Title) == "" {
+		return fmt.Errorf("--article-json: article.title is required")
+	}
+	if strings.TrimSpace(payload.Article.Content) == "" {
+		return fmt.Errorf("--article-json: article.content is required")
+	}
+
+	ensureDirs(scope)
+
+	source := payload.Article.Source
+	if source == "" {
+		source = "external"
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	hash := contentHash(payload.RawText)
+	raw := &RawDoc{
+		ID:          hash[:16],
+		SourceType:  "text",
+		Source:      source,
+		Filename:    filepath.Base(source),
+		ContentType: "text",
+		RawText:     payload.RawText,
+		WordCount:   wordCount(payload.RawText),
+		IngestedAt:  now,
+	}
+	if err := saveRawDoc(scope, raw); err != nil {
+		return fmt.Errorf("failed to save raw doc: %v", err)
+	}
+
+	compiledWith := payload.Article.CompiledWith
+	if compiledWith == "" {
+		compiledWith = "external"
+	}
+
+	article := &WikiArticle{
+		ID:           slugify(payload.Article.Title),
+		Title:        payload.Article.Title,
+		Summary:      payload.Article.Summary,
+		Content:      payload.Article.Content,
+		Concepts:     nilToEmpty(payload.Article.Concepts),
+		Categories:   nilToEmpty(payload.Article.Categories),
+		SourcePath:   payload.Article.Source,
+		SourceDocs:   []string{raw.ID},
+		WordCount:    wordCount(payload.Article.Content),
+		CompiledAt:   now,
+		CompiledWith: compiledWith,
+		Version:      1,
+		Audience:     "human",
+		Depth:        "deep",
+		TargetWords:  500,
+	}
+
+	if existing, err := loadArticle(scope, article.ID); err == nil && existing != nil {
+		article.Version = existing.Version + 1
+	}
+
+	saveArticle(scope, article)
+	finishIngest(scope, article, jsonOut)
+	return nil
+}
+
+// finishIngest refreshes the concept index + search index after an ingest
+// write and prints the standard ingest output (shared by both ingest modes).
+func finishIngest(scope string, article *WikiArticle, jsonOut bool) {
 	allArticles, _ := listArticles(scope)
 	idx := rebuildIndex(scope, allArticles)
 	saveIndex(scope, idx)
@@ -2832,9 +2963,10 @@ func cmdIngest(args []string) {
 
 	if jsonOut {
 		printJSON(map[string]any{
-			"article": article.ID,
-			"title":   article.Title,
-			"words":   article.WordCount,
+			"article":       article.ID,
+			"title":         article.Title,
+			"words":         article.WordCount,
+			"compiled_with": article.CompiledWith,
 		})
 	} else {
 		fmt.Printf("Ingested: %s (%d words)\n", article.Title, article.WordCount)
@@ -3521,7 +3653,7 @@ func cmdWatch(args []string) {
 	files := scanDir(absPath, pattern)
 	if len(files) > 0 {
 		fmt.Println("Running initial build...")
-		cmdBuild(append([]string{absPath, "--scope", scope, "--pattern", pattern, "--model", model}))
+		cmdBuild([]string{absPath, "--scope", scope, "--pattern", pattern, "--model", model})
 		fmt.Println()
 	} else {
 		fmt.Println("No matching files yet. Waiting for changes...")
@@ -3562,7 +3694,7 @@ func cmdWatch(args []string) {
 
 		case <-debounce.C:
 			fmt.Printf("[%s] Change detected, rebuilding...\n", time.Now().Format("15:04:05"))
-			cmdBuild(append([]string{absPath, "--scope", scope, "--pattern", pattern, "--model", model}))
+			cmdBuild([]string{absPath, "--scope", scope, "--pattern", pattern, "--model", model})
 			fmt.Println()
 		}
 	}
@@ -3982,7 +4114,12 @@ Commands:
   accept                 Read compiled articles from stdin (agent mode companion)
   graph                  Export concept graph (mermaid, dot, or json)
   search <query>         BM25 search over compiled articles
-  ingest [file]          Ingest a file or stdin text
+  ingest [file]          Ingest a file or stdin text. Fails loudly if LLM
+                         compilation fails (raw doc kept, no article).
+                         Flags: --allow-fallback (store raw text verbatim
+                         instead), --article-json (read {"raw_text","article"}
+                         from stdin — caller supplies the compiled article,
+                         no API key needed)
   show <article_id>      Show a full article
   list                   List all articles
   stats                  Show KB statistics
@@ -4026,7 +4163,8 @@ Agent mode (no API key needed):
 
 Environment:
   ANTHROPIC_API_KEY      Required for build/ingest/recompile and --llm lint
-                         Not needed for prepare/accept (agent mode)
+                         Not needed for prepare/accept (agent mode) or
+                         ingest --article-json (external compilation)
 `)
 
 }
