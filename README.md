@@ -582,12 +582,12 @@ LLM compile (Anthropic API, 5 concurrent)
     ↓
 Wiki article (markdown + JSON frontmatter)
     ↓
-BM25 index (pre-tokenized, weighted by title and concepts)
+BM25 inverted index (versioned postings: term → (doc, tf), weighted by title and concepts)
     ↓
 ~/.knowledge-base/{scope}/
 ├── raw/       original source, kept for recompilation
 ├── wiki/      compiled articles as .md files
-├── cache/     SHA256 hashes + pre-tokenized search index
+├── cache/     SHA256 hashes + inverted search index (v2; old-format files are ignored and rebuilt on the next search or index write)
 └── index.json concept graph, backlinks, categories
 ```
 
@@ -602,7 +602,7 @@ Three files: [`kb.go`](kb.go) (core, ~2,900 lines), [`convo.go`](convo.go) (conv
 | Data models | 100 | RawDoc, WikiArticle, Concept, KnowledgeIndex, Cache |
 | AST parsers | 400 | Go (stdlib), Python (regex), TypeScript (regex) |
 | Storage | 200 | File CRUD, markdown with JSON frontmatter |
-| BM25 search | 100 | Weighted scoring with pre-tokenized index |
+| BM25 search | 100 | Weighted scoring from an inverted postings index |
 | LLM compilation | 100 | Direct HTTP to Anthropic API, no SDK |
 | Lint | 150 | Structural checks and LLM analysis |
 | CLI | 400 | Commands, flags, JSON output |

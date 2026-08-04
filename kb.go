@@ -8,7 +8,10 @@
 // BM25 now scores only from postings — df = postings length, tf from entries —
 // so search cost scales with matching docs, not total corpus tokens. Old-format
 // index files are ignored on load (slow path) and upgraded on the next index
-// write. Ranking semantics are unchanged (same boosts, same scores).
+// write. Ranking semantics are unchanged (same boosts, same scores). Search
+// self-heals: a full-scope single-scope query that finds a missing/stale/old
+// index rebuilds it and best-effort persists it (loadOrHealSearchIndex), so
+// read-only consumers regain the fast path without waiting for an ingest.
 // Previous: loud-fail ingest (--allow-fallback, --article-json, compiled_with
 // in ingest --json output).
 //
@@ -1199,6 +1202,32 @@ func loadSearchIndex(scope string) *SearchIndex {
 		return nil
 	}
 	return &si
+}
+
+// loadOrHealSearchIndex returns a search index that matches the given
+// articles, rebuilding and best-effort persisting it when the on-disk one is
+// missing, old-format, or stale. This lets read-only consumers (plain `kb
+// search`, MCP serve) regain the fast path after a format upgrade discarded
+// their v1 file — without it, a scope that never sees another ingest/build
+// would pay the slow path forever. Callers MUST pass the scope's FULL article
+// slice in listArticles order (never a tag-filtered or multi-scope slice),
+// since the persisted index describes the whole scope.
+func loadOrHealSearchIndex(scope string, articles []*WikiArticle) *SearchIndex {
+	si := loadSearchIndex(scope)
+	if indexMatches(si, articles) {
+		return si
+	}
+	if len(articles) == 0 {
+		// Nothing to index — and healing here would create scope dirs on a
+		// pure read (e.g. searching a scope that doesn't exist).
+		return nil
+	}
+	si = buildSearchIndex(articles)
+	// Best-effort: the index is a cache. A failed write (read-only FS,
+	// permissions) must not fail the search — scoring proceeds from the
+	// freshly built in-memory index either way.
+	_ = saveSearchIndex(scope, si)
+	return si
 }
 
 // indexMatches reports whether si describes exactly the given article slice
@@ -2745,10 +2774,19 @@ func cmdSearch(args []string) {
 		scopeMap = filteredScopes
 	}
 
-	// Search with pre-tokenized index (only works for single scope)
+	// Search with the inverted index (only works for single scope)
 	var results []*WikiArticle
 	if len(scopes) == 1 {
-		si := loadSearchIndex(scopes[0])
+		var si *SearchIndex
+		if excludeTags == "" {
+			// Full-scope search: self-heal a missing/stale/old-format index
+			// so the next search takes the fast path (best-effort write).
+			si = loadOrHealSearchIndex(scopes[0], allArticles)
+		} else {
+			// Tag-filtered slice — the full-scope index can't match it, so
+			// this runs the slow path and must not overwrite the index.
+			si = loadSearchIndex(scopes[0])
+		}
 		results = bm25SearchWithIndex(allArticles, query, limit, si)
 	} else {
 		results = bm25Search(allArticles, query, limit)

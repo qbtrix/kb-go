@@ -5,7 +5,10 @@
 // queries; (2) save/load round-trips the v2 format; (3) an old-format (v1
 // token dump) search_index.json is ignored on load, so search silently uses
 // the slow path instead of mis-scoring; (4) a stale index (doc set changed
-// without a rebuild) is not trusted for scoring.
+// without a rebuild) is not trusted for scoring; (5) a full-scope search
+// self-heals a missing/old-format index — the file reappears as v2 and
+// matches the scope — while tag-filtered searches and empty scopes never
+// write one.
 package main
 
 import (
@@ -131,6 +134,86 @@ func TestLoadSearchIndexIgnoresOldFormat(t *testing.T) {
 	hits := bm25SearchWithIndex(articles, "auth", 5, loadSearchIndex(scope))
 	if len(hits) == 0 || hits[0].ID != "auth-middleware" {
 		t.Errorf("slow-path fallback broken: got %v", idsOf(hits))
+	}
+}
+
+// seedSearchCorpus persists searchTestCorpus into a scope so cmdSearch's real
+// disk path (listArticles + index load) can run against it.
+func seedSearchCorpus(t *testing.T, scope string) {
+	t.Helper()
+	for _, a := range searchTestCorpus() {
+		if err := saveArticle(scope, a); err != nil {
+			t.Fatalf("saveArticle %s: %v", a.ID, err)
+		}
+	}
+}
+
+func TestSearchSelfHealsIndex(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	scope := "sidx-heal-" + filepath.Base(dir)
+	ensureDirs(scope)
+	seedSearchCorpus(t, scope)
+
+	// Plant an old-format (v1) index — the shape a scope has right after
+	// upgrading kb without re-ingesting anything.
+	old := `{"articles":[{"id":"a","all":["alpha"],"title":["alpha"],"concepts":[]}],"avg_dl":1}`
+	idxPath := filepath.Join(scopeDir(scope), "cache", "search_index.json")
+	if err := os.WriteFile(idxPath, []byte(old), 0o644); err != nil {
+		t.Fatalf("write v1 index: %v", err)
+	}
+	if si := loadSearchIndex(scope); si != nil {
+		t.Fatalf("precondition: v1 index should load as nil")
+	}
+
+	// First search: scores from articles (v1 index unusable) AND heals the
+	// file to v2 as a side effect.
+	cmdSearch([]string{"auth", "--scope", scope, "--json"})
+
+	si := loadSearchIndex(scope)
+	if si == nil {
+		t.Fatalf("search did not heal the index: still unloadable after cmdSearch")
+	}
+	if si.V != searchIndexVersion {
+		t.Fatalf("healed index version = %d, want %d", si.V, searchIndexVersion)
+	}
+	all, _ := listArticles(scope)
+	if !indexMatches(si, all) {
+		t.Fatalf("healed index does not match the scope's articles")
+	}
+
+	// Same for a missing index file.
+	if err := os.Remove(idxPath); err != nil {
+		t.Fatalf("remove index: %v", err)
+	}
+	cmdSearch([]string{"auth", "--scope", scope, "--json"})
+	if si := loadSearchIndex(scope); !indexMatches(si, all) {
+		t.Fatalf("search did not heal a missing index")
+	}
+}
+
+func TestSearchTagFilteredDoesNotClobberIndex(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	scope := "sidx-noclobber-" + filepath.Base(dir)
+	ensureDirs(scope)
+	seedSearchCorpus(t, scope)
+
+	// No index on disk. A tag-filtered search scores a SLICE of the scope —
+	// it must not persist an index describing that slice as the full scope.
+	cmdSearch([]string{"auth", "--scope", scope, "--exclude-tags", "Backend", "--json"})
+	idxPath := filepath.Join(scopeDir(scope), "cache", "search_index.json")
+	if _, err := os.Stat(idxPath); err == nil {
+		t.Fatalf("tag-filtered search wrote a search index; it must not")
+	}
+
+	// loadOrHealSearchIndex on an empty article set must not write either
+	// (searching a nonexistent scope stays a pure read).
+	if si := loadOrHealSearchIndex("no-such-scope-xyz", nil); si != nil {
+		t.Errorf("loadOrHealSearchIndex(empty) = %+v, want nil", si)
+	}
+	if _, err := os.Stat(filepath.Join(basePath(), "no-such-scope-xyz")); err == nil {
+		t.Errorf("healing an empty scope created its directory")
 	}
 }
 
