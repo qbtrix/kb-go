@@ -144,7 +144,7 @@ func TestIsGlossarySource(t *testing.T) {
 		{"docs/glossary/soul.md", true},
 		{"docs/wiki/glossary/ripple.md", true},
 		{"src/pocket.go", false},
-		{"glossary.md", false},        // not inside a glossary/ dir
+		{"glossary.md", false},          // not inside a glossary/ dir
 		{"glossaries/pocket.md", false}, // plural — distinct dirname
 		{"", false},
 	}
@@ -582,8 +582,8 @@ func containsIssue(issues []string, needle string) bool {
 // and the contract conversation surfaces in code review rather than a buried
 // runtime mismatch.
 var (
-	_ func(string, io.Writer) error             = glossaryList
-	_ func(string, string, io.Writer) error     = glossaryShow
-	_ func(string) ([]string, error)            = glossaryValidate
-	_ func(string) bool                         = isGlossarySource
+	_ func(string, io.Writer) error         = glossaryList
+	_ func(string, string, io.Writer) error = glossaryShow
+	_ func(string) ([]string, error)        = glossaryValidate
+	_ func(string) bool                     = isGlossarySource
 )

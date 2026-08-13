@@ -782,9 +782,9 @@ func cmdConvoSearch(args []string) {
 	results := bm25Search(convoArticles, query, limit)
 	if jsonOut {
 		type result struct {
-			ID      string   `json:"id"`
-			Title   string   `json:"title"`
-			Summary string   `json:"summary"`
+			ID       string   `json:"id"`
+			Title    string   `json:"title"`
+			Summary  string   `json:"summary"`
 			Concepts []string `json:"concepts"`
 		}
 		var out []result
@@ -826,9 +826,9 @@ func cmdConvoList(args []string) {
 
 	if jsonOut {
 		type item struct {
-			ID      string   `json:"id"`
-			Title   string   `json:"title"`
-			Summary string   `json:"summary"`
+			ID       string   `json:"id"`
+			Title    string   `json:"title"`
+			Summary  string   `json:"summary"`
 			Concepts []string `json:"concepts"`
 		}
 		var out []item

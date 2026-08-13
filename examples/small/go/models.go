@@ -17,9 +17,9 @@ const (
 
 // Priority levels.
 const (
-	PriorityLow    = 1
-	PriorityMedium = 2
-	PriorityHigh   = 3
+	PriorityLow      = 1
+	PriorityMedium   = 2
+	PriorityHigh     = 3
 	PriorityCritical = 4
 )
 

@@ -71,7 +71,7 @@ func (c *Config) Validate() error {
 
 // Sentinel errors for configuration validation.
 var (
-	ErrInvalidPort    = &ConfigError{Field: "port", Message: "must be between 1 and 65535"}
+	ErrInvalidPort     = &ConfigError{Field: "port", Message: "must be between 1 and 65535"}
 	ErrMissingDatabase = &ConfigError{Field: "database_url", Message: "is required"}
 )
 

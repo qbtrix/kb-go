@@ -11,13 +11,13 @@ import (
 )
 
 type MissedQuestion struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	Question   string `json:"question"`
-	TopRanked  string `json:"top_ranked_session"`
-	CorrectIDs []string `json:"correct_ids"`
-	CorrectRank int   `json:"correct_rank"` // -1 if not found in any rank
-	InTop10    bool   `json:"in_top_10"`
+	ID          string   `json:"id"`
+	Type        string   `json:"type"`
+	Question    string   `json:"question"`
+	TopRanked   string   `json:"top_ranked_session"`
+	CorrectIDs  []string `json:"correct_ids"`
+	CorrectRank int      `json:"correct_rank"` // -1 if not found in any rank
+	InTop10     bool     `json:"in_top_10"`
 }
 
 func TestLongMemEval_ErrorAnalysis(t *testing.T) {
