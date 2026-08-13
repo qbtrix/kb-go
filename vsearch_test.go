@@ -230,7 +230,7 @@ func BenchmarkVectorSearch_1k_128d(b *testing.B) {
 	for i := 0; i < 1000; i++ {
 		v := make([]float32, 128)
 		for j := range v {
-			v[j] = float32((i*7 + j*13) % 100) * 0.01
+			v[j] = float32((i*7+j*13)%100) * 0.01
 		}
 		idx.Add(string(rune(i)), v)
 	}
@@ -249,7 +249,7 @@ func BenchmarkVectorSearch_10k_384d(b *testing.B) {
 	for i := 0; i < 10000; i++ {
 		v := make([]float32, 384)
 		for j := range v {
-			v[j] = float32((i*7 + j*13) % 100) * 0.01
+			v[j] = float32((i*7+j*13)%100) * 0.01
 		}
 		idx.Add(string(rune(i)), v)
 	}

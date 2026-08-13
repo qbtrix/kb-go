@@ -1,0 +1,53 @@
+# .github/workflows/ci.yml
+# Created 2026-08-13: first CI gate for this repo. Until now kb-go had no
+# workflows at all — nothing checked formatting, vet, build, or tests on a PR.
+# Every step was measured against origin/main before being added: vet clean,
+# build clean, tests passing. gofmt flagged 7 files, fixed by `gofmt -w` in this
+# same commit so the gate starts green rather than red. Kept to the Go
+# toolchain's own checks — no third-party linter — so there is nothing extra to
+# install or keep in sync.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not gofmt-formatted. Run: gofmt -w ."
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...
