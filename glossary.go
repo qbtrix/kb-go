@@ -70,13 +70,13 @@ func parseGlossarySource(raw []byte, relPath string) (*WikiArticle, error) {
 		return nil, fmt.Errorf("glossary source %s: missing frontmatter (expected leading '---')", relPath)
 	}
 
-	parts := strings.SplitN(text, "---", 3)
-	if len(parts) < 3 {
+	fmText, body, ok := splitFrontmatter(text)
+	if !ok {
 		return nil, fmt.Errorf("glossary source %s: malformed frontmatter (need opening + closing '---')", relPath)
 	}
 
 	var fm Frontmatter
-	if err := json.Unmarshal([]byte(parts[1]), &fm); err != nil {
+	if err := json.Unmarshal([]byte(fmText), &fm); err != nil {
 		return nil, fmt.Errorf("glossary source %s: bad frontmatter JSON: %w", relPath, err)
 	}
 
@@ -86,7 +86,7 @@ func parseGlossarySource(raw []byte, relPath string) (*WikiArticle, error) {
 	var idHolder struct {
 		ID string `json:"id"`
 	}
-	_ = json.Unmarshal([]byte(parts[1]), &idHolder)
+	_ = json.Unmarshal([]byte(fmText), &idHolder)
 	id := strings.TrimSpace(idHolder.ID)
 	if id == "" {
 		base := filepath.Base(relPath)
@@ -106,7 +106,7 @@ func parseGlossarySource(raw []byte, relPath string) (*WikiArticle, error) {
 	// from a leading newline trim — saveArticle/parseArticle round-trip uses
 	// TrimSpace too, so we stay consistent. The marker assertion in test #4
 	// only checks Contains, so internal bytes are what matter.
-	content := strings.TrimSpace(parts[2])
+	content := strings.TrimSpace(body)
 
 	return &WikiArticle{
 		ID:           id,
