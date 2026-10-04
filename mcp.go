@@ -1,10 +1,5 @@
 // mcp.go — Read-only MCP (Model Context Protocol) server for kb-go.
 //
-// Changes: kb_search now self-heals the scope's search index on full-scope
-// single-scope queries (loadOrHealSearchIndex) — best-effort cache write so a
-// long-lived server regains the fast path after a v1-format index was
-// discarded; read semantics of every tool are otherwise unchanged.
-//
 // Exposes the existing knowledge-base read paths over a hand-rolled JSON-RPC
 // 2.0 server on stdio, so an in-loop agent can query the index without
 // shelling out to `kb` once per question. No external MCP library: the binary
@@ -17,11 +12,22 @@
 //	kb_stats    — index overview, same shape as `kb stats --json`
 //	kb_list     — list articles, same shape as `kb list --json`
 //
-// Every handler calls the same underlying primitives the CLI uses
-// (listArticles, loadSearchIndex/bm25SearchWithIndex, loadArticle, loadIndex,
-// runVectorSearch/runHybridSearch) and returns the identical JSON the
-// `--json` CLI flag emits — parity by construction. No build/ingest/mutation
-// tools are exposed; serving is read-only by design.
+// Every handler calls the same underlying primitives the CLI uses and returns
+// the identical JSON the `--json` CLI flag emits — parity by construction. No
+// build/ingest/mutation tools are exposed; serving is read-only by design.
+//
+// The server is long-lived while other processes write the same scopes, so
+// kb_search / kb_list / kb_stats read articles through articleCache instead
+// of re-parsing every wiki file per call. Invariant: every call re-stats the
+// scope (one wiki ReadDir; mtime+size come from the directory entries) and
+// re-parses only files that were added or whose stamp changed; vanished files
+// are dropped. A file read less than racyWindow after its mtime is never
+// trusted (an overwrite inside one filesystem clock tick can keep both mtime
+// and size), so it is re-read on every call until it settles. The search
+// index file is cached under the same stamp rule, and the cached article
+// slice keeps listArticles' ID order so SearchIndex docIdx stays aligned
+// (healSearchIndex still rebuilds whenever ids/order drift). kb_show and
+// kb_glossary read single files and stay uncached.
 package main
 
 import (
@@ -31,7 +37,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
+	"time"
 )
 
 // --- JSON-RPC 2.0 wire types ---
@@ -294,6 +303,7 @@ func argBool(args map[string]any, key string, def bool) bool {
 // --- Tool registration: wraps the existing read paths ---
 
 func registerKBTools(s *mcpServer, defaultScope string) {
+	cache := newArticleCache()
 	scopeProp := map[string]any{
 		"type":        "string",
 		"description": fmt.Sprintf("Knowledge scope to query. '*' or 'a,b' for multi-scope. Defaults to %q.", defaultScope),
@@ -319,7 +329,7 @@ func registerKBTools(s *mcpServer, defaultScope string) {
 			},
 		},
 	}, func(args map[string]any) (any, error) {
-		return mcpSearch(args, defaultScope)
+		return mcpSearch(cache, args, defaultScope)
 	})
 
 	// kb_show — mirrors `cmdShow` --json output exactly.
@@ -363,7 +373,7 @@ func registerKBTools(s *mcpServer, defaultScope string) {
 			"properties": map[string]any{"scope": scopeProp},
 		},
 	}, func(args map[string]any) (any, error) {
-		return mcpStats(args, defaultScope)
+		return mcpStats(cache, args, defaultScope)
 	})
 
 	// kb_list — mirrors `cmdList` --json output exactly.
@@ -375,7 +385,7 @@ func registerKBTools(s *mcpServer, defaultScope string) {
 			"properties": map[string]any{"scope": scopeProp},
 		},
 	}, func(args map[string]any) (any, error) {
-		return mcpList(args, defaultScope)
+		return mcpList(cache, args, defaultScope)
 	})
 }
 
@@ -383,7 +393,7 @@ func registerKBTools(s *mcpServer, defaultScope string) {
 
 // mcpSearch replicates cmdSearch's --json branch using the same primitives.
 // Returns []map (BM25 path) or vector results, matching the CLI byte shape.
-func mcpSearch(args map[string]any, defaultScope string) (any, error) {
+func mcpSearch(c *articleCache, args map[string]any, defaultScope string) (any, error) {
 	query := argStr(args, "query", "")
 	scope := argStr(args, "scope", defaultScope)
 	limit := argInt(args, "limit", 5)
@@ -423,7 +433,7 @@ func mcpSearch(args map[string]any, defaultScope string) (any, error) {
 	var allArticles []*WikiArticle
 	var scopeMap []string
 	for _, sc := range scopes {
-		articles, err := listArticles(sc)
+		articles, err := c.list(sc)
 		if err != nil {
 			continue
 		}
@@ -462,10 +472,10 @@ func mcpSearch(args map[string]any, defaultScope string) (any, error) {
 			// Full-scope search: self-heal a missing/stale/old-format index
 			// (best-effort cache write; failure never fails the search) so
 			// long-lived read-only servers regain the fast path.
-			si = loadOrHealSearchIndex(scopes[0], allArticles)
+			si = healSearchIndex(scopes[0], allArticles, c.searchIndex(scopes[0]))
 		} else {
 			// Tag-filtered slice — full-scope index can't match; slow path.
-			si = loadSearchIndex(scopes[0])
+			si = c.searchIndex(scopes[0])
 		}
 		results = bm25SearchWithIndex(allArticles, query, limit, si)
 	} else {
@@ -569,10 +579,10 @@ func mcpGlossary(args map[string]any, defaultScope string) (any, error) {
 }
 
 // mcpStats replicates cmdStats's --json branch.
-func mcpStats(args map[string]any, defaultScope string) (any, error) {
+func mcpStats(c *articleCache, args map[string]any, defaultScope string) (any, error) {
 	scope := argStr(args, "scope", defaultScope)
 
-	articles, _ := listArticles(scope)
+	articles, _ := c.list(scope)
 	idx := loadIndex(scope)
 	rawCount := 0
 	if entries, err := os.ReadDir(filepath.Join(scopeDir(scope), "raw")); err == nil {
@@ -594,10 +604,10 @@ func mcpStats(args map[string]any, defaultScope string) (any, error) {
 }
 
 // mcpList replicates cmdList's --json branch.
-func mcpList(args map[string]any, defaultScope string) (any, error) {
+func mcpList(c *articleCache, args map[string]any, defaultScope string) (any, error) {
 	scope := argStr(args, "scope", defaultScope)
 
-	articles, _ := listArticles(scope)
+	articles, _ := c.list(scope)
 	out := make([]map[string]any, 0, len(articles))
 	for _, a := range articles {
 		out = append(out, map[string]any{
@@ -610,4 +620,153 @@ func mcpList(args map[string]any, defaultScope string) (any, error) {
 		})
 	}
 	return out, nil
+}
+
+// --- Article cache: re-stat every call, re-parse only what changed ---
+
+// racyWindow is how long after its mtime a file read stays untrusted. A later
+// write in the same filesystem clock tick (~1-16 ms on NTFS, 2 s on FAT) can
+// leave mtime AND size unchanged, so a read that close to the mtime cannot
+// prove that a future identical stamp means identical content. Once a file's
+// mtime is older than the window at read time, any later write gets a later
+// mtime. Assumes writers share this machine's clock (local filesystem).
+const racyWindow = 3 * time.Second
+
+// fileStamp is the change signal for one file: mtime + size.
+type fileStamp struct {
+	mod  time.Time
+	size int64
+}
+
+func (a fileStamp) same(b fileStamp) bool { return a.size == b.size && a.mod.Equal(b.mod) }
+
+func stampOf(info os.FileInfo) fileStamp { return fileStamp{info.ModTime(), info.Size()} }
+
+type cachedArticle struct {
+	stamp   fileStamp
+	trusted bool // read at least racyWindow after its mtime
+	article *WikiArticle
+}
+
+// scopeCache holds one scope's parsed articles and its loaded search index.
+type scopeCache struct {
+	files    map[string]cachedArticle // article id -> parsed file
+	articles []*WikiArticle           // assembled slice, listArticles (ID) order
+	built    bool
+
+	si        *SearchIndex
+	siStamp   fileStamp
+	siTrusted bool
+}
+
+// articleCache is the MCP server's per-scope article/search-index cache. It
+// never serves a file without first re-statting it in the same call, so
+// writes by other processes are visible on the very next call.
+type articleCache struct {
+	mu     sync.Mutex
+	scopes map[string]*scopeCache // keyed by scopeDir (sanitized names collide)
+}
+
+func newArticleCache() *articleCache {
+	return &articleCache{scopes: map[string]*scopeCache{}}
+}
+
+// list returns the scope's articles exactly as listArticles would read them
+// from disk right now. The returned slice and articles are shared: read-only.
+func (c *articleCache) list(scope string) ([]*WikiArticle, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	key := scopeDir(scope)
+	dir := filepath.Join(key, "wiki")
+	// Taken before any stat: a write this call did not observe happens later.
+	now := time.Now()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		delete(c.scopes, key)
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	sc := c.scopes[key]
+	if sc == nil {
+		sc = &scopeCache{files: map[string]cachedArticle{}}
+		c.scopes[key] = sc
+	}
+
+	changed := !sc.built
+	seen := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".md")
+		info, err := e.Info()
+		if err != nil {
+			continue // removed since ReadDir
+		}
+		st := stampOf(info)
+		if ca, ok := sc.files[id]; ok && ca.trusted && ca.stamp.same(st) {
+			seen[id] = true
+			continue
+		}
+		// Stamp first, then read: if the file changes in between, the next
+		// call sees a newer stamp and re-reads.
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		a, err := parseArticle(id, string(data))
+		if err != nil {
+			continue // same skip rule as listArticles
+		}
+		sc.files[id] = cachedArticle{stamp: st, trusted: now.Sub(st.mod) >= racyWindow, article: a}
+		seen[id] = true
+		changed = true
+	}
+	for id := range sc.files {
+		if !seen[id] {
+			delete(sc.files, id)
+			changed = true
+		}
+	}
+
+	if changed {
+		articles := make([]*WikiArticle, 0, len(sc.files))
+		for _, ca := range sc.files {
+			articles = append(articles, ca.article)
+		}
+		sort.Slice(articles, func(i, j int) bool { return articles[i].ID < articles[j].ID })
+		sc.articles = articles
+		sc.built = true
+	}
+	return sc.articles, nil
+}
+
+// searchIndex returns what loadSearchIndex would return right now, reusing the
+// decoded index while cache/search_index.json keeps a trusted stamp.
+func (c *articleCache) searchIndex(scope string) *SearchIndex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	key := scopeDir(scope)
+	now := time.Now()
+	info, err := os.Stat(filepath.Join(key, "cache", "search_index.json"))
+	sc := c.scopes[key]
+	if err != nil {
+		if sc != nil {
+			sc.si, sc.siTrusted = nil, false
+		}
+		return nil
+	}
+	st := stampOf(info)
+	if sc != nil && sc.siTrusted && sc.siStamp.same(st) {
+		return sc.si
+	}
+	si := loadSearchIndex(scope)
+	if sc != nil {
+		sc.si, sc.siStamp, sc.siTrusted = si, st, now.Sub(st.mod) >= racyWindow
+	}
+	return si
 }

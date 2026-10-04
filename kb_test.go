@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -1758,6 +1759,9 @@ func buildTestBinary(t *testing.T) string {
 		t.Fatalf("mkdtemp: %v", err)
 	}
 	path := filepath.Join(dir, "kb")
+	if runtime.GOOS == "windows" {
+		path += ".exe" // exec.Command cannot run an extensionless binary on Windows
+	}
 	cmd := exec.Command("go", "build", "-o", path, ".")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)

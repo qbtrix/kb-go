@@ -1424,7 +1424,12 @@ func loadSearchIndex(scope string) *SearchIndex {
 // slice in listArticles order (never a tag-filtered or multi-scope slice),
 // since the persisted index describes the whole scope.
 func loadOrHealSearchIndex(scope string, articles []*WikiArticle) *SearchIndex {
-	si := loadSearchIndex(scope)
+	return healSearchIndex(scope, articles, loadSearchIndex(scope))
+}
+
+// healSearchIndex is loadOrHealSearchIndex with the on-disk index already
+// loaded (si may be nil); the MCP server passes its cached copy here.
+func healSearchIndex(scope string, articles []*WikiArticle, si *SearchIndex) *SearchIndex {
 	if indexMatches(si, articles) {
 		return si
 	}
