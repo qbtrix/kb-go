@@ -1,7 +1,7 @@
 // kb_bench_test.go — Performance benchmarks for kb-go.
 // All offline, no API key needed. Run: go test -bench=. -benchmem
 // Updated: added BenchmarkSearchLargeCorpus (50 docs x 50k words) comparing
-// the v2 inverted-index fast path against the tokenize-on-the-fly slow path,
+// the inverted-index fast path against the tokenize-on-the-fly slow path,
 // plus generateLargeCorpus helper.
 package main
 

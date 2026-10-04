@@ -3,7 +3,7 @@
 // No embeddings, no vectors. The LLM understands at write time, not query time.
 //
 // Search: tokenize() Porter-stems every token (porter.go), and BM25 scores from a
-// persisted inverted index (cache/search_index.json) that
+// persisted inverted index (cache/search_index.json, v3: stemmed postings) that
 // self-heals when missing, stale, or written in an older format.
 //
 
@@ -1312,11 +1312,14 @@ func exportWiki(scope, outputDir string) {
 
 // --- Search Index (inverted) ---
 
-// searchIndexVersion is bumped whenever the on-disk shape changes. Old-format
-// files (the v1 token dump: {"articles": [...]}) unmarshal with V == 0 and are
-// ignored — search falls back to on-the-fly tokenization and the next index
-// write replaces the file with the current format.
-const searchIndexVersion = 2
+// searchIndexVersion is bumped whenever the on-disk shape OR the tokens it
+// stores change. v1 was a token dump ({"articles": [...]}, unmarshals as V==0);
+// v2 was the inverted index with raw, unstemmed terms; v3 is the same shape
+// with Porter-stemmed terms (tokenize). Any other version is ignored on load —
+// a v2 file's raw postings would silently miss stemmed query tokens — so
+// search falls back to on-the-fly tokenization and the next index write (or a
+// full-scope search, via loadOrHealSearchIndex) replaces the file.
+const searchIndexVersion = 3
 
 // Posting is one (docIdx, termFrequency) pair in a term's postings list.
 // Encoded as a 2-element JSON array to keep the index file compact.
@@ -1460,10 +1463,9 @@ func indexMatches(si *SearchIndex, articles []*WikiArticle) bool {
 // (bm25SearchWithIndex) tokenize through here, "opens" in a doc and the query
 // "open" both reduce to "open" and match. See porter.go.
 //
-// Rollout note: stemming changes the tokens stored in the persisted search
-// index (cache/search_index.json), so EXISTING indexes must be rebuilt to
-// benefit — a fresh index works immediately. porterStem leaves digits and
-// <=2-letter tokens untouched, so numeric/short tokens behave as before.
+// The persisted index stores these stemmed tokens, which is why its format is
+// v3 (searchIndexVersion): pre-stemming v2 files are ignored and healed.
+// porterStem leaves digits and <=2-letter tokens untouched.
 func tokenize(text string) []string {
 	lower := strings.ToLower(text)
 	splitter := func(c rune) bool {
