@@ -1,6 +1,7 @@
 // Search benchmarks: Tokenize, BM25 over a synthetic corpus, the inverted-index
-// fast path vs tokenize-on-the-fly on a large corpus (50 docs x 50k words), and
-// store.RebuildIndex over the same synthetic corpus.
+// fast path vs tokenize-on-the-fly on a large corpus (50 docs x 50k words),
+// store.RebuildIndex over the same synthetic corpus, one CLI search process
+// over a 385-article scope on disk (BenchmarkSearchCLIPath), and BuildIndex.
 // Run: go test -bench=. -benchmem ./internal/search
 
 package search
@@ -8,8 +9,11 @@ package search
 import (
 	"fmt"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/store"
@@ -150,5 +154,57 @@ func BenchmarkRebuildIndex(b *testing.B) {
 				store.RebuildIndex("bench", corpus)
 			}
 		})
+	}
+}
+
+// seedCLIBenchScope writes a 385-article scope (generateCorpus bodies repeated
+// 20x, a few thousand words each) with its index, backdated so no stamp is
+// racy: the steady state a `kb search` process meets.
+func seedCLIBenchScope(b *testing.B) string {
+	b.Helper()
+	scope := "bench-cli-path"
+	os.RemoveAll(store.ScopeDir(scope))
+	b.Cleanup(func() { os.RemoveAll(store.ScopeDir(scope)) })
+	for _, a := range generateCorpus(385) {
+		a.Content = strings.Repeat(a.Content+"\n\n", 20)
+		if err := store.SaveArticle(scope, a); err != nil {
+			b.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-time.Hour)
+	entries, _ := os.ReadDir(wikiDir(scope))
+	for _, e := range entries {
+		os.Chtimes(filepath.Join(wikiDir(scope), e.Name()), old, old)
+	}
+	all, _ := store.ListArticles(scope)
+	if err := SaveIndex(scope, BuildIndex(all)); err != nil {
+		b.Fatal(err)
+	}
+	return scope
+}
+
+// BenchmarkSearchCLIPath simulates one `kb search` process on one scope: load
+// the index from disk, prove it fresh, rank, load the top 10 articles.
+func BenchmarkSearchCLIPath(b *testing.B) {
+	scope := seedCLIBenchScope(b)
+	qs := []string{"async database", "middleware routing", "cache queue handler", "encrypted storage"}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if hits, _ := SearchScope(scope, qs[i%len(qs)], 10, "", nil); len(hits) == 0 {
+			b.Fatal("no hits")
+		}
+	}
+}
+
+// BenchmarkBuildIndex is the index build every write and heal pays, over the
+// same 385-article corpus.
+func BenchmarkBuildIndex(b *testing.B) {
+	corpus := generateCorpus(385)
+	for _, a := range corpus {
+		a.Content = strings.Repeat(a.Content+"\n\n", 20)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		BuildIndex(corpus)
 	}
 }

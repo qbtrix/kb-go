@@ -76,62 +76,48 @@ func cmdSearch(args []string) {
 	// Resolve scopes: "*" = all, "a,b,c" = specific, else single
 	scopes := store.ResolveScopes(scope)
 
-	// Collect articles from all scopes
-	type scopedArticle struct {
-		article *model.WikiArticle
-		scope   string
-	}
+	var results []*model.WikiArticle
 	var allArticles []*model.WikiArticle
-	var scopeMap []string // parallel array: scope per article
-	for _, s := range scopes {
-		articles, err := store.ListArticles(s)
-		if err != nil {
-			continue
+	var scopeMap []string // parallel array: scope per article (multi-scope only)
+	if len(scopes) == 1 {
+		// One scope: rank from the persisted index (healed when missing,
+		// old-format or stale) and read only the top hits from disk.
+		results, _ = search.SearchScope(scopes[0], query, limit, excludeTags, nil)
+	} else {
+		// Collect articles from all scopes
+		for _, s := range scopes {
+			articles, err := store.ListArticles(s)
+			if err != nil {
+				continue
+			}
+			for _, a := range articles {
+				allArticles = append(allArticles, a)
+				scopeMap = append(scopeMap, s)
+			}
 		}
-		for _, a := range articles {
-			allArticles = append(allArticles, a)
-			scopeMap = append(scopeMap, s)
-		}
-	}
 
-	// Filter by excluded tags
-	if excludeTags != "" {
-		excluded := strings.Split(excludeTags, ",")
-		var filtered []*model.WikiArticle
-		var filteredScopes []string
-		for i, a := range allArticles {
-			skip := false
-			for _, tag := range excluded {
-				tag = strings.TrimSpace(tag)
-				if slices.Contains(a.Categories, tag) {
-					skip = true
-					break
+		// Filter by excluded tags
+		if excludeTags != "" {
+			excluded := strings.Split(excludeTags, ",")
+			var filtered []*model.WikiArticle
+			var filteredScopes []string
+			for i, a := range allArticles {
+				skip := false
+				for _, tag := range excluded {
+					tag = strings.TrimSpace(tag)
+					if slices.Contains(a.Categories, tag) {
+						skip = true
+						break
+					}
+				}
+				if !skip {
+					filtered = append(filtered, a)
+					filteredScopes = append(filteredScopes, scopeMap[i])
 				}
 			}
-			if !skip {
-				filtered = append(filtered, a)
-				filteredScopes = append(filteredScopes, scopeMap[i])
-			}
+			allArticles = filtered
+			scopeMap = filteredScopes
 		}
-		allArticles = filtered
-		scopeMap = filteredScopes
-	}
-
-	// Search with the inverted index (only works for single scope)
-	var results []*model.WikiArticle
-	if len(scopes) == 1 {
-		var si *search.Index
-		if excludeTags == "" {
-			// Full-scope search: self-heal a missing/stale/old-format index
-			// so the next search takes the fast path (best-effort write).
-			si = search.LoadOrHealIndex(scopes[0], allArticles)
-		} else {
-			// Tag-filtered slice — the full-scope index can't match it, so
-			// this runs the slow path and must not overwrite the index.
-			si = search.LoadIndex(scopes[0])
-		}
-		results = search.BM25WithIndex(allArticles, query, limit, si)
-	} else {
 		results = search.BM25(allArticles, query, limit)
 	}
 
