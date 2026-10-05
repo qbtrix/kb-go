@@ -22,11 +22,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // cacheTestArticle builds a small article whose content carries a unique word.
-func cacheTestArticle(id, title, word string) *WikiArticle {
-	return &WikiArticle{
+func cacheTestArticle(id, title, word string) *model.WikiArticle {
+	return &model.WikiArticle{
 		ID: id, Title: title,
 		Summary:    "Summary for " + title,
 		Content:    "# " + title + "\n\nThis article discusses " + word + " in depth.",
@@ -41,10 +44,10 @@ func cacheTestArticle(id, title, word string) *WikiArticle {
 // well outside any racy-mtime window.
 func cacheTestScope(t *testing.T, suffix string) string {
 	t.Helper()
-	scope := "test-mcpcache-" + suffix + "-" + contentHash(t.Name())[:8]
+	scope := "test-mcpcache-" + suffix + "-" + textutil.ContentHash(t.Name())[:8]
 	os.RemoveAll(scopeDir(scope))
 	t.Cleanup(func() { os.RemoveAll(scopeDir(scope)) })
-	for _, a := range []*WikiArticle{
+	for _, a := range []*model.WikiArticle{
 		cacheTestArticle("alpha", "Alpha", "aardvark"),
 		cacheTestArticle("beta", "Beta", "buffalo"),
 		cacheTestArticle("gamma", "Gamma", "gazelle"),
@@ -402,7 +405,7 @@ func TestArticleCacheReusesSettledFiles(t *testing.T) {
 // SearchIndex docIdx stays aligned with the cached slice.
 func TestMCPCacheSearchMatchesUncachedPath(t *testing.T) {
 	scope := cacheTestScope(t, "parity")
-	for _, a := range []*WikiArticle{
+	for _, a := range []*model.WikiArticle{
 		cacheTestArticle("a", "A", "otter middleware"),
 		cacheTestArticle("a-b", "A B", "otter otter routing"),
 		cacheTestArticle("a_c", "A C", "middleware routing"),

@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 func tempHomeScope(t *testing.T, prefix string) string {
@@ -77,7 +78,7 @@ func TestIngestAllowFallbackSavesVerbatimArticle(t *testing.T) {
 		t.Fatalf("ingestText with allowFallback should succeed, got: %v", err)
 	}
 
-	article, loadErr := loadArticle(scope, slugify("notes.md"))
+	article, loadErr := loadArticle(scope, textutil.Slugify("notes.md"))
 	if loadErr != nil || article == nil {
 		t.Fatalf("fallback article not found: %v", loadErr)
 	}
@@ -87,7 +88,7 @@ func TestIngestAllowFallbackSavesVerbatimArticle(t *testing.T) {
 	if article.Content != text {
 		t.Errorf("fallback article content should be the verbatim raw text")
 	}
-	if len(article.SourceDocs) != 1 || article.SourceDocs[0] != contentHash(text)[:16] {
+	if len(article.SourceDocs) != 1 || article.SourceDocs[0] != textutil.ContentHash(text)[:16] {
 		t.Errorf("fallback article should link its raw doc, got %v", article.SourceDocs)
 	}
 }
@@ -114,7 +115,7 @@ func TestIngestArticleJSONHappyPath(t *testing.T) {
 	}
 
 	// Raw doc saved from raw_text and linked from the article.
-	rawID := contentHash("full raw transcript text here")[:16]
+	rawID := textutil.ContentHash("full raw transcript text here")[:16]
 	raw, err := loadRawDoc(scope, rawID)
 	if err != nil || raw.RawText != "full raw transcript text here" {
 		t.Fatalf("raw doc %s should be saved from raw_text: %v", rawID, err)
@@ -123,7 +124,7 @@ func TestIngestArticleJSONHappyPath(t *testing.T) {
 		t.Errorf("raw doc source = %q, want %q", raw.Source, "docs/auth.md")
 	}
 
-	article, err := loadArticle(scope, slugify("Auth Session Handling"))
+	article, err := loadArticle(scope, textutil.Slugify("Auth Session Handling"))
 	if err != nil || article == nil {
 		t.Fatalf("article not saved: %v", err)
 	}
@@ -168,7 +169,7 @@ func TestIngestArticleJSONDefaultsCompiledWithExternal(t *testing.T) {
 	if err := ingestArticleJSON(scope, []byte(payload), false); err != nil {
 		t.Fatalf("ingestArticleJSON failed: %v", err)
 	}
-	article, err := loadArticle(scope, slugify("T"))
+	article, err := loadArticle(scope, textutil.Slugify("T"))
 	if err != nil || article == nil {
 		t.Fatalf("article not saved: %v", err)
 	}
@@ -264,7 +265,7 @@ func TestIngestArticleJSONHostileTitleContained(t *testing.T) {
 	}
 
 	// The slug must carry no path separators or traversal components...
-	slug := slugify("../../../etc/passwd")
+	slug := textutil.Slugify("../../../etc/passwd")
 	for _, bad := range []string{"/", `\`, ".."} {
 		if strings.Contains(slug, bad) {
 			t.Fatalf("slugify(hostile title) = %q still contains %q", slug, bad)

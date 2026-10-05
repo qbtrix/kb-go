@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 const shoeRow = "| 10 | 11.5 | 9 | 44 | 28.0 |"
@@ -36,7 +38,7 @@ func seedSizeGuide(t *testing.T, scope string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &WikiArticle{
+	a := &model.WikiArticle{
 		ID:         "cairn-co-size-guide",
 		Title:      "Cairn & Co. Size Guide",
 		Summary:    "Sizing charts for jackets, packs, footwear and socks. Free exchanges are offered.",
@@ -48,7 +50,7 @@ func seedSizeGuide(t *testing.T, scope string) {
 	if err := saveArticle(scope, a); err != nil {
 		t.Fatal(err)
 	}
-	other := &WikiArticle{ID: "returns", Title: "Returns and exchanges", Summary: "60-day returns.",
+	other := &model.WikiArticle{ID: "returns", Title: "Returns and exchanges", Summary: "60-day returns.",
 		Content: "Return unworn gear within 60 days for a full refund.", SourcePath: "returns", Version: 1}
 	if err := saveArticle(scope, other); err != nil {
 		t.Fatal(err)
@@ -57,7 +59,7 @@ func seedSizeGuide(t *testing.T, scope string) {
 
 // The whole article fits a normal budget: it must come back whole, table included.
 func TestContextReturnsBodyNotSummary(t *testing.T) {
-	scope := "test-ctx-body-" + contentHash(t.Name())[:8]
+	scope := "test-ctx-body-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 	seedSizeGuide(t, scope)
 
@@ -73,7 +75,7 @@ func TestContextReturnsBodyNotSummary(t *testing.T) {
 // A caller with less room than the article passes --context-chars; kb-go must
 // spend that budget on the sections the query is about, not the article's head.
 func TestContextBudgetKeepsQueryRelevantSection(t *testing.T) {
-	scope := "test-ctx-budget-" + contentHash(t.Name())[:8]
+	scope := "test-ctx-budget-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 	seedSizeGuide(t, scope)
 
@@ -95,7 +97,7 @@ func TestContextBudgetKeepsQueryRelevantSection(t *testing.T) {
 
 // Markdown tables must never be cut mid-row: a half table reads as data loss.
 func TestContextNeverSplitsTableRows(t *testing.T) {
-	scope := "test-ctx-rows-" + contentHash(t.Name())[:8]
+	scope := "test-ctx-rows-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 	seedSizeGuide(t, scope)
 

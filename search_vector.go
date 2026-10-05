@@ -15,6 +15,8 @@ package main
 import (
 	"fmt"
 	"sort"
+
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 // rrfK is the standard reciprocal-rank-fusion constant from Cormack et al.
@@ -72,7 +74,7 @@ func rrfFuse(bm25IDs []string, vecIDs []string) (fusedIDs []string, fusedScores 
 // surface in JSON output for vector / hybrid modes. The plain WikiArticle has
 // no slot for score or rank — they're properties of the query, not the doc.
 type vectorSearchResult struct {
-	Article   *WikiArticle
+	Article   *model.WikiArticle
 	Score     float64 // cosine for pure-vec, RRF fused for hybrid
 	BM25Rank  int     // -1 when not in BM25 list
 	VecRank   int     // -1 when not in vec list
@@ -151,7 +153,7 @@ func runHybridSearch(scope string, queryText string, queryVec []float32, topK in
 	}
 
 	// Build an article lookup so RRF output can be materialized cheaply.
-	articlesByID := make(map[string]*WikiArticle, len(allArticles))
+	articlesByID := make(map[string]*model.WikiArticle, len(allArticles))
 	for _, a := range allArticles {
 		articlesByID[a.ID] = a
 	}

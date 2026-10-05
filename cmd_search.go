@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 func cmdSearch(args []string) {
@@ -72,10 +75,10 @@ func cmdSearch(args []string) {
 
 	// Collect articles from all scopes
 	type scopedArticle struct {
-		article *WikiArticle
+		article *model.WikiArticle
 		scope   string
 	}
-	var allArticles []*WikiArticle
+	var allArticles []*model.WikiArticle
 	var scopeMap []string // parallel array: scope per article
 	for _, s := range scopes {
 		articles, err := listArticles(s)
@@ -91,7 +94,7 @@ func cmdSearch(args []string) {
 	// Filter by excluded tags
 	if excludeTags != "" {
 		excluded := strings.Split(excludeTags, ",")
-		var filtered []*WikiArticle
+		var filtered []*model.WikiArticle
 		var filteredScopes []string
 		for i, a := range allArticles {
 			skip := false
@@ -112,7 +115,7 @@ func cmdSearch(args []string) {
 	}
 
 	// Search with the inverted index (only works for single scope)
-	var results []*WikiArticle
+	var results []*model.WikiArticle
 	if len(scopes) == 1 {
 		var si *SearchIndex
 		if excludeTags == "" {
@@ -141,7 +144,7 @@ func cmdSearch(args []string) {
 	}
 
 	// Build a result-to-scope lookup for multi-scope display
-	resultScope := func(a *WikiArticle) string {
+	resultScope := func(a *model.WikiArticle) string {
 		for i, art := range allArticles {
 			if art == a && i < len(scopeMap) {
 				return scopeMap[i]
@@ -178,7 +181,7 @@ func cmdSearch(args []string) {
 				scopeLabel = fmt.Sprintf(" [%s]", resultScope(a))
 			}
 			fmt.Printf("  %d. %s%s\n", i+1, a.Title, scopeLabel)
-			fmt.Printf("     %s\n", truncate(a.Summary, 120))
+			fmt.Printf("     %s\n", textutil.Truncate(a.Summary, 120))
 			if len(a.Concepts) > 0 {
 				fmt.Printf("     Concepts: %s\n", strings.Join(a.Concepts[:min(len(a.Concepts), 5)], ", "))
 			}
@@ -236,7 +239,7 @@ func emitVectorResults(results []vectorSearchResult, hybridMode, jsonOut bool) {
 		}
 		fmt.Println("]")
 		if r.Article.Summary != "" {
-			fmt.Printf("     %s\n", truncate(r.Article.Summary, 120))
+			fmt.Printf("     %s\n", textutil.Truncate(r.Article.Summary, 120))
 		}
 		fmt.Println()
 	}

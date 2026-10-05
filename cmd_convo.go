@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 func cmdConvo(args []string) {
@@ -136,7 +138,7 @@ func cmdConvoSearch(args []string) {
 	}
 
 	// Filter to conversation articles only
-	var convoArticles []*WikiArticle
+	var convoArticles []*model.WikiArticle
 	for _, a := range articles {
 		for _, cat := range a.Categories {
 			if cat == "conversation" {
@@ -190,7 +192,7 @@ func cmdConvoList(args []string) {
 		fatal("Cannot load articles: %v", err)
 	}
 
-	var convoArticles []*WikiArticle
+	var convoArticles []*model.WikiArticle
 	for _, a := range articles {
 		for _, cat := range a.Categories {
 			if cat == "conversation" {

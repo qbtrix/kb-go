@@ -19,6 +19,9 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // isGlossarySource returns true when relPath's parent directory is named
@@ -54,7 +57,7 @@ func isGlossarySource(relPath string) bool {
 //
 // If the frontmatter omits "id", we derive it from the basename of relPath
 // minus its extension (e.g. "pocket.md" -> "pocket").
-func parseGlossarySource(raw []byte, relPath string) (*WikiArticle, error) {
+func parseGlossarySource(raw []byte, relPath string) (*model.WikiArticle, error) {
 	text := string(raw)
 	if !strings.HasPrefix(text, "---") {
 		return nil, fmt.Errorf("glossary source %s: missing frontmatter (expected leading '---')", relPath)
@@ -65,7 +68,7 @@ func parseGlossarySource(raw []byte, relPath string) (*WikiArticle, error) {
 		return nil, fmt.Errorf("glossary source %s: malformed frontmatter (need opening + closing '---')", relPath)
 	}
 
-	var fm Frontmatter
+	var fm model.Frontmatter
 	if err := json.Unmarshal([]byte(fmText), &fm); err != nil {
 		return nil, fmt.Errorf("glossary source %s: bad frontmatter JSON: %w", relPath, err)
 	}
@@ -98,15 +101,15 @@ func parseGlossarySource(raw []byte, relPath string) (*WikiArticle, error) {
 	// only checks Contains, so internal bytes are what matter.
 	content := strings.TrimSpace(body)
 
-	return &WikiArticle{
+	return &model.WikiArticle{
 		ID:           id,
 		Title:        title,
 		Summary:      fm.Summary,
 		Content:      content,
-		Concepts:     nilToEmpty(fm.Concepts),
-		Categories:   nilToEmpty(fm.Categories),
-		SourceDocs:   nilToEmpty(fm.SourceDocs),
-		Backlinks:    nilToEmpty(fm.Backlinks),
+		Concepts:     textutil.NilToEmpty(fm.Concepts),
+		Categories:   textutil.NilToEmpty(fm.Categories),
+		SourceDocs:   textutil.NilToEmpty(fm.SourceDocs),
+		Backlinks:    textutil.NilToEmpty(fm.Backlinks),
 		WordCount:    fm.WordCount,
 		CompiledAt:   fm.CompiledAt,
 		CompiledWith: fm.CompiledWith,
@@ -132,7 +135,7 @@ func glossaryList(scope string, out io.Writer) error {
 		return err
 	}
 
-	var entries []*WikiArticle
+	var entries []*model.WikiArticle
 	for _, a := range articles {
 		if a.Kind == "glossary" {
 			entries = append(entries, a)
@@ -208,7 +211,7 @@ func glossaryValidate(scope string) ([]string, error) {
 	}
 
 	// Filter glossary-only, stable-ordered (listArticles already sorts by ID).
-	var entries []*WikiArticle
+	var entries []*model.WikiArticle
 	for _, a := range articles {
 		if a.Kind == "glossary" {
 			entries = append(entries, a)

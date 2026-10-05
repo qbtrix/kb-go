@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // cmdPrepare scans files and outputs compilation prompts as JSON.
@@ -71,7 +74,7 @@ func cmdPrepare(args []string) {
 			continue
 		}
 
-		hash := contentHash(string(text))
+		hash := textutil.ContentHash(string(text))
 		relPath, _ := filepath.Rel(absPath, f)
 		if relPath == "" {
 			relPath = f
@@ -90,14 +93,14 @@ func cmdPrepare(args []string) {
 
 		// Save raw doc
 		rawID := hash[:16]
-		raw := &RawDoc{
+		raw := &model.RawDoc{
 			ID:          rawID,
 			SourceType:  "file",
 			Source:      relPath,
 			Filename:    filepath.Base(f),
 			ContentType: "text",
 			RawText:     string(text),
-			WordCount:   wordCount(string(text)),
+			WordCount:   textutil.WordCount(string(text)),
 			IngestedAt:  time.Now().UTC().Format(time.RFC3339),
 		}
 		saveRawDoc(scope, raw)

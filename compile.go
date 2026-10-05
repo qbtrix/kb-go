@@ -36,6 +36,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 const defaultCompilerTimeout = 300 * time.Second
@@ -116,7 +119,7 @@ Source text:
 // compileArticle compiles one source through the configured path (hook, else
 // built-in client). On any failure it returns (nil, err): the caller decides
 // how to report, and must not substitute the raw text.
-func compileArticle(spec compilerSpec, rawText, source string, codeMod *CodeModule, terse bool) (*WikiArticle, error) {
+func compileArticle(spec compilerSpec, rawText, source string, codeMod *CodeModule, terse bool) (*model.WikiArticle, error) {
 	switch {
 	case spec.hook():
 		return compileWithHook(spec, rawText, source, codeMod, terse)
@@ -127,7 +130,7 @@ func compileArticle(spec compilerSpec, rawText, source string, codeMod *CodeModu
 }
 
 // compileWithHook compiles one source through the compiler hook.
-func compileWithHook(spec compilerSpec, rawText, source string, codeMod *CodeModule, terse bool) (*WikiArticle, error) {
+func compileWithHook(spec compilerSpec, rawText, source string, codeMod *CodeModule, terse bool) (*model.WikiArticle, error) {
 	prompt := buildCompilePrompt(source, codeContextBlock(codeMod), rawText, terse)
 	out, err := runCompiler(spec, prompt, source)
 	if err != nil {
@@ -141,19 +144,19 @@ func compileWithHook(spec compilerSpec, rawText, source string, codeMod *CodeMod
 }
 
 // newCompiledArticle builds the stored article from a parsed compile result.
-func newCompiledArticle(res *compiledArticle, terse bool, compiledWith string, usage *ArticleUsage) *WikiArticle {
+func newCompiledArticle(res *compiledArticle, terse bool, compiledWith string, usage *model.ArticleUsage) *model.WikiArticle {
 	audience, depth, targetWords := "human", "deep", 500
 	if terse {
 		audience, depth, targetWords = "agent", "overview", 150
 	}
-	return &WikiArticle{
-		ID:           slugify(res.Title),
+	return &model.WikiArticle{
+		ID:           textutil.Slugify(res.Title),
 		Title:        res.Title,
 		Summary:      res.Summary,
 		Content:      res.Content,
-		Concepts:     nilToEmpty(res.Concepts),
-		Categories:   nilToEmpty(res.Categories),
-		WordCount:    wordCount(res.Content),
+		Concepts:     textutil.NilToEmpty(res.Concepts),
+		Categories:   textutil.NilToEmpty(res.Categories),
+		WordCount:    textutil.WordCount(res.Content),
 		CompiledAt:   time.Now().UTC().Format(time.RFC3339),
 		CompiledWith: compiledWith,
 		Version:      1,
@@ -166,7 +169,7 @@ func newCompiledArticle(res *compiledArticle, terse bool, compiledWith string, u
 
 // compiledWithFor picks compiled_with: explicit value, else usage.model, else
 // the caller's default.
-func compiledWithFor(explicit string, usage *ArticleUsage, fallback string) string {
+func compiledWithFor(explicit string, usage *model.ArticleUsage, fallback string) string {
 	if explicit != "" {
 		return explicit
 	}
@@ -184,7 +187,7 @@ type compiledArticle struct {
 	Concepts     []string
 	Categories   []string
 	CompiledWith string
-	Usage        *ArticleUsage
+	Usage        *model.ArticleUsage
 }
 
 // parseCompiledArticle extracts one JSON article object from compiler output.
@@ -229,7 +232,7 @@ func stripFences(text string) string {
 // parseUsage reads the optional usage object leniently: each known key is
 // taken only when it has the right type; anything else is ignored. Returns
 // nil when nothing usable is present.
-func parseUsage(raw json.RawMessage) *ArticleUsage {
+func parseUsage(raw json.RawMessage) *model.ArticleUsage {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -237,7 +240,7 @@ func parseUsage(raw json.RawMessage) *ArticleUsage {
 	if json.Unmarshal(raw, &m) != nil || m == nil {
 		return nil
 	}
-	u := &ArticleUsage{}
+	u := &model.ArticleUsage{}
 	if s, ok := m["model"].(string); ok {
 		u.Model = s
 	}
@@ -250,7 +253,7 @@ func parseUsage(raw json.RawMessage) *ArticleUsage {
 	if f, ok := m["cost_usd"].(float64); ok && f >= 0 {
 		u.CostUSD = f
 	}
-	if *u == (ArticleUsage{}) {
+	if *u == (model.ArticleUsage{}) {
 		return nil
 	}
 	return u
@@ -258,7 +261,7 @@ func parseUsage(raw json.RawMessage) *ArticleUsage {
 
 // usageTotals sums usage across articles: how many carry usage, and their
 // input/output tokens and cost.
-func usageTotals(articles []*WikiArticle) (n, in, out int, cost float64) {
+func usageTotals(articles []*model.WikiArticle) (n, in, out int, cost float64) {
 	for _, a := range articles {
 		if a == nil || a.Usage == nil {
 			continue

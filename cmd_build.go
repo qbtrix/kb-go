@@ -17,6 +17,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 func cmdBuild(args []string) {
@@ -93,7 +96,7 @@ func runBuild(args []string) int {
 			continue
 		}
 
-		hash := contentHash(string(text))
+		hash := textutil.ContentHash(string(text))
 		relPath, _ := filepath.Rel(absPath, f)
 		if relPath == "" {
 			relPath = f
@@ -132,7 +135,7 @@ func runBuild(args []string) int {
 	// Phase 2: compile in parallel
 	type compileResult struct {
 		job     compileJob
-		article *WikiArticle
+		article *model.WikiArticle
 		fixedID bool // glossary entry with an explicit frontmatter id
 	}
 
@@ -156,19 +159,19 @@ func runBuild(args []string) int {
 			}
 
 			// Save raw doc
-			raw := &RawDoc{
+			raw := &model.RawDoc{
 				ID:          j.rawID,
 				SourceType:  "file",
 				Source:      j.relPath,
 				Filename:    filepath.Base(j.filePath),
 				ContentType: "text",
 				RawText:     j.text,
-				WordCount:   wordCount(j.text),
+				WordCount:   textutil.WordCount(j.text),
 				IngestedAt:  time.Now().UTC().Format(time.RFC3339),
 			}
 			saveRawDoc(scope, raw)
 
-			var article *WikiArticle
+			var article *model.WikiArticle
 			fixedID := false
 
 			if isGlossarySource(j.relPath) {
@@ -177,12 +180,12 @@ func runBuild(args []string) int {
 				gArt, gErr := parseGlossarySource([]byte(j.text), j.relPath)
 				if gErr != nil {
 					fmt.Fprintf(os.Stderr, "Warning: glossary parse failed for %s: %v\n", j.relPath, gErr)
-					article = &WikiArticle{
-						ID:           slugify(strings.TrimSuffix(filepath.Base(j.filePath), filepath.Ext(j.filePath))),
+					article = &model.WikiArticle{
+						ID:           textutil.Slugify(strings.TrimSuffix(filepath.Base(j.filePath), filepath.Ext(j.filePath))),
 						Title:        strings.TrimSuffix(filepath.Base(j.filePath), filepath.Ext(j.filePath)),
 						Content:      j.text,
 						Kind:         "glossary",
-						WordCount:    wordCount(j.text),
+						WordCount:    textutil.WordCount(j.text),
 						CompiledAt:   time.Now().UTC().Format(time.RFC3339),
 						CompiledWith: "none (glossary fallback)",
 						Version:      1,
@@ -201,7 +204,7 @@ func runBuild(args []string) int {
 						article.Version = 1
 					}
 					if article.WordCount == 0 {
-						article.WordCount = wordCount(article.Content)
+						article.WordCount = textutil.WordCount(article.Content)
 					}
 				}
 			} else {
@@ -263,7 +266,7 @@ func runBuild(args []string) int {
 			r.article.ID, r.article.Version = ids.claim(r.article.ID, r.article.SourcePath, r.article.SourceDocs, false)
 		}
 		saveArticle(scope, r.article)
-		cache.Files[r.job.relPath] = CacheEntry{
+		cache.Files[r.job.relPath] = model.CacheEntry{
 			Hash:       r.job.hash,
 			ArticleID:  r.article.ID,
 			CompiledAt: r.article.CompiledAt,
@@ -298,7 +301,7 @@ func runBuild(args []string) int {
 		var buildCands []ContradictionCandidate
 		for _, r := range results {
 			if r.article != nil && r.article.Kind == "glossary" {
-				buildCands = append(buildCands, candidatesFromArticles([]*WikiArticle{r.article})...)
+				buildCands = append(buildCands, candidatesFromArticles([]*model.WikiArticle{r.article})...)
 			}
 		}
 		buildCands = append(buildCands, candidatesFromArticles(allArticles)...)

@@ -17,10 +17,11 @@ import (
 	"testing"
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
-func searchTestCorpus() []*WikiArticle {
-	return []*WikiArticle{
+func searchTestCorpus() []*model.WikiArticle {
+	return []*model.WikiArticle{
 		{
 			ID: "auth-middleware", Title: "Auth Middleware",
 			Summary:  "Token validation for incoming requests.",
@@ -49,7 +50,7 @@ func searchTestCorpus() []*WikiArticle {
 	}
 }
 
-func idsOf(articles []*WikiArticle) []string {
+func idsOf(articles []*model.WikiArticle) []string {
 	ids := make([]string, len(articles))
 	for i, a := range articles {
 		ids[i] = a.ID
@@ -234,7 +235,7 @@ func TestStaleIndexNotTrusted(t *testing.T) {
 
 	// Same doc count but different ids — also rejected.
 	si2 := buildSearchIndex(articles)
-	swapped := []*WikiArticle{articles[1], articles[0], articles[2], articles[3]}
+	swapped := []*model.WikiArticle{articles[1], articles[0], articles[2], articles[3]}
 	if indexMatches(si2, swapped) {
 		t.Errorf("indexMatches accepted an index whose doc order differs from the articles")
 	}

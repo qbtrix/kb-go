@@ -15,12 +15,14 @@ import (
 	"testing"
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // --- Helpers ---
 
 // generateCorpus creates n synthetic WikiArticles with realistic content.
-func generateCorpus(n int) []*WikiArticle {
+func generateCorpus(n int) []*model.WikiArticle {
 	rng := rand.New(rand.NewSource(42)) // deterministic
 	domains := []string{"authentication", "database", "routing", "middleware", "config",
 		"logging", "cache", "queue", "storage", "api", "service", "handler",
@@ -28,7 +30,7 @@ func generateCorpus(n int) []*WikiArticle {
 	adjectives := []string{"async", "distributed", "concurrent", "stateless", "encrypted",
 		"cached", "batched", "streaming", "reactive", "immutable"}
 
-	articles := make([]*WikiArticle, n)
+	articles := make([]*model.WikiArticle, n)
 	for i := 0; i < n; i++ {
 		domain := domains[rng.Intn(len(domains))]
 		adj := adjectives[rng.Intn(len(adjectives))]
@@ -51,8 +53,8 @@ func generateCorpus(n int) []*WikiArticle {
 			concepts = append(concepts, domains[rng.Intn(len(domains))])
 		}
 
-		articles[i] = &WikiArticle{
-			ID:         slugify(title),
+		articles[i] = &model.WikiArticle{
+			ID:         textutil.Slugify(title),
 			Title:      title,
 			Summary:    fmt.Sprintf("Article about %s %s patterns", adj, domain),
 			Content:    strings.Join(words, " "),
@@ -91,34 +93,6 @@ func BenchmarkTokenize(b *testing.B) {
 				tokenize(text)
 			}
 			b.ReportMetric(float64(count)/float64(b.Elapsed().Seconds())*float64(b.N)/float64(b.N), "words/sec")
-		})
-	}
-}
-
-func BenchmarkContentHash(b *testing.B) {
-	sizes := map[string]int{"1KB": 1024, "10KB": 10240, "100KB": 102400}
-	for name, size := range sizes {
-		data := strings.Repeat("x", size)
-		b.Run(name, func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				contentHash(data)
-			}
-		})
-	}
-}
-
-func BenchmarkSlugify(b *testing.B) {
-	inputs := []string{
-		"Simple Title",
-		"GroupService — manages group operations and membership",
-		"A Very Long Title That Should Be Truncated Because It Exceeds The Maximum Length Allowed",
-		"special!@#$%^&*()chars",
-	}
-	for _, input := range inputs {
-		b.Run(fmt.Sprintf("len_%d", len(input)), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				slugify(input)
-			}
 		})
 	}
 }
@@ -216,22 +190,22 @@ func BenchmarkParseTypeScript(b *testing.B) {
 // generateLargeCorpus builds nDocs articles of wordsPerDoc words each — the
 // shape of a scope poisoned by verbatim raw-dump ingests (few articles, huge
 // bodies). Deterministic via a fixed seed.
-func generateLargeCorpus(nDocs, wordsPerDoc int) []*WikiArticle {
+func generateLargeCorpus(nDocs, wordsPerDoc int) []*model.WikiArticle {
 	rng := rand.New(rand.NewSource(7))
 	vocab := []string{"authentication", "database", "routing", "middleware", "config",
 		"logging", "cache", "queue", "storage", "api", "service", "handler",
 		"the", "a", "is", "with", "for", "and", "to", "from", "in", "on",
 		"function", "returns", "handles", "processes", "manages", "creates",
 		"session", "token", "request", "response", "error", "retry", "timeout"}
-	articles := make([]*WikiArticle, nDocs)
+	articles := make([]*model.WikiArticle, nDocs)
 	for i := 0; i < nDocs; i++ {
 		words := make([]string, wordsPerDoc)
 		for j := range words {
 			words[j] = vocab[rng.Intn(len(vocab))]
 		}
 		title := fmt.Sprintf("raw dump %d", i)
-		articles[i] = &WikiArticle{
-			ID:         slugify(title),
+		articles[i] = &model.WikiArticle{
+			ID:         textutil.Slugify(title),
 			Title:      title,
 			Summary:    "verbatim raw text",
 			Content:    strings.Join(words, " "),

@@ -11,15 +11,17 @@ import (
 	"unicode/utf8"
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
-func sizeGuideArticle(t *testing.T) *WikiArticle {
+func sizeGuideArticle(t *testing.T) *model.WikiArticle {
 	t.Helper()
 	body, err := os.ReadFile(kbtest.Path(t, "testdata", "size-guide-article.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &WikiArticle{ID: "size-guide", Title: "Cairn & Co. Size Guide",
+	return &model.WikiArticle{ID: "size-guide", Title: "Cairn & Co. Size Guide",
 		Summary: "Sizing charts for jackets, packs, footwear and socks.",
 		Content: strings.ReplaceAll(string(body), "\r\n", "\n")}
 }
@@ -36,7 +38,7 @@ func assertWholeTableRows(t *testing.T, out string) {
 }
 
 func TestContextExcerptWholeArticleFits(t *testing.T) {
-	a := &WikiArticle{Title: "Returns", Summary: "60-day returns.", Content: "Return unworn gear within 60 days."}
+	a := &model.WikiArticle{Title: "Returns", Summary: "60-day returns.", Content: "Return unworn gear within 60 days."}
 	got := contextExcerpt(a, "returns", 4000)
 	if got != "## Returns\nReturn unworn gear within 60 days." {
 		t.Fatalf("got %q", got)
@@ -71,7 +73,7 @@ func TestContextExcerptNoHeadings(t *testing.T) {
 		}
 		paras = append(paras, p)
 	}
-	a := &WikiArticle{Title: "Shipping", Content: strings.Join(paras, "\n\n")}
+	a := &model.WikiArticle{Title: "Shipping", Content: strings.Join(paras, "\n\n")}
 	got := contextExcerpt(a, "kayak pallet", 300)
 	if len(got) > 300 || !strings.HasPrefix(got, "## Shipping\n") {
 		t.Fatalf("len %d: %q", len(got), got)
@@ -86,7 +88,7 @@ func TestContextExcerptTableAloneOverBudget(t *testing.T) {
 	for i := 0; i < 80; i++ {
 		rows = append(rows, "| "+strings.Repeat("9", i%5+1)+" | 44 | 28.0 |")
 	}
-	a := &WikiArticle{Title: "Chart", Content: "## Footwear\n\n" + strings.Join(rows, "\n")}
+	a := &model.WikiArticle{Title: "Chart", Content: "## Footwear\n\n" + strings.Join(rows, "\n")}
 	got := contextExcerpt(a, "footwear", 500)
 	if len(got) > 500 {
 		t.Fatalf("over budget: %d", len(got))
@@ -133,13 +135,13 @@ func TestContextExcerptHeadingOnlyMatchAndOrder(t *testing.T) {
 
 func TestContextBudgetsEveryBlockAndKeepsFirstHit(t *testing.T) {
 	a := sizeGuideArticle(t)
-	b := &WikiArticle{ID: "b", Title: "Socks", Content: strings.Repeat("Merino socks for footwear. ", 100)}
+	b := &model.WikiArticle{ID: "b", Title: "Socks", Content: strings.Repeat("Merino socks for footwear. ", 100)}
 	// Total smaller than the first article: it must be trimmed, not dropped.
-	blocks := searchContextBlocks([]*WikiArticle{a, b}, "footwear", 4000, 1000)
+	blocks := searchContextBlocks([]*model.WikiArticle{a, b}, "footwear", 4000, 1000)
 	if len(blocks) == 0 || blocks[0].Article != a || len(blocks[0].Block) > 1000 || !blocks[0].Truncated {
 		t.Fatalf("first hit dropped or over total: %+v", blocks)
 	}
-	out := formatSearchContext([]*WikiArticle{a, b}, "footwear", 1500, 8000)
+	out := formatSearchContext([]*model.WikiArticle{a, b}, "footwear", 1500, 8000)
 	for _, blk := range strings.Split(out, contextSeparator) {
 		if len(blk) > 1500 {
 			t.Errorf("block over budget: %d", len(blk))
@@ -153,10 +155,10 @@ func TestContextBudgetsEveryBlockAndKeepsFirstHit(t *testing.T) {
 // Content with a markdown rule ("---" between blank lines) would be split by a
 // consumer that splits the text output on the separator; --json keeps it whole.
 func TestContextJSONKeepsHorizontalRules(t *testing.T) {
-	scope := "test-ctx-json-" + contentHash(t.Name())[:8]
+	scope := "test-ctx-json-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 	content := "Intro about the warranty.\n\n---\n\nTail: lifetime repair guarantee on all packs."
-	if err := saveArticle(scope, &WikiArticle{ID: "warranty", Title: "Warranty", Summary: "Repairs.",
+	if err := saveArticle(scope, &model.WikiArticle{ID: "warranty", Title: "Warranty", Summary: "Repairs.",
 		Content: content, SourcePath: "warranty", Version: 1}); err != nil {
 		t.Fatal(err)
 	}

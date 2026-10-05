@@ -8,10 +8,14 @@
 
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/qbtrix/kb-go/internal/model"
+)
 
 // resultHasID reports whether an article with the given ID is in the results.
-func resultHasID(results []*WikiArticle, id string) bool {
+func resultHasID(results []*model.WikiArticle, id string) bool {
 	for _, a := range results {
 		if a.ID == id {
 			return true
@@ -25,7 +29,7 @@ func resultHasID(results []*WikiArticle, id string) bool {
 // retrieved by the query "open". Before stemming, BM25 was lexical and returned
 // nothing here.
 func TestStemmingRetrieval_OpenOpens(t *testing.T) {
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{ID: "hours", Title: "Store Hours", Content: "The shop opens at 8am and closes at 6pm.", Version: 1},
 		{ID: "unrelated", Title: "Payments", Content: "We accept cards and cash for all purchases.", Version: 1},
 	}
@@ -40,7 +44,7 @@ func TestStemmingRetrieval_OpenOpens(t *testing.T) {
 
 // TestStemmingRetrieval_MorphologicalPairs covers two more families end-to-end.
 func TestStemmingRetrieval_MorphologicalPairs(t *testing.T) {
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{ID: "loc", Title: "Where We Are", Content: "The clinic is located behind the central library.", Version: 1},
 		{ID: "menu", Title: "Kitchen", Content: "The kitchen serves lunch and dinner every day.", Version: 1},
 		{ID: "noise", Title: "About", Content: "A friendly neighborhood establishment since 1990.", Version: 1},
@@ -60,7 +64,7 @@ func TestStemmingRetrieval_MorphologicalPairs(t *testing.T) {
 // level: a query "open" must NOT surface a document that is only about
 // "operators" (open->"open", operator->"oper", so they must not match).
 func TestStemmingRetrieval_NoOverStem(t *testing.T) {
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{ID: "ops", Title: "Operators", Content: "Mobile network operators route calls through regional operator hubs.", Version: 1},
 	}
 	if r := bm25Search(articles, "open", 5); resultHasID(r, "ops") {
@@ -93,7 +97,7 @@ func TestStemmingRetrieval_GlossaryExactStillFirst(t *testing.T) {
 // query, the boost would not fire, and the mention-heavy module doc would rank
 // first — so this test fails if the glossary block regresses.
 func TestStemmingRetrieval_GlossaryVariantBoost(t *testing.T) {
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{
 			ID:      "connector-guide",
 			Title:   "Connector Guide",

@@ -9,6 +9,9 @@ import (
 	"os"
 	"slices"
 	"time"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // cmdAccept reads compiled article results from stdin and saves them.
@@ -88,7 +91,7 @@ func cmdAccept(args []string) {
 			continue
 		}
 
-		slug := slugify(a.Title)
+		slug := textutil.Slugify(a.Title)
 		now := time.Now().UTC().Format(time.RFC3339)
 
 		// Infer terse mode from the depth field in the payload. An agent that
@@ -114,16 +117,16 @@ func cmdAccept(args []string) {
 		}
 
 		usage := parseUsage(a.Usage)
-		article := &WikiArticle{
+		article := &model.WikiArticle{
 			ID:           slug,
 			Title:        a.Title,
 			Summary:      a.Summary,
 			Content:      a.Content,
-			Concepts:     nilToEmpty(a.Concepts),
-			Categories:   nilToEmpty(a.Categories),
+			Concepts:     textutil.NilToEmpty(a.Concepts),
+			Categories:   textutil.NilToEmpty(a.Categories),
 			SourcePath:   a.Source,
 			SourceDocs:   []string{a.RawID},
-			WordCount:    wordCount(a.Content),
+			WordCount:    textutil.WordCount(a.Content),
 			CompiledAt:   now,
 			CompiledWith: compiledWithFor(a.CompiledWith, usage, "agent"),
 			Version:      1,
@@ -143,7 +146,7 @@ func cmdAccept(args []string) {
 
 		// Update cache
 		if a.Hash != "" && a.Source != "" {
-			cache.Files[a.Source] = CacheEntry{
+			cache.Files[a.Source] = model.CacheEntry{
 				Hash:       a.Hash,
 				ArticleID:  article.ID,
 				CompiledAt: now,

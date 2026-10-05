@@ -14,42 +14,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
-
-// --- Slugify ---
-
-func TestSlugify(t *testing.T) {
-	tests := []struct {
-		input, want string
-	}{
-		{"Hello World", "hello-world"},
-		{"GroupService — manages groups", "groupservice-manages-groups"},
-		{"foo/bar/baz.py", "foobarbazpy"},
-		{"", ""}, // falls back to hash
-		{"UPPER CASE", "upper-case"},
-		{"special!@#chars", "specialchars"},
-	}
-	for _, tt := range tests {
-		got := slugify(tt.input)
-		if tt.input == "" {
-			if len(got) != 16 { // hash fallback
-				t.Errorf("slugify(%q) = %q, want 16-char hash", tt.input, got)
-			}
-			continue
-		}
-		if got != tt.want {
-			t.Errorf("slugify(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
-func TestSlugifyLongTitle(t *testing.T) {
-	long := strings.Repeat("a", 200)
-	got := slugify(long)
-	if len(got) > 80 {
-		t.Errorf("slugify should truncate to 80 chars, got %d", len(got))
-	}
-}
 
 // --- Tokenize ---
 
@@ -72,24 +40,6 @@ func TestTokenizeEmpty(t *testing.T) {
 	tokens := tokenize("")
 	if len(tokens) != 0 {
 		t.Errorf("tokenize('') should return empty, got %v", tokens)
-	}
-}
-
-// --- Content Hash ---
-
-func TestContentHash(t *testing.T) {
-	h1 := contentHash("hello world")
-	h2 := contentHash("hello world")
-	h3 := contentHash("hello world!")
-
-	if h1 != h2 {
-		t.Error("same input should produce same hash")
-	}
-	if h1 == h3 {
-		t.Error("different input should produce different hash")
-	}
-	if len(h1) != 64 { // SHA256 hex
-		t.Errorf("hash length should be 64, got %d", len(h1))
 	}
 }
 
@@ -168,10 +118,10 @@ func TestParseArticleBadFrontmatter(t *testing.T) {
 // --- Article Storage Round-Trip ---
 
 func TestSaveLoadArticle(t *testing.T) {
-	scope := "test-roundtrip-" + contentHash(t.Name())[:8]
+	scope := "test-roundtrip-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	original := &WikiArticle{
+	original := &model.WikiArticle{
 		ID:           "test-article",
 		Title:        "Test Article",
 		Summary:      "A test summary",
@@ -221,10 +171,10 @@ func TestSaveLoadArticle(t *testing.T) {
 // the JSON parse failed, and listArticles silently dropped the article from
 // every index and search.
 func TestSaveLoadArticleDashesInFrontmatter(t *testing.T) {
-	scope := "test-dashes-" + contentHash(t.Name())[:8]
+	scope := "test-dashes-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	cases := []*WikiArticle{
+	cases := []*model.WikiArticle{
 		{ID: "rule-in-summary", Title: "Rule In Summary", Summary: "# Doc\n\nIntro.\n\n---\n\n## Next", Content: "body one"},
 		{ID: "table-in-summary", Title: "Table In Summary", Summary: "| a | b |\n|---|---|\n| 1 | 2 |", Content: "body two"},
 		{ID: "dashes-in-title", Title: "Before --- After", Summary: "plain", Content: "body three\n\n---\n\nmore"},
@@ -263,10 +213,10 @@ func TestSaveLoadArticleDashesInFrontmatter(t *testing.T) {
 // --- RawDoc Storage Round-Trip ---
 
 func TestSaveLoadRawDoc(t *testing.T) {
-	scope := "test-raw-" + contentHash(t.Name())[:8]
+	scope := "test-raw-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	raw := &RawDoc{
+	raw := &model.RawDoc{
 		ID:          "abc123",
 		SourceType:  "file",
 		Source:      "test.py",
@@ -297,7 +247,7 @@ func TestSaveLoadRawDoc(t *testing.T) {
 // --- Index ---
 
 func TestRebuildIndex(t *testing.T) {
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{ID: "a1", Title: "Auth Service", Concepts: []string{"auth", "JWT"}, Categories: []string{"code"}},
 		{ID: "a2", Title: "User Service", Concepts: []string{"auth", "users"}, Categories: []string{"code", "api"}},
 	}
@@ -332,13 +282,13 @@ func TestRebuildIndex(t *testing.T) {
 // --- Index Storage Round-Trip ---
 
 func TestSaveLoadIndex(t *testing.T) {
-	scope := "test-idx-" + contentHash(t.Name())[:8]
+	scope := "test-idx-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	idx := &KnowledgeIndex{
+	idx := &model.KnowledgeIndex{
 		Scope:      scope,
 		Articles:   map[string]any{"a1": map[string]any{"title": "Test"}},
-		Concepts:   map[string]*Concept{"go": {Name: "Go", Articles: []string{"a1"}}},
+		Concepts:   map[string]*model.Concept{"go": {Name: "Go", Articles: []string{"a1"}}},
 		Categories: []string{"code"},
 	}
 
@@ -359,7 +309,7 @@ func TestSaveLoadIndex(t *testing.T) {
 // --- BM25 Search ---
 
 func TestBM25Search(t *testing.T) {
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{ID: "a1", Title: "Authentication Guide", Summary: "How to authenticate users with JWT tokens", Content: "JWT auth flow using bearer tokens"},
 		{ID: "a2", Title: "Database Setup", Summary: "Setting up PostgreSQL for production", Content: "PostgreSQL configuration and connection pooling"},
 		{ID: "a3", Title: "API Gateway", Summary: "Gateway handles auth and routing", Content: "Routes requests and validates JWT tokens"},
@@ -376,7 +326,7 @@ func TestBM25Search(t *testing.T) {
 }
 
 func TestBM25SearchNoResults(t *testing.T) {
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{ID: "a1", Title: "Hello", Content: "world"},
 	}
 	results := bm25Search(articles, "nonexistent", 5)
@@ -386,7 +336,7 @@ func TestBM25SearchNoResults(t *testing.T) {
 }
 
 func TestBM25SearchEmptyQuery(t *testing.T) {
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{ID: "a1", Title: "Hello", Content: "world"},
 	}
 	results := bm25Search(articles, "", 5)
@@ -403,7 +353,7 @@ func TestBM25SearchEmptyCorpus(t *testing.T) {
 }
 
 func TestBM25SearchLimit(t *testing.T) {
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{ID: "a1", Title: "Go", Summary: "Go language", Content: "Go programming language"},
 		{ID: "a2", Title: "Go testing", Summary: "Go tests", Content: "Go test framework"},
 		{ID: "a3", Title: "Go modules", Summary: "Go mod", Content: "Go module system"},
@@ -417,12 +367,12 @@ func TestBM25SearchLimit(t *testing.T) {
 // --- Cache ---
 
 func TestCacheRoundTrip(t *testing.T) {
-	scope := "test-cache-" + contentHash(t.Name())[:8]
+	scope := "test-cache-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	c := &Cache{
+	c := &model.Cache{
 		Version: 1,
-		Files: map[string]CacheEntry{
+		Files: map[string]model.CacheEntry{
 			"src/main.py": {Hash: "abc123", ArticleID: "main-py", CompiledAt: "2026-04-07T10:00:00Z"},
 		},
 	}
@@ -448,11 +398,11 @@ func TestCacheRoundTrip(t *testing.T) {
 
 func TestCacheHit(t *testing.T) {
 	text := "print('hello world')"
-	hash := contentHash(text)
+	hash := textutil.ContentHash(text)
 
-	cache := &Cache{
+	cache := &model.Cache{
 		Version: 1,
-		Files: map[string]CacheEntry{
+		Files: map[string]model.CacheEntry{
 			"test.py": {Hash: hash, ArticleID: "test-py"},
 		},
 	}
@@ -464,14 +414,14 @@ func TestCacheHit(t *testing.T) {
 }
 
 func TestCacheMiss(t *testing.T) {
-	cache := &Cache{
+	cache := &model.Cache{
 		Version: 1,
-		Files: map[string]CacheEntry{
+		Files: map[string]model.CacheEntry{
 			"test.py": {Hash: "old-hash", ArticleID: "test-py"},
 		},
 	}
 
-	newHash := contentHash("modified content")
+	newHash := textutil.ContentHash("modified content")
 	entry := cache.Files["test.py"]
 	if entry.Hash == newHash {
 		t.Error("expected cache miss for changed content")
@@ -481,7 +431,7 @@ func TestCacheMiss(t *testing.T) {
 // --- Structural Lint ---
 
 func TestLintEmptyKB(t *testing.T) {
-	scope := "test-lint-empty-" + contentHash(t.Name())[:8]
+	scope := "test-lint-empty-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 	ensureDirs(scope)
 
@@ -495,10 +445,10 @@ func TestLintEmptyKB(t *testing.T) {
 }
 
 func TestLintMissingConcepts(t *testing.T) {
-	scope := "test-lint-concepts-" + contentHash(t.Name())[:8]
+	scope := "test-lint-concepts-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	article := &WikiArticle{
+	article := &model.WikiArticle{
 		ID:       "test",
 		Title:    "Test",
 		Summary:  "A test",
@@ -521,10 +471,10 @@ func TestLintMissingConcepts(t *testing.T) {
 }
 
 func TestLintBrokenBacklink(t *testing.T) {
-	scope := "test-lint-backlink-" + contentHash(t.Name())[:8]
+	scope := "test-lint-backlink-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	article := &WikiArticle{
+	article := &model.WikiArticle{
 		ID:        "test",
 		Title:     "Test",
 		Summary:   "A test",
@@ -593,50 +543,6 @@ func TestScanDirMultiPattern(t *testing.T) {
 	files := scanDir(dir, "*.go,*.py,*.ts")
 	if len(files) != 3 {
 		t.Errorf("expected 3 files with multi-pattern, got %d: %v", len(files), files)
-	}
-}
-
-// --- Helpers ---
-
-func TestWordCount(t *testing.T) {
-	if wordCount("hello world") != 2 {
-		t.Error("wordCount('hello world') != 2")
-	}
-	if wordCount("") != 0 {
-		t.Error("wordCount('') != 0")
-	}
-	if wordCount("  spaced  out  ") != 2 {
-		t.Error("wordCount with extra spaces")
-	}
-}
-
-func TestTruncate(t *testing.T) {
-	if truncate("hello", 10) != "hello" {
-		t.Error("short string should not be truncated")
-	}
-	result := truncate("hello world foo bar", 10)
-	if len(result) > 13 { // 10 + "..."
-		t.Errorf("truncated string too long: %q", result)
-	}
-	if !strings.HasSuffix(result, "...") {
-		t.Errorf("should end with ...: %q", result)
-	}
-}
-
-func TestNilToEmpty(t *testing.T) {
-	var nilSlice []string
-	result := nilToEmpty(nilSlice)
-	if result == nil {
-		t.Error("nilToEmpty should return empty slice, not nil")
-	}
-	if len(result) != 0 {
-		t.Error("nilToEmpty should return empty slice")
-	}
-
-	existing := []string{"a", "b"}
-	result2 := nilToEmpty(existing)
-	if len(result2) != 2 {
-		t.Error("nilToEmpty should preserve existing slice")
 	}
 }
 
@@ -1036,8 +942,8 @@ func TestCountSharedArticles(t *testing.T) {
 }
 
 func TestBuildConceptGraph(t *testing.T) {
-	idx := &KnowledgeIndex{
-		Concepts: map[string]*Concept{
+	idx := &model.KnowledgeIndex{
+		Concepts: map[string]*model.Concept{
 			"auth":    {Name: "auth", Articles: []string{"a1", "a2", "a3"}},
 			"jwt":     {Name: "jwt", Articles: []string{"a1", "a2"}},
 			"session": {Name: "session", Articles: []string{"a2", "a3"}},
@@ -1086,10 +992,10 @@ func TestEscapeMermaid(t *testing.T) {
 // TestFrontmatterAudienceDepthRoundTrip verifies that Audience, Depth, and
 // TargetWords survive a save→load round-trip intact.
 func TestFrontmatterAudienceDepthRoundTrip(t *testing.T) {
-	scope := "test-terse-rt-" + contentHash(t.Name())[:8]
+	scope := "test-terse-rt-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	original := &WikiArticle{
+	original := &model.WikiArticle{
 		ID:           "terse-article",
 		Title:        "Terse Article",
 		Summary:      "Short overview",
@@ -1129,7 +1035,7 @@ func TestFrontmatterAudienceDepthRoundTrip(t *testing.T) {
 // TestFrontmatterLoadBackwardCompat verifies that old .md files without
 // audience/depth/target_words fields load with sensible defaults.
 func TestFrontmatterLoadBackwardCompat(t *testing.T) {
-	scope := "test-terse-compat-" + contentHash(t.Name())[:8]
+	scope := "test-terse-compat-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	// Write a .md file that looks like it was produced before the terse feature.
@@ -1289,7 +1195,7 @@ func TestBuildSinceRefSkipsUnchanged(t *testing.T) {
 	// Modify only alpha (unstaged — git diff HEAD shows it as modified).
 	os.WriteFile(filepath.Join(dir, "alpha.py"), []byte("# alpha v2\n"), 0o644)
 
-	scope := "test-since-" + contentHash(dir)[:8]
+	scope := "test-since-" + textutil.ContentHash(dir)[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	// Capture stdout from cmdPrepare.
@@ -1334,7 +1240,7 @@ func TestBuildSinceNonGitFallback(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "main.py"), []byte("# main\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "util.py"), []byte("# util\n"), 0o644)
 
-	scope := "test-since-fallback-" + contentHash(dir)[:8]
+	scope := "test-since-fallback-" + textutil.ContentHash(dir)[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	// Capture stderr for the warning.
@@ -1432,10 +1338,10 @@ func TestChangedFilesSinceRefNonexistentRef(t *testing.T) {
 // --- SourcePath round-trip ---
 
 func TestSourcePathRoundTrip(t *testing.T) {
-	scope := "test-src-" + contentHash(t.Name())[:8]
+	scope := "test-src-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	original := &WikiArticle{
+	original := &model.WikiArticle{
 		ID:         "src-round",
 		Title:      "Src Round",
 		Content:    "# body",
@@ -1458,10 +1364,10 @@ func TestSourcePathRoundTrip(t *testing.T) {
 func TestSourcePathEmptyOmitsFromJSON(t *testing.T) {
 	// Backward compat: legacy articles without SourcePath should parse cleanly
 	// and the omitted field should stay out of the serialized frontmatter.
-	scope := "test-src-empty-" + contentHash(t.Name())[:8]
+	scope := "test-src-empty-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	a := &WikiArticle{ID: "legacy", Title: "Legacy", Content: "body", Version: 1}
+	a := &model.WikiArticle{ID: "legacy", Title: "Legacy", Content: "body", Version: 1}
 	if err := saveArticle(scope, a); err != nil {
 		t.Fatalf("saveArticle: %v", err)
 	}
@@ -1519,10 +1425,10 @@ func TestPickCanonicalVariant(t *testing.T) {
 }
 
 func TestApplyCategoryCanonical(t *testing.T) {
-	scope := "test-norm-" + contentHash(t.Name())[:8]
+	scope := "test-norm-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{ID: "a1", Title: "A1", Content: "x", Categories: []string{"CLI", "storage"}, Version: 1},
 		{ID: "a2", Title: "A2", Content: "x", Categories: []string{"cli", "Storage"}, Version: 1},
 		{ID: "a3", Title: "A3", Content: "x", Categories: []string{"cli tool", "database"}, Version: 1},
@@ -1588,10 +1494,10 @@ func TestApplyCategoryCanonical(t *testing.T) {
 
 func TestApplyCategoryCanonicalDedupesCollapsed(t *testing.T) {
 	// Article with ["CLI", "cli"] should collapse to ["cli"] — no dupes.
-	scope := "test-norm-dedup-" + contentHash(t.Name())[:8]
+	scope := "test-norm-dedup-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	a := &WikiArticle{
+	a := &model.WikiArticle{
 		ID:         "d1",
 		Title:      "D1",
 		Content:    "x",
@@ -1623,10 +1529,10 @@ func TestApplyCategoryPersistsIndex(t *testing.T) {
 	// Regression: after --apply rewrites categories, the on-disk BM25 index
 	// must reflect the new category set. Earlier version built the index in
 	// memory but forgot to save it, so `kb stats` kept showing stale counts.
-	scope := "test-norm-idx-" + contentHash(t.Name())[:8]
+	scope := "test-norm-idx-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{ID: "a1", Title: "A1", Content: "x", Categories: []string{"CLI"}, Version: 1},
 		{ID: "a2", Title: "A2", Content: "x", Categories: []string{"cli"}, Version: 1},
 	}
@@ -1653,7 +1559,7 @@ func TestApplyCategoryPersistsIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read index: %v", err)
 	}
-	var persisted KnowledgeIndex
+	var persisted model.KnowledgeIndex
 	if err := json.Unmarshal(data, &persisted); err != nil {
 		t.Fatalf("parse index: %v", err)
 	}
@@ -1666,7 +1572,7 @@ func TestApplyCategoryPersistsIndex(t *testing.T) {
 }
 
 func TestAffectedArticleCount(t *testing.T) {
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{ID: "a1", Categories: []string{"cli"}},            // already canonical
 		{ID: "a2", Categories: []string{"CLI"}},            // needs rewrite
 		{ID: "a3", Categories: []string{"storage"}},        // not in clusters

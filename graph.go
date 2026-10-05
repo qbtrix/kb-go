@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 type graphNode struct {
@@ -26,7 +28,7 @@ type graphEdge struct {
 }
 
 // buildConceptGraph returns top N concepts + edges for co-occurring concepts.
-func buildConceptGraph(idx *KnowledgeIndex, limit, minArticles int) ([]graphNode, []graphEdge) {
+func buildConceptGraph(idx *model.KnowledgeIndex, limit, minArticles int) ([]graphNode, []graphEdge) {
 	// Collect concepts with >= minArticles, sort by article count desc
 	type conceptStat struct {
 		name     string
@@ -85,7 +87,7 @@ func buildConceptGraph(idx *KnowledgeIndex, limit, minArticles int) ([]graphNode
 // buildConceptSubgraph returns nodes and edges for a one-hop neighborhood
 // around a focus concept: the concept, its articles, and other concepts
 // those articles contain. Errors when the concept is not in the index.
-func buildConceptSubgraph(idx *KnowledgeIndex, focus string) ([]graphNode, []graphEdge, error) {
+func buildConceptSubgraph(idx *model.KnowledgeIndex, focus string) ([]graphNode, []graphEdge, error) {
 	c, ok := idx.Concepts[focus]
 	if !ok {
 		// Case-insensitive fallback
@@ -179,7 +181,7 @@ func buildConceptSubgraph(idx *KnowledgeIndex, focus string) ([]graphNode, []gra
 
 // buildArticleSubgraph returns nodes for an article and its concepts.
 // Errors when the article cannot be loaded.
-func buildArticleSubgraph(idx *KnowledgeIndex, articleID string) ([]graphNode, []graphEdge, error) {
+func buildArticleSubgraph(idx *model.KnowledgeIndex, articleID string) ([]graphNode, []graphEdge, error) {
 	article, err := loadArticle(idx.Scope, articleID)
 	if err != nil || article == nil {
 		return nil, nil, fmt.Errorf("Article not found: %s", articleID)

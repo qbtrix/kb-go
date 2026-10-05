@@ -33,6 +33,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 // ContradictionCandidate is one source's claim about a term. The build path
@@ -202,7 +204,7 @@ func formatContradictionIssue(c Contradiction) string {
 // candidatesFromArticles builds ContradictionCandidates from glossary articles,
 // using the article body as the definition (falling back to Summary when the
 // body is empty). Non-glossary articles are skipped.
-func candidatesFromArticles(articles []*WikiArticle) []ContradictionCandidate {
+func candidatesFromArticles(articles []*model.WikiArticle) []ContradictionCandidate {
 	var cands []ContradictionCandidate
 	for _, a := range articles {
 		if a.Kind != "glossary" {

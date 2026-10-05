@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 func TestMain(m *testing.M) {
@@ -179,7 +180,7 @@ func TestIngestCompilerFailureKeepsRawWritesNoArticle(t *testing.T) {
 	if err == nil {
 		t.Fatal("ingest must fail loudly when the compiler fails")
 	}
-	if !strings.Contains(err.Error(), contentHash(text)[:16]) || !strings.Contains(err.Error(), "--allow-fallback") {
+	if !strings.Contains(err.Error(), textutil.ContentHash(text)[:16]) || !strings.Contains(err.Error(), "--allow-fallback") {
 		t.Errorf("error should name the raw doc and the escape hatch: %v", err)
 	}
 	if rawDocCount(t, scope) != 1 || wikiArticleCount(t, scope) != 0 {

@@ -1,8 +1,8 @@
-// Pure text helpers shared by every layer: slugs, content hashes, word counts,
-// truncation and nil-slice normalisation. Standard library only; nothing here
-// touches the filesystem or the knowledge base.
-
-package main
+// Package textutil holds the pure text helpers every layer shares: slugs,
+// content hashes, word counts, truncation and nil-slice normalisation.
+// Standard library only; nothing here touches the filesystem or the
+// knowledge base.
+package textutil
 
 import (
 	"crypto/sha256"
@@ -16,7 +16,7 @@ var (
 	slugDashRe  = regexp.MustCompile(`[\s-]+`)
 )
 
-func slugify(s string) string {
+func Slugify(s string) string {
 	lower := strings.ToLower(s)
 	clean := slugStripRe.ReplaceAllString(lower, "")
 	slug := slugDashRe.ReplaceAllString(clean, "-")
@@ -25,16 +25,16 @@ func slugify(s string) string {
 		slug = slug[:80]
 	}
 	if slug == "" {
-		return contentHash(s)[:16]
+		return ContentHash(s)[:16]
 	}
 	return slug
 }
 
-func wordCount(s string) int {
+func WordCount(s string) int {
 	return len(strings.Fields(s))
 }
 
-func truncate(s string, maxLen int) string {
+func Truncate(s string, maxLen int) string {
 	s = strings.TrimSpace(s)
 	if len(s) <= maxLen {
 		return s
@@ -42,14 +42,14 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-func nilToEmpty(s []string) []string {
+func NilToEmpty(s []string) []string {
 	if s == nil {
 		return []string{}
 	}
 	return s
 }
 
-func contentHash(text string) string {
+func ContentHash(text string) string {
 	h := sha256.Sum256([]byte(text))
 	return fmt.Sprintf("%x", h)
 }
