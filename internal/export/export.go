@@ -1,7 +1,9 @@
-// Wiki export: writes a scope's articles and an index page out as a browsable
-// markdown wiki.
-
-package main
+// Package export renders a scope for outside consumers: Wiki writes the
+// articles and an index page out as a browsable markdown wiki, and graph.go
+// builds the concept graph behind `kb graph` (the whole-scope graph, one
+// concept's or article's neighbourhood) with mermaid and dot renderers. The
+// graph builders return errors instead of exiting; the command prints them.
+package export
 
 import (
 	"fmt"
@@ -14,7 +16,7 @@ import (
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
-func exportWiki(scope, outputDir string) {
+func Wiki(scope, outputDir string) {
 	articles, _ := store.ListArticles(scope)
 	idx := store.LoadIndex(scope)
 

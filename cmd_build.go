@@ -20,6 +20,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/contradiction"
+	"github.com/qbtrix/kb-go/internal/export"
 	"github.com/qbtrix/kb-go/internal/glossary"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/parse"
@@ -348,7 +349,7 @@ func runBuild(args []string) int {
 
 	// Export wiki to output directory if specified
 	if outputDir != "" {
-		exportWiki(scope, outputDir)
+		export.Wiki(scope, outputDir)
 	}
 
 	// Failed compiles exit 1 in every output mode (after the successes and the

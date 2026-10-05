@@ -2,7 +2,7 @@
 // that differ only by casing, whitespace or trailing punctuation, picks a
 // canonical variant per cluster, and rewrites articles to it on --apply.
 
-package main
+package lint
 
 import (
 	"fmt"
@@ -14,35 +14,35 @@ import (
 	"github.com/qbtrix/kb-go/internal/store"
 )
 
-// normalizeCategory reduces a category label to a canonical comparison key.
+// NormalizeCategory reduces a category label to a canonical comparison key.
 // Lowercase, whitespace-collapsed, trailing punctuation stripped. Used only
 // for clustering variants together — the original casing is preserved in the
 // cluster output, and the canonical form chosen for --apply is the most
 // frequent *original* in the cluster, not this normalized key.
-func normalizeCategory(c string) string {
+func NormalizeCategory(c string) string {
 	s := strings.ToLower(strings.TrimSpace(c))
 	s = strings.Join(strings.Fields(s), " ")
 	s = strings.TrimRight(s, ".,;:!?-_")
 	return s
 }
 
-// categoryCluster groups originals that normalize to the same key and tracks
+// CategoryCluster groups originals that normalize to the same key and tracks
 // per-variant article counts so we can pick the most popular form as canonical.
-type categoryCluster struct {
+type CategoryCluster struct {
 	Key       string         `json:"key"`
 	Variants  map[string]int `json:"variants"`  // original → article count
 	Total     int            `json:"total"`     // sum of article counts
 	Canonical string         `json:"canonical"` // chosen form for --apply
 }
 
-// pickCanonicalVariant chooses the representative form for a cluster.
+// PickCanonical chooses the representative form for a cluster.
 // Order: highest article count → shortest original → already-normalized form
 // (lowercase, no trailing punctuation) → alphabetical.
 //
 // The "already-normalized" tiebreak favors clean forms like "storage" over
 // "Storage" when counts and lengths tie, which matches human intuition better
 // than pure ASCII alpha (where capitals sort before lowercase).
-func pickCanonicalVariant(variants map[string]int) string {
+func PickCanonical(variants map[string]int) string {
 	type entry struct {
 		name  string
 		count int
@@ -58,8 +58,8 @@ func pickCanonicalVariant(variants map[string]int) string {
 		if len(entries[i].name) != len(entries[j].name) {
 			return len(entries[i].name) < len(entries[j].name)
 		}
-		iClean := entries[i].name == normalizeCategory(entries[i].name)
-		jClean := entries[j].name == normalizeCategory(entries[j].name)
+		iClean := entries[i].name == NormalizeCategory(entries[i].name)
+		jClean := entries[j].name == NormalizeCategory(entries[j].name)
 		if iClean != jClean {
 			return iClean
 		}
@@ -68,9 +68,9 @@ func pickCanonicalVariant(variants map[string]int) string {
 	return entries[0].name
 }
 
-// affectedArticleCount returns how many articles have at least one category
+// AffectedCount returns how many articles have at least one category
 // that would be rewritten if --apply ran. Used for the dry-run summary.
-func affectedArticleCount(articles []*model.WikiArticle, clusters []*categoryCluster) int {
+func AffectedCount(articles []*model.WikiArticle, clusters []*CategoryCluster) int {
 	rewriteMap := buildRewriteMap(clusters)
 	count := 0
 	for _, a := range articles {
@@ -87,7 +87,7 @@ func affectedArticleCount(articles []*model.WikiArticle, clusters []*categoryClu
 // buildRewriteMap flattens clusters into a flat original→canonical lookup.
 // Originals that are already canonical map to themselves; non-canonical
 // originals map to the chosen canonical.
-func buildRewriteMap(clusters []*categoryCluster) map[string]string {
+func buildRewriteMap(clusters []*CategoryCluster) map[string]string {
 	m := map[string]string{}
 	for _, c := range clusters {
 		for variant := range c.Variants {
@@ -97,10 +97,10 @@ func buildRewriteMap(clusters []*categoryCluster) map[string]string {
 	return m
 }
 
-// applyCategoryCanonical rewrites each article's Categories to use canonical
+// ApplyCanonical rewrites each article's Categories to use canonical
 // forms, saving only articles that actually changed. Returns the count of
 // rewritten articles.
-func applyCategoryCanonical(scope string, articles []*model.WikiArticle, clusters []*categoryCluster) int {
+func ApplyCanonical(scope string, articles []*model.WikiArticle, clusters []*CategoryCluster) int {
 	rewriteMap := buildRewriteMap(clusters)
 	changed := 0
 	for _, a := range articles {
@@ -143,22 +143,22 @@ func applyCategoryCanonical(scope string, articles []*model.WikiArticle, cluster
 	return changed
 }
 
-// clusterCategories clusters the category labels of articles that differ
+// ClusterCategories clusters the category labels of articles that differ
 // only by casing/whitespace/punctuation. It returns the noisy clusters (more
 // than one distinct variant, Canonical picked) sorted by total desc then key,
 // and the number of normalized groups seen overall.
-func clusterCategories(articles []*model.WikiArticle) (noisy []*categoryCluster, groups int) {
+func ClusterCategories(articles []*model.WikiArticle) (noisy []*CategoryCluster, groups int) {
 	// Build clusters: normalized key → map of original → article count
-	clusters := map[string]*categoryCluster{}
+	clusters := map[string]*CategoryCluster{}
 	for _, a := range articles {
 		for _, cat := range a.Categories {
-			key := normalizeCategory(cat)
+			key := NormalizeCategory(cat)
 			if key == "" {
 				continue
 			}
 			c, ok := clusters[key]
 			if !ok {
-				c = &categoryCluster{Key: key, Variants: map[string]int{}}
+				c = &CategoryCluster{Key: key, Variants: map[string]int{}}
 				clusters[key] = c
 			}
 			c.Variants[cat]++
@@ -169,7 +169,7 @@ func clusterCategories(articles []*model.WikiArticle) (noisy []*categoryCluster,
 	// Keep only clusters with >1 distinct variant — those are the noisy ones.
 	for _, c := range clusters {
 		if len(c.Variants) > 1 {
-			c.Canonical = pickCanonicalVariant(c.Variants)
+			c.Canonical = PickCanonical(c.Variants)
 			noisy = append(noisy, c)
 		}
 	}
