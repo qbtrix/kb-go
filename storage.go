@@ -91,6 +91,7 @@ func saveArticle(scope string, a *WikiArticle) error {
 		Aliases:      a.Aliases,
 		Category:     a.Category,
 		Related:      a.Related,
+		Usage:        a.Usage,
 	}
 	fmData, err := json.MarshalIndent(fm, "", "  ")
 	if err != nil {
@@ -405,6 +406,7 @@ func parseArticle(id, text string) (*WikiArticle, error) {
 		Aliases:      fm.Aliases,
 		Category:     fm.Category,
 		Related:      fm.Related,
+		Usage:        fm.Usage,
 	}, nil
 }
 

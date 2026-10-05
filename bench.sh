@@ -2,7 +2,13 @@
 # bench.sh — Full pipeline benchmarks for kb-go.
 # Measures: cold build, warm build (cache), search latency + relevance, quality.
 # Usage: ./bench.sh [small|medium|large|all]
-# Requires: ./kb binary built, ANTHROPIC_API_KEY for build/lint benchmarks.
+# Requires: ./kb binary built, and an LLM for the build benchmarks: either
+# ANTHROPIC_API_KEY (the built-in client; ANTHROPIC_BASE_URL for a proxy) or
+# KB_COMPILER="<command>" (bring your own; wins when both are set; see README
+# "Compiling articles"), e.g.
+#   KB_COMPILER="python examples/compilers/claude_code.py" ./bench.sh small
+# With neither, the build benchmarks are skipped and search/quality run over
+# whatever the scopes already hold.
 
 set -e
 
@@ -26,9 +32,14 @@ if [ ! -f "$KB" ]; then
     exit 1
 fi
 
-HAS_API_KEY=false
-if [ -n "$ANTHROPIC_API_KEY" ]; then
-    HAS_API_KEY=true
+HAS_COMPILER=false
+COMPILER_DESC="not set (build benchmarks skipped)"
+if [ -n "$KB_COMPILER" ]; then
+    HAS_COMPILER=true
+    COMPILER_DESC="KB_COMPILER: $KB_COMPILER"
+elif [ -n "$ANTHROPIC_API_KEY" ]; then
+    HAS_COMPILER=true
+    COMPILER_DESC="built-in Anthropic client (${ANTHROPIC_BASE_URL:-https://api.anthropic.com})"
 fi
 
 # --- Timer ---
@@ -200,12 +211,12 @@ run_bench() {
     QUALITY_ARTICLES="?" QUALITY_CONCEPTS="?" QUALITY_WORDS="?" QUALITY_CATEGORIES="?"
     QUALITY_AVG_WORDS="?" QUALITY_AVG_CONCEPTS="?"
 
-    if [ "$HAS_API_KEY" = true ]; then
+    if [ "$HAS_COMPILER" = true ]; then
         bench_build_cold "$path" "$scope" "$pattern"
         echo ""
         bench_build_warm "$path" "$scope" "$pattern"
     else
-        echo -e "${YELLOW}  Skipping build (no ANTHROPIC_API_KEY)${NC}"
+        echo -e "${YELLOW}  Skipping build (no ANTHROPIC_API_KEY or KB_COMPILER)${NC}"
     fi
 
     echo ""
@@ -231,7 +242,7 @@ TARGET="${1:-small}"
 
 echo -e "${GREEN}kb-go Benchmark Suite${NC}"
 echo "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "API key: $([ "$HAS_API_KEY" = true ] && echo "set" || echo "not set (build benchmarks skipped)")"
+echo "Compiler: $COMPILER_DESC"
 echo "Binary: $KB"
 
 # Init results file

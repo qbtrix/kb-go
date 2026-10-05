@@ -14,7 +14,6 @@ func cmdLint(args []string) {
 	llmMode := flagBool(args, "--llm")
 	normalizeCats := flagBool(args, "--normalize-categories")
 	applyFix := flagBool(args, "--apply")
-	model := flagStr(args, "--model", defaultModel)
 	jsonOut := flagBool(args, "--json")
 
 	// --normalize-categories runs as a dedicated mode — it's a clustering
@@ -24,25 +23,35 @@ func cmdLint(args []string) {
 		return
 	}
 
+	// --llm needs a compile path (built-in client or hook); refuse before
+	// doing any work.
+	var spec compilerSpec
+	if llmMode {
+		spec = mustCompilerFromArgs(args)
+		requireCompiler(spec, "lint --llm", "Structural `kb lint` (without --llm) needs no compiler.")
+	}
+
 	var issues []LintIssue
 
 	// Always run structural lint
 	issues = append(issues, lintStructural(scope)...)
 
-	// Optionally run LLM lint
+	// Optionally run the LLM review. A failed review is
+	// loud: the structural issues are still printed, then kb exits 1.
 	if llmMode {
-		apiKey := os.Getenv("ANTHROPIC_API_KEY")
-		if apiKey == "" {
-			fatal("ANTHROPIC_API_KEY required for --llm lint")
-		}
-		llmIssues, err := lintLLM(scope, model, apiKey)
+		llmIssues, err := lintLLM(scope, spec)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: LLM lint failed: %v\n", err)
-		} else {
-			issues = append(issues, llmIssues...)
+			fmt.Fprintf(os.Stderr, "Error: LLM lint failed: %v\n", err)
+			printLintIssues(issues, jsonOut)
+			os.Exit(1)
 		}
+		issues = append(issues, llmIssues...)
 	}
 
+	printLintIssues(issues, jsonOut)
+}
+
+func printLintIssues(issues []LintIssue, jsonOut bool) {
 	if jsonOut {
 		printJSON(issues)
 		return

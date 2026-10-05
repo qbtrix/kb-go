@@ -1,4 +1,7 @@
-// `kb watch`: rebuilds a scope when source files change (fsnotify).
+// `kb watch`: rebuilds a scope when source files change (fsnotify). Every
+// rebuild is `kb build` with the same flags, so it needs a compile path
+// (ANTHROPIC_API_KEY or --compiler / KB_COMPILER, checked up front, exit 2).
+// A rebuild whose compiles fail is reported and watching continues.
 
 package main
 
@@ -14,17 +17,24 @@ import (
 
 func cmdWatch(args []string) {
 	if len(args) < 1 {
-		fatal("Usage: kb watch <path> [--scope NAME] [--pattern GLOB] [--model MODEL]")
+		fatal("Usage: kb watch <path> [--scope NAME] [--pattern GLOB] [--model MODEL | --compiler \"<command>\"]")
 	}
 
 	path := args[0]
 	scope := flagStr(args, "--scope", filepath.Base(path))
 	pattern := flagStr(args, "--pattern", "*.py")
-	model := flagStr(args, "--model", defaultModel)
+	requireCompiler(mustCompilerFromArgs(args), "watch", "")
 
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		fatal("Invalid path: %s", path)
+	}
+	// Rebuilds reuse every flag (compiler, timeout, concurrency, terse, ...).
+	buildArgs := append([]string{absPath, "--scope", scope, "--pattern", pattern}, args[1:]...)
+	rebuild := func() {
+		if code := runBuild(buildArgs); code != 0 {
+			fmt.Fprintf(os.Stderr, "Build finished with exit code %d; still watching.\n", code)
+		}
 	}
 
 	fmt.Printf("Watching %s (scope: %s, pattern: %s)\n", absPath, scope, pattern)
@@ -34,7 +44,7 @@ func cmdWatch(args []string) {
 	files := scanDir(absPath, pattern)
 	if len(files) > 0 {
 		fmt.Println("Running initial build...")
-		cmdBuild([]string{absPath, "--scope", scope, "--pattern", pattern, "--model", model})
+		rebuild()
 		fmt.Println()
 	} else {
 		fmt.Println("No matching files yet. Waiting for changes...")
@@ -75,7 +85,7 @@ func cmdWatch(args []string) {
 
 		case <-debounce.C:
 			fmt.Printf("[%s] Change detected, rebuilding...\n", time.Now().Format("15:04:05"))
-			cmdBuild([]string{absPath, "--scope", scope, "--pattern", pattern, "--model", model})
+			rebuild()
 			fmt.Println()
 		}
 	}

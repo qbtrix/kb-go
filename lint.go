@@ -1,16 +1,14 @@
 // Knowledge-base lint: structural checks that need no LLM, and an LLM review
-// for inconsistencies, gaps, missing connections and stale articles.
+// for inconsistencies, gaps, missing connections and stale articles. The LLM
+// review takes the same compile path as build (compile.go): the --compiler
+// hook when one is configured, else the built-in Anthropic client.
 
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
-	"time"
 )
 
 // --- Structural Lint (no LLM) ---
@@ -123,16 +121,8 @@ func lintStructural(scope string) []LintIssue {
 
 // --- LLM Lint ---
 
-func lintLLM(scope, model, apiKey string) ([]LintIssue, error) {
-	articles, _ := listArticles(scope)
-	if len(articles) == 0 {
-		return []LintIssue{{
-			Type: "gap", Severity: "warning",
-			Message: "Knowledge base is empty.",
-		}}, nil
-	}
-
-	// Build summary for LLM
+// buildLintPrompt renders the audit prompt over every article's metadata.
+func buildLintPrompt(articles []*WikiArticle) string {
 	var sb strings.Builder
 	for _, a := range articles {
 		fmt.Fprintf(&sb, "## %s (id: %s)\nSummary: %s\nConcepts: %s\nCategories: %s\nBacklinks: %s\n\n",
@@ -142,7 +132,7 @@ func lintLLM(scope, model, apiKey string) ([]LintIssue, error) {
 			strings.Join(a.Backlinks, ", "))
 	}
 
-	prompt := fmt.Sprintf(`Review this knowledge base and find issues.
+	return fmt.Sprintf(`You are a knowledge base auditor. Review this knowledge base and find issues.
 
 Look for:
 - INCONSISTENCY: articles that contradict each other
@@ -157,50 +147,44 @@ If no issues, output: []
 
 Knowledge base:
 %s`, sb.String())
+}
 
-	body, _ := json.Marshal(map[string]any{
-		"model":      model,
-		"max_tokens": 4096,
-		"system":     "You are a knowledge base auditor. Output only valid JSON arrays.",
-		"messages":   []map[string]string{{"role": "user", "content": prompt}},
-	})
-
-	req, _ := http.NewRequest("POST", apiURL, bytes.NewReader(body))
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", apiVersion)
-	req.Header.Set("content-type", "application/json")
-
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
+// lintLLM runs the LLM review through the configured compile path and parses
+// the JSON array of issues the model returns. Unparseable output is an error.
+func lintLLM(scope string, spec compilerSpec) ([]LintIssue, error) {
+	articles, _ := listArticles(scope)
+	if len(articles) == 0 {
+		return []LintIssue{{
+			Type: "gap", Severity: "warning",
+			Message: "Knowledge base is empty.",
+		}}, nil
 	}
 
-	var apiResp struct {
-		Content []struct {
-			Text string `json:"text"`
-		} `json:"content"`
+	prompt := buildLintPrompt(articles)
+	var out string
+	switch {
+	case spec.hook():
+		b, err := runCompiler(spec, prompt, "lint")
+		if err != nil {
+			return nil, err
+		}
+		out = string(b)
+	case spec.builtin():
+		text, _, err := callAnthropic(spec, "You are a knowledge base auditor. Output only valid JSON arrays.", prompt)
+		if err != nil {
+			return nil, err
+		}
+		out = text
+	default:
+		return nil, fmt.Errorf("no compiler configured")
 	}
-	json.Unmarshal(respBody, &apiResp)
-	if len(apiResp.Content) == 0 {
-		return nil, fmt.Errorf("empty response")
-	}
-
-	text := apiResp.Content[0].Text
-	text = strings.TrimPrefix(text, "```json")
-	text = strings.TrimPrefix(text, "```")
-	text = strings.TrimSuffix(text, "```")
-	text = strings.TrimSpace(text)
-
+	text := stripFences(out)
 	var issues []LintIssue
 	if err := json.Unmarshal([]byte(text), &issues); err != nil {
-		return nil, fmt.Errorf("failed to parse lint output: %w", err)
+		i, j := strings.Index(text, "["), strings.LastIndex(text, "]")
+		if i < 0 || j <= i || json.Unmarshal([]byte(text[i:j+1]), &issues) != nil {
+			return nil, fmt.Errorf("lint output is not a JSON array of issues: %v; output starts: %q", err, text[:min(len(text), 200)])
+		}
 	}
 	return issues, nil
 }

@@ -13,7 +13,10 @@ import (
 // cmdAccept reads compiled article results from stdin and saves them.
 // Companion to `kb prepare` — accepts the agent's compilation output.
 // Input: JSON object with "scope" and "articles" array.
-// Each article: {"source", "hash", "raw_id", "title", "summary", "content", "concepts", "categories"}
+// Each article: {"source", "hash", "raw_id", "title", "summary", "content", "concepts", "categories"},
+// plus optional "compiled_with" and "usage" ({"model","input_tokens","output_tokens","cost_usd"}).
+// compiled_with defaults to usage.model, then "agent". Re-accepting an
+// article replaces its usage; it is never summed.
 func cmdAccept(args []string) {
 	scope := flagStr(args, "--scope", "")
 
@@ -40,6 +43,9 @@ func cmdAccept(args []string) {
 		Audience    string   `json:"audience,omitempty"`
 		Depth       string   `json:"depth,omitempty"`
 		TargetWords int      `json:"target_words,omitempty"`
+		// Optional: who compiled it and what it cost (see ArticleUsage).
+		CompiledWith string          `json:"compiled_with,omitempty"`
+		Usage        json.RawMessage `json:"usage,omitempty"`
 	}
 
 	var articles []acceptArticle
@@ -106,6 +112,7 @@ func cmdAccept(args []string) {
 			}
 		}
 
+		usage := parseUsage(a.Usage)
 		article := &WikiArticle{
 			ID:           slug,
 			Title:        a.Title,
@@ -117,11 +124,12 @@ func cmdAccept(args []string) {
 			SourceDocs:   []string{a.RawID},
 			WordCount:    wordCount(a.Content),
 			CompiledAt:   now,
-			CompiledWith: "agent",
+			CompiledWith: compiledWithFor(a.CompiledWith, usage, "agent"),
 			Version:      1,
 			Audience:     audience,
 			Depth:        depth,
 			TargetWords:  targetWords,
+			Usage:        usage,
 		}
 
 		// Auto-tag test files

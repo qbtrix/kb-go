@@ -1,4 +1,6 @@
-// Implements `kb stats`.
+// Implements `kb stats`. When any article carries a usage record, the output
+// adds compile-spend totals (articles with usage, input/output tokens, cost);
+// otherwise the output is unchanged.
 
 package main
 
@@ -24,9 +26,10 @@ func cmdStats(args []string) {
 		totalWords += a.WordCount
 	}
 	vectorCount := vectorIndexCount(scope)
+	usageN, usageIn, usageOut, usageCost := usageTotals(articles)
 
 	if jsonOut {
-		printJSON(map[string]any{
+		out := map[string]any{
 			"scope":      scope,
 			"articles":   len(articles),
 			"raw_docs":   rawCount,
@@ -34,7 +37,16 @@ func cmdStats(args []string) {
 			"concepts":   len(idx.Concepts),
 			"categories": len(idx.Categories),
 			"vectors":    vectorCount,
-		})
+		}
+		if usageN > 0 {
+			out["usage"] = map[string]any{
+				"articles":      usageN,
+				"input_tokens":  usageIn,
+				"output_tokens": usageOut,
+				"cost_usd":      usageCost,
+			}
+		}
+		printJSON(out)
 	} else {
 		fmt.Printf("Knowledge Base: %s\n", scope)
 		fmt.Printf("  Articles:   %d\n", len(articles))
@@ -43,5 +55,12 @@ func cmdStats(args []string) {
 		fmt.Printf("  Concepts:   %d\n", len(idx.Concepts))
 		fmt.Printf("  Categories: %d\n", len(idx.Categories))
 		fmt.Printf("  Vectors:    %d\n", vectorCount)
+		if usageN > 0 {
+			cost := ""
+			if usageCost > 0 {
+				cost = fmt.Sprintf(", $%.4f", usageCost)
+			}
+			fmt.Printf("  Compile usage (%d articles): %d input + %d output tokens%s\n", usageN, usageIn, usageOut, cost)
+		}
 	}
 }
