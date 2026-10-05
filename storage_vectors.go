@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/vector"
 )
 
 // vectorIndexPath returns the on-disk location for a scope's vector index.
@@ -23,20 +25,20 @@ func vectorIndexPath(scope string) string {
 // loadOrCreateVectorIndex returns the on-disk index for the scope, or a fresh
 // empty one if the file doesn't exist yet. Errors only on actual I/O / parse
 // failures — a missing file is the expected first-write case.
-func loadOrCreateVectorIndex(scope string) (*VectorIndex, error) {
+func loadOrCreateVectorIndex(scope string) (*vector.Index, error) {
 	path := vectorIndexPath(scope)
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
-			return NewVectorIndex(), nil
+			return vector.New(), nil
 		}
 		return nil, err
 	}
-	return LoadVectorIndex(path)
+	return vector.Load(path)
 }
 
 // saveVectorIndex persists the vector index to ~/.knowledge-base/{scope}/vectors.json.
 // Creates the parent directory if missing (matches ensureDirs idiom for raw/, wiki/).
-func saveVectorIndex(scope string, idx *VectorIndex) error {
+func saveVectorIndex(scope string, idx *vector.Index) error {
 	path := vectorIndexPath(scope)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -45,7 +47,7 @@ func saveVectorIndex(scope string, idx *VectorIndex) error {
 }
 
 // loadVectorFromContainedFile is the agent-reachable variant of
-// loadVectorFromFile (issue #23). The MCP `kb_search` query_vec_path arg is
+// vector.LoadFile (issue #23). The MCP `kb_search` query_vec_path arg is
 // agent-controlled over a persistent connection, so unlike the human-typed CLI
 // `--query-vec`/`--vec` flags it must not read arbitrary disk paths. The query
 // vector must resolve inside the kb base dir (~/.knowledge-base). On rejection
@@ -67,11 +69,11 @@ func loadVectorFromContainedFile(path string) ([]float32, error) {
 	if abs != base && !strings.HasPrefix(abs, base+string(filepath.Separator)) {
 		return nil, fmt.Errorf("query vector path must be inside the knowledge base directory")
 	}
-	return loadVectorFromFile(abs)
+	return vector.LoadFile(abs)
 }
 
 // attachVectorToArticle is the non-fatal core of `kb ingest --vec`. Validates
-// inputs, loads the vector file, upserts into the per-scope VectorIndex, and
+// inputs, loads the vector file, upserts into the per-scope vector index, and
 // persists. Returns the resulting (dim, total-vectors-after) on success so
 // the CLI wrapper can print a confirmation; tests call this directly to
 // avoid the CLI's os.Exit-on-fatal flow.
@@ -92,7 +94,7 @@ func attachVectorToArticle(scope, articleID, vecPath string) (dim, total int, er
 	if a, e := loadArticle(scope, articleID); e != nil || a == nil {
 		return 0, 0, fmt.Errorf("article %q not found in scope %q (run `kb ingest` to create it first)", articleID, scope)
 	}
-	vec, err := loadVectorFromFile(vecPath)
+	vec, err := vector.LoadFile(vecPath)
 	if err != nil {
 		return 0, 0, fmt.Errorf("load vector: %w", err)
 	}

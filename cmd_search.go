@@ -11,6 +11,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/textutil"
+	"github.com/qbtrix/kb-go/internal/vector"
 )
 
 func cmdSearch(args []string) {
@@ -50,7 +51,7 @@ func cmdSearch(args []string) {
 		if scope == "*" || strings.Contains(scope, ",") {
 			fatal("vector search requires a single --scope, got %q", scope)
 		}
-		queryVec, err := loadVectorFromFile(queryVecPath)
+		queryVec, err := vector.LoadFile(queryVecPath)
 		if err != nil {
 			fatal("load query vector: %v", err)
 		}

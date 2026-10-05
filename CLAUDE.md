@@ -6,19 +6,20 @@ Headless knowledge base engine. One Go binary, no frameworks: a thin root `packa
 
 - `main.go` — entry point, command dispatch, usage text, version; `flags.go` — minimal flag parsing; `compiler_flags.go` — compile-path resolution (`--compiler`/`KB_COMPILER`, `--compiler-timeout`, `--model`, `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`) and the exit-2 refusals
 - `cmd_<name>.go` — one file per command (`cmd_build.go`, `cmd_search.go`, `cmd_ingest.go`, `cmd_accept.go`, `cmd_graph.go`, `cmd_convo.go`, `cmd_glossary.go`, `cmd_serve.go`, …) with the helpers only that command uses; `helpers.go` — small CLI helpers
-- `internal/` — the library, one folder package per concern, layered (a package imports only lower layers): layer 0 `textutil`, `model`; the rest still lives in the root `package main` while the split lands
+- `internal/` — the library, one folder package per concern, layered (a package imports only lower layers): layer 0 `textutil`, `model`, `vector`; the rest still lives in the root `package main` while the split lands
   - `internal/textutil/` — pure text helpers (`Slugify`, `ContentHash`, `WordCount`, `Truncate`, `NilToEmpty`), stdlib only
   - `internal/model/` — shared data types (`WikiArticle`, `RawDoc`, `KnowledgeIndex`, `Concept`, `Cache`, `ArticleUsage`, `LintIssue`, …)
+  - `internal/vector/` — flat cosine vector index (`Index`, `New`, `Load`, `Cosine`) and `LoadFile` for vector JSON files
 - `storage.go` — scope paths, raw docs, articles, frontmatter, article identity, index, cache; `storage_vectors.go` — per-scope vector index persistence
 - `search_index.go` — persisted inverted index; `bm25.go` — scoring; `context.go` — `search --context` excerpts; `search_vector.go` — vector + hybrid (RRF) search
 - `compile.go` — compile prompt, compile-path dispatch, and the `--compiler` hook (runs the caller's command, parses one JSON article, `usage`); `anthropic.go` — built-in Anthropic Messages client (default path; `ANTHROPIC_BASE_URL`, token usage); `compiler_shell_{unix,windows}.go` — platform shell + process-tree kill
 - `lint.go` — structural + LLM lint (same compile path as build); `lint_categories.go` — category normalisation; `export.go` — wiki export; `graph.go` — concept graph build + mermaid/dot render; `watch.go`, `scan.go`
 - `examples/compilers/` — ready-made compilers: `claude_code.py` (headless Claude Code, user's login), `openai_compatible.py` (LiteLLM proxy / LM Studio / Ollama)
 - `astparse.go`, `parse_go.go`, `parse_python.go`, `parse_ts.go` — source parsers that feed compilation
-- `mcp.go` — `kb serve` MCP server; `convo.go` — conversation mode; `porter.go` — stemmer; `vsearch.go` — vector index
+- `mcp.go` — `kb serve` MCP server; `convo.go` — conversation mode; `porter.go` — stemmer
 - `glossary.go` — Domain glossary support (skip-LLM passthrough + list/show/validate)
 - `contradiction.go` — Cross-source definition contradiction detection (offline; flags terms two sources define differently)
-- `kb_test.go`, `glossary_test.go`, `convo_test.go`, `vsearch_test.go`, `vector_cli_test.go`, … — unit tests; `compiler_test.go` — in-process hook, usage and version tests; `anthropic_test.go` — in-process built-in client tests; `e2e_test.go` — tests that exec the built binary (both compile paths through every command, precedence, exit-2 refusals, MCP-vs-CLI parity)
+- `kb_test.go`, `glossary_test.go`, `convo_test.go`, `vector_cli_test.go`, … — unit tests; `compiler_test.go` — in-process hook, usage and version tests; `anthropic_test.go` — in-process built-in client tests; `e2e_test.go` — tests that exec the built binary (both compile paths through every command, precedence, exit-2 refusals, MCP-vs-CLI parity)
 - `internal/kbtest/` — shared test plumbing: `kbtest.Main` (every package's TestMain: isolates HOME and USERPROFILE for the whole run, clears `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` / `KB_COMPILER` so the suite never hits a real API, and acts as the fake compiler when `KB_FAKE_COMPILER` is set), `SetHome`/`IsolatedHome`, repo-root fixture paths (`Path`, `RootPath`), `BuildBinary`/`RunKB`, `NewStubAnthropic` (a local fake Messages API)
 - `kb_bench_test.go` — 10 performance benchmarks
 - `bench.sh` — Integration benchmark script (full pipeline; build steps need `ANTHROPIC_API_KEY` or `KB_COMPILER`)

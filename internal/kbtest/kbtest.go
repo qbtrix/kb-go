@@ -274,3 +274,28 @@ func FakeCompiler(mode string) int {
 	fmt.Println(string(b))
 	return 0
 }
+
+// WriteVecJSON writes a vector to a JSON file in the given form. form="object"
+// emits `{"vector": [...]}`, form="array" emits the bare array. Both must
+// round-trip through vector.LoadFile.
+func WriteVecJSON(t testing.TB, dir, name string, vec []float32, form string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	var data []byte
+	var err error
+	switch form {
+	case "object":
+		data, err = json.Marshal(map[string]any{"vector": vec})
+	case "array":
+		data, err = json.Marshal(vec)
+	default:
+		t.Fatalf("unknown vec form: %s", form)
+	}
+	if err != nil {
+		t.Fatalf("marshal vec: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write vec: %v", err)
+	}
+	return path
+}

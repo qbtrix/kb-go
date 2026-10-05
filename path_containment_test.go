@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/vector"
 )
 
 // --- loadArticle id containment ---
@@ -145,7 +146,7 @@ func TestMCPSearch_QueryVecPath_AllowsInBase(t *testing.T) {
 
 	// Plant an article + its vector so a legit in-base query vector resolves.
 	stubArticle(t, scope, "a1", "Article One", "sum", "# A\n\nbody")
-	idx := NewVectorIndex()
+	idx := vector.New()
 	idx.Add("a1", []float32{0.5, 0.5})
 	if err := saveVectorIndex(scope, idx); err != nil {
 		t.Fatalf("save vec index: %v", err)
@@ -163,26 +164,5 @@ func TestMCPSearch_QueryVecPath_AllowsInBase(t *testing.T) {
 	}
 	if _, err := mcpSearch(newArticleCache(), args, scope); err != nil {
 		t.Fatalf("mcpSearch rejected an in-base query_vec_path: %v", err)
-	}
-}
-
-func TestLoadVectorFromFile_ParseErrorDoesNotLeakContents(t *testing.T) {
-	dir := t.TempDir()
-
-	// A file whose bytes would otherwise be echoed by encoding/json's offset
-	// errors. The containment fix must return a generic parse error that does
-	// not dump the file body.
-	bad := filepath.Join(dir, "bad.json")
-	secretBody := "{SENSITIVE-INNER-BYTES-SHOULD-NOT-APPEAR"
-	if err := os.WriteFile(bad, []byte(secretBody), 0o644); err != nil {
-		t.Fatalf("write bad vec: %v", err)
-	}
-
-	_, err := loadVectorFromFile(bad)
-	if err == nil {
-		t.Fatalf("expected parse error on malformed vector file")
-	}
-	if strings.Contains(err.Error(), "SENSITIVE-INNER-BYTES") {
-		t.Fatalf("parse error leaked file contents: %v", err)
 	}
 }

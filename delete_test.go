@@ -20,6 +20,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/vector"
 )
 
 // seedArticle writes an article + its hash-keyed raw doc (mirroring what ingest
@@ -89,7 +90,7 @@ func TestCmdDelete_RemovesArticleEverywhere(t *testing.T) {
 	flushIndexes(t, scope)
 
 	// Attach a vector to the target so we can prove it's removed.
-	vidx := NewVectorIndex()
+	vidx := vector.New()
 	vidx.Add("target", []float32{0.1, 0.2})
 	vidx.Add("keeper", []float32{0.3, 0.4})
 	if err := saveVectorIndex(scope, vidx); err != nil {
