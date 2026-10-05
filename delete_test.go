@@ -20,6 +20,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/vector"
 )
@@ -66,7 +67,7 @@ func seedArticle(t *testing.T, scope, id, title string, concepts, categories []s
 func flushIndexes(t *testing.T, scope string) {
 	t.Helper()
 	all, _ := store.ListArticles(scope)
-	if err := saveSearchIndex(scope, buildSearchIndex(all)); err != nil {
+	if err := search.SaveIndex(scope, search.BuildIndex(all)); err != nil {
 		t.Fatalf("saveSearchIndex: %v", err)
 	}
 	if err := store.SaveIndex(scope, store.RebuildIndex(scope, all)); err != nil {
@@ -108,8 +109,8 @@ func TestCmdDelete_RemovesArticleEverywhere(t *testing.T) {
 
 	// Sanity: before deletion search finds the target.
 	before, _ := store.ListArticles(scope)
-	si := loadSearchIndex(scope)
-	hits := bm25SearchWithIndex(before, "Target", 10, si)
+	si := search.LoadIndex(scope)
+	hits := search.BM25WithIndex(before, "Target", 10, si)
 	found := false
 	for _, h := range hits {
 		if h.ID == "target" {
@@ -177,7 +178,7 @@ func TestCmdDelete_RemovesArticleEverywhere(t *testing.T) {
 
 	// Search no longer returns the target (fresh load from disk).
 	after, _ := store.ListArticles(scope)
-	hits2 := bm25SearchWithIndex(after, "Target", 10, loadSearchIndex(scope))
+	hits2 := search.BM25WithIndex(after, "Target", 10, search.LoadIndex(scope))
 	for _, h := range hits2 {
 		if h.ID == "target" {
 			t.Errorf("search still returns deleted target")

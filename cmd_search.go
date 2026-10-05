@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 	"github.com/qbtrix/kb-go/internal/vector"
@@ -34,8 +35,8 @@ func cmdSearch(args []string) {
 	limit := flagInt(args, "--limit", 5)
 	jsonOut := flagBool(args, "--json")
 	contextMode := flagBool(args, "--context")
-	contextChars := flagInt(args, "--context-chars", defaultContextChars)
-	contextTotal := flagInt(args, "--context-total", defaultContextTotal)
+	contextChars := flagInt(args, "--context-chars", search.DefaultContextChars)
+	contextTotal := flagInt(args, "--context-total", search.DefaultContextTotal)
 	excludeTags := flagStr(args, "--exclude-tags", "")
 	queryVecPath := flagStr(args, "--query-vec", "")
 	hybridMode := flagBool(args, "--hybrid")
@@ -56,14 +57,14 @@ func cmdSearch(args []string) {
 		if err != nil {
 			fatal("load query vector: %v", err)
 		}
-		var results []vectorSearchResult
+		var results []search.Hit
 		if hybridMode {
 			if query == "" {
 				fatal("--hybrid requires a text query alongside --query-vec")
 			}
-			results, err = runHybridSearch(scope, query, queryVec, topK)
+			results, err = search.HybridSearch(scope, query, queryVec, topK)
 		} else {
-			results, err = runVectorSearch(scope, queryVec, topK)
+			results, err = search.VectorSearch(scope, queryVec, topK)
 		}
 		if err != nil {
 			fatal("%v", err)
@@ -119,29 +120,29 @@ func cmdSearch(args []string) {
 	// Search with the inverted index (only works for single scope)
 	var results []*model.WikiArticle
 	if len(scopes) == 1 {
-		var si *SearchIndex
+		var si *search.Index
 		if excludeTags == "" {
 			// Full-scope search: self-heal a missing/stale/old-format index
 			// so the next search takes the fast path (best-effort write).
-			si = loadOrHealSearchIndex(scopes[0], allArticles)
+			si = search.LoadOrHealIndex(scopes[0], allArticles)
 		} else {
 			// Tag-filtered slice — the full-scope index can't match it, so
 			// this runs the slow path and must not overwrite the index.
-			si = loadSearchIndex(scopes[0])
+			si = search.LoadIndex(scopes[0])
 		}
-		results = bm25SearchWithIndex(allArticles, query, limit, si)
+		results = search.BM25WithIndex(allArticles, query, limit, si)
 	} else {
-		results = bm25Search(allArticles, query, limit)
+		results = search.BM25(allArticles, query, limit)
 	}
 
 	if contextMode {
 		// Output formatted context for agent prompt injection. --json gives
 		// the same excerpts as an array, free of the in-band text separator.
 		if jsonOut {
-			printJSON(searchContextJSON(results, query, contextChars, contextTotal))
+			printJSON(search.ContextJSON(results, query, contextChars, contextTotal))
 			return
 		}
-		fmt.Print(formatSearchContext(results, query, contextChars, contextTotal))
+		fmt.Print(search.FormatContext(results, query, contextChars, contextTotal))
 		return
 	}
 
@@ -200,7 +201,7 @@ func cmdSearch(args []string) {
 // Hybrid mode emits all four rank-related keys; pure-vec mode emits only
 // `score` and `vec_rank`. We deliberately do NOT add bm25_rank=-1 to pure-vec
 // rows — keeping the schema minimal makes consumers easier to write.
-func emitVectorResults(results []vectorSearchResult, hybridMode, jsonOut bool) {
+func emitVectorResults(results []search.Hit, hybridMode, jsonOut bool) {
 	if jsonOut {
 		out := make([]map[string]any, 0, len(results))
 		for _, r := range results {

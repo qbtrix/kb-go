@@ -1,7 +1,7 @@
 // Tokenization and BM25 ranking over wiki articles (k1=1.2, b=0.75), with
 // title, concept and glossary boosts.
 
-package main
+package search
 
 import (
 	"math"
@@ -13,16 +13,16 @@ import (
 	"github.com/qbtrix/kb-go/internal/model"
 )
 
-// tokenize lowercases, splits on non-alphanumeric runes, and Porter-stems each
+// Tokenize lowercases, splits on non-alphanumeric runes, and Porter-stems each
 // token. Stemming is the SINGLE shared step that makes BM25 match morphological
-// variants: because both the index (buildSearchIndex) and the query
-// (bm25SearchWithIndex) tokenize through here, "opens" in a doc and the query
+// variants: because both the index (BuildIndex) and the query
+// (BM25WithIndex) Tokenize through here, "opens" in a doc and the query
 // "open" both reduce to "open" and match. See porter.go.
 //
 // The persisted index stores these stemmed tokens, which is why its format is
-// v3 (searchIndexVersion): pre-stemming v2 files are ignored and healed.
+// v3 (IndexVersion): pre-stemming v2 files are ignored and healed.
 // porterStem leaves digits and <=2-letter tokens untouched.
-func tokenize(text string) []string {
+func Tokenize(text string) []string {
 	lower := strings.ToLower(text)
 	splitter := func(c rune) bool {
 		return !unicode.IsLetter(c) && !unicode.IsDigit(c)
@@ -35,26 +35,26 @@ func tokenize(text string) []string {
 	return tokens
 }
 
-func bm25Search(articles []*model.WikiArticle, query string, limit int) []*model.WikiArticle {
-	return bm25SearchWithIndex(articles, query, limit, nil)
+func BM25(articles []*model.WikiArticle, query string, limit int) []*model.WikiArticle {
+	return BM25WithIndex(articles, query, limit, nil)
 }
 
 // glossaryExactBoost multiplies (and baselines) the score of a glossary
 // article whose Term or an Alias exactly matches a query term — see issue #15.
 const glossaryExactBoost = 10.0
 
-func bm25SearchWithIndex(articles []*model.WikiArticle, query string, limit int, si *SearchIndex) []*model.WikiArticle {
+func BM25WithIndex(articles []*model.WikiArticle, query string, limit int, si *Index) []*model.WikiArticle {
 	if len(articles) == 0 || query == "" {
 		return nil
 	}
 
-	queryTerms := tokenize(query)
+	queryTerms := Tokenize(query)
 	if len(queryTerms) == 0 {
 		return nil
 	}
 
 	var scores []float64
-	if indexMatches(si, articles) {
+	if IndexMatches(si, articles) {
 		scores = bm25ScoresFromPostings(queryTerms, si)
 	} else {
 		scores = bm25ScoresSlow(articles, queryTerms)
@@ -72,7 +72,7 @@ func bm25SearchWithIndex(articles []*model.WikiArticle, query string, limit int,
 // contributes base = 0 there (tf = 0), and a term present in a doc's title or
 // concepts is by construction in that doc's postings (the "all" token stream
 // includes title and concepts), so boosts apply to the same docs.
-func bm25ScoresFromPostings(queryTerms []string, si *SearchIndex) []float64 {
+func bm25ScoresFromPostings(queryTerms []string, si *Index) []float64 {
 	nDocs := float64(len(si.DocIDs))
 
 	idfs := map[string]float64{}
@@ -87,8 +87,8 @@ func bm25ScoresFromPostings(queryTerms []string, si *SearchIndex) []float64 {
 		for _, p := range si.Postings[term] {
 			docIdx, tf := p[0], float64(p[1])
 			dl := float64(si.DocLens[docIdx])
-			num := tf * (bm25K1 + 1)
-			den := tf + bm25K1*(1-bm25B+bm25B*dl/si.AvgDL)
+			num := tf * (BM25K1 + 1)
+			den := tf + BM25K1*(1-BM25B+BM25B*dl/si.AvgDL)
 			base := idf * num / den
 			s := base
 			// Title boost: 3x for terms appearing in the title
@@ -113,10 +113,10 @@ func bm25ScoresSlow(articles []*model.WikiArticle, queryTerms []string) []float6
 	conceptTokens := make([][]string, len(articles))
 	totalLen := 0
 	for i, a := range articles {
-		docs[i] = tokenize(a.Title + " " + a.Summary + " " + a.Content +
+		docs[i] = Tokenize(a.Title + " " + a.Summary + " " + a.Content +
 			" " + strings.Join(a.Concepts, " ") + " " + strings.Join(a.Categories, " "))
-		titleTokens[i] = tokenize(a.Title)
-		conceptTokens[i] = tokenize(strings.Join(a.Concepts, " "))
+		titleTokens[i] = Tokenize(a.Title)
+		conceptTokens[i] = Tokenize(strings.Join(a.Concepts, " "))
 		totalLen += len(docs[i])
 	}
 	avgDL := float64(totalLen) / float64(len(docs))
@@ -140,8 +140,8 @@ func bm25ScoresSlow(articles []*model.WikiArticle, queryTerms []string) []float6
 		dl := float64(len(doc))
 		for _, term := range queryTerms {
 			tf := float64(countStr(doc, term))
-			num := tf * (bm25K1 + 1)
-			den := tf + bm25K1*(1-bm25B+bm25B*dl/avgDL)
+			num := tf * (BM25K1 + 1)
+			den := tf + BM25K1*(1-BM25B+BM25B*dl/avgDL)
 			base := idfs[term] * num / den
 			s += base
 
@@ -171,7 +171,7 @@ func applyGlossaryBoost(articles []*model.WikiArticle, queryTerms []string, scor
 			continue
 		}
 		matched := false
-		// queryTerms are Porter-stemmed (via tokenize), so the Term/Alias sides
+		// queryTerms are Porter-stemmed (via Tokenize), so the Term/Alias sides
 		// are stemmed too or a stemmed query token could never equal a raw term.
 		// Identical raw inputs stem identically, so every exact hit survives,
 		// and variants like alias "opens" vs query "open" also match. porterStem
@@ -243,6 +243,6 @@ func countStr(tokens []string, term string) int {
 }
 
 const (
-	bm25K1 = 1.2
-	bm25B  = 0.75
+	BM25K1 = 1.2
+	BM25B  = 0.75
 )

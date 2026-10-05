@@ -1,12 +1,12 @@
 // stemming_search_test.go — End-to-end BM25 retrieval proofs for stemming
-// (feat/bm25-stemming). Created: 2026-07-15.
+// (Porter stemmer).
 //
 // porter_test.go proves the stemmer in isolation; these prove the actual recall
-// fix through bm25Search/bm25SearchWithIndex: a query in one morphological form
+// fix through BM25/BM25WithIndex: a query in one morphological form
 // retrieves a document written in another, the glossary boost survives (and now
 // also fires on variants), and the over-stem false positive does NOT happen.
 
-package main
+package search
 
 import (
 	"testing"
@@ -35,7 +35,7 @@ func TestStemmingRetrieval_OpenOpens(t *testing.T) {
 	}
 
 	for _, q := range []string{"open", "opening"} {
-		results := bm25Search(articles, q, 5)
+		results := BM25(articles, q, 5)
 		if !resultHasID(results, "hours") {
 			t.Errorf("query %q did not retrieve the 'opens at 8am' doc; results=%v", q, articleIDs(results))
 		}
@@ -51,11 +51,11 @@ func TestStemmingRetrieval_MorphologicalPairs(t *testing.T) {
 	}
 
 	// "located" doc retrieved by the noun query "location".
-	if r := bm25Search(articles, "location", 5); !resultHasID(r, "loc") {
+	if r := BM25(articles, "location", 5); !resultHasID(r, "loc") {
 		t.Errorf("query %q did not retrieve the 'located' doc; results=%v", "location", articleIDs(r))
 	}
 	// "serves" doc retrieved by the gerund query "serving".
-	if r := bm25Search(articles, "serving", 5); !resultHasID(r, "menu") {
+	if r := BM25(articles, "serving", 5); !resultHasID(r, "menu") {
 		t.Errorf("query %q did not retrieve the 'serves' doc; results=%v", "serving", articleIDs(r))
 	}
 }
@@ -67,7 +67,7 @@ func TestStemmingRetrieval_NoOverStem(t *testing.T) {
 	articles := []*model.WikiArticle{
 		{ID: "ops", Title: "Operators", Content: "Mobile network operators route calls through regional operator hubs.", Version: 1},
 	}
-	if r := bm25Search(articles, "open", 5); resultHasID(r, "ops") {
+	if r := BM25(articles, "open", 5); resultHasID(r, "ops") {
 		t.Errorf("over-stem: query %q wrongly retrieved the operator-only doc; results=%v", "open", articleIDs(r))
 	}
 }
@@ -77,8 +77,8 @@ func TestStemmingRetrieval_NoOverStem(t *testing.T) {
 // stemming both sides of the comparison).
 func TestStemmingRetrieval_GlossaryExactStillFirst(t *testing.T) {
 	articles := makeSearchCorpus()
-	idx := buildSearchIndex(articles)
-	results := bm25SearchWithIndex(articles, "pocket", 10, idx)
+	idx := BuildIndex(articles)
+	results := BM25WithIndex(articles, "pocket", 10, idx)
 	if len(results) == 0 {
 		t.Fatal("no results for exact term query 'pocket'")
 	}
@@ -113,8 +113,8 @@ func TestStemmingRetrieval_GlossaryVariantBoost(t *testing.T) {
 			Version: 1,
 		},
 	}
-	idx := buildSearchIndex(articles)
-	results := bm25SearchWithIndex(articles, "connector", 10, idx)
+	idx := BuildIndex(articles)
+	results := BM25WithIndex(articles, "connector", 10, idx)
 	if len(results) == 0 {
 		t.Fatal("no results for query 'connector'")
 	}

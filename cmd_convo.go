@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
 )
 
@@ -158,7 +159,7 @@ func cmdConvoSearch(args []string) {
 		return
 	}
 
-	results := bm25Search(convoArticles, query, limit)
+	results := search.BM25(convoArticles, query, limit)
 	if jsonOut {
 		type result struct {
 			ID       string   `json:"id"`
