@@ -3,7 +3,7 @@
 // Created: 2026-06-02
 // Updated: 2026-06-02 — measures the eval end-to-end through the real build path
 // instead of asserting a modeled metric. Every number the eval now prints is
-// derived from running cmdBuild + glossaryShow against a fixture KB on disk; the
+// derived from running cmdBuild + glossary.Show against a fixture KB on disk; the
 // previously hardcoded "100% -> 0%" at-risk line is gone, replaced by a measured
 // count of how many terms resolve to a non-canonical definition with no warning
 // under the legacy (contradiction-off) build.
@@ -17,7 +17,7 @@
 // the silent ambiguity the domain glossary (#15) exists to prevent.
 //
 // BEFORE (--contradiction-mode off): the build emits zero contradiction
-// warnings. glossaryShow resolves each term to the first matching article (ID
+// warnings. glossary.Show resolves each term to the first matching article (ID
 // order) and returns that single definition with no signal that a conflicting
 // definition coexists. The eval measures how many terms resolve to the
 // non-canonical prior under that legacy behavior.
@@ -39,6 +39,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/qbtrix/kb-go/internal/contradiction"
+	"github.com/qbtrix/kb-go/internal/glossary"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
@@ -46,9 +48,9 @@ import (
 // conflictPair is one high-conflict term with its wrong prior and canonical
 // definition, sourced from two distinct files. The two files derive distinct
 // article ids from their basenames, so both definitions persist on disk under
-// the same Term — the on-disk ambiguity glossaryValidate and the build hook flag.
+// the same Term — the on-disk ambiguity glossary.Validate and the build hook flag.
 //
-// glossaryShow resolves a term to the first matching article in id order, so a
+// glossary.Show resolves a term to the first matching article in id order, so a
 // detection-off lookup deterministically returns exactly one of the two
 // definitions and never reveals the other. The eval measures how many of those
 // silent resolutions land on the non-canonical prior (a measured count, whatever
@@ -120,7 +122,7 @@ func writeGlossaryFile(t *testing.T, glossaryDir, file, term, def string) {
 // buildEvalJSON runs the real cmdBuild against the fixture in --json mode (which
 // suppresses the CI exit-3) and returns the parsed contradictions array. Stdout
 // is captured so the JSON payload doesn't bleed into test output.
-func buildEvalJSON(t *testing.T, srcDir, scope, mode string) []Contradiction {
+func buildEvalJSON(t *testing.T, srcDir, scope, mode string) []contradiction.Finding {
 	t.Helper()
 	orig := os.Stdout
 	r, w, _ := os.Pipe()
@@ -135,7 +137,7 @@ func buildEvalJSON(t *testing.T, srcDir, scope, mode string) []Contradiction {
 	buf.ReadFrom(r)
 
 	var out struct {
-		Contradictions []Contradiction `json:"contradictions"`
+		Contradictions []contradiction.Finding `json:"contradictions"`
 	}
 	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
 		t.Fatalf("parse build json (mode=%s): %v\nraw: %s", mode, err, buf.String())
@@ -169,7 +171,7 @@ func TestContradictionEval(t *testing.T) {
 
 	// Both source files per term persist on disk (distinct ids). Count the
 	// glossary articles, then resolve each term the way a reader would
-	// (glossaryShow returns the first matching article in id order) to see which
+	// (glossary.Show returns the first matching article in id order) to see which
 	// of the two conflicting definitions the lookup silently settles on.
 	beforeArticles, err := store.ListArticles(beforeScope)
 	if err != nil {
@@ -189,7 +191,7 @@ func TestContradictionEval(t *testing.T) {
 	nonCanonicalResolved := 0
 	for _, p := range the7Conflicts {
 		var sb bytes.Buffer
-		if err := glossaryShow(beforeScope, p.term, &sb); err != nil {
+		if err := glossary.Show(beforeScope, p.term, &sb); err != nil {
 			t.Fatalf("glossaryShow(%q) err = %v", p.term, err)
 		}
 		got := sb.String()

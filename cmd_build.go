@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/qbtrix/kb-go/internal/compile"
+	"github.com/qbtrix/kb-go/internal/contradiction"
+	"github.com/qbtrix/kb-go/internal/glossary"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/parse"
 	"github.com/qbtrix/kb-go/internal/search"
@@ -129,7 +131,7 @@ func runBuild(args []string) int {
 	// Refuse before writing anything when a file needs compiling and there is
 	// no compiler. Glossary-only and fully cached builds need none.
 	for _, j := range jobs {
-		if !isGlossarySource(j.relPath) {
+		if !glossary.IsSource(j.relPath) {
 			requireCompiler(spec, "build", "Or compile in your own agent: `kb prepare` emits the prompts, `kb accept` stores the articles.")
 			break
 		}
@@ -177,10 +179,10 @@ func runBuild(args []string) int {
 			var article *model.WikiArticle
 			fixedID := false
 
-			if isGlossarySource(j.relPath) {
+			if glossary.IsSource(j.relPath) {
 				// Glossary sources are hand-curated: parse frontmatter directly,
 				// preserve body verbatim, never sent to the compiler.
-				gArt, gErr := parseGlossarySource([]byte(j.text), j.relPath)
+				gArt, gErr := glossary.ParseSource([]byte(j.text), j.relPath)
 				if gErr != nil {
 					fmt.Fprintf(os.Stderr, "Warning: glossary parse failed for %s: %v\n", j.relPath, gErr)
 					article = &model.WikiArticle{
@@ -291,7 +293,7 @@ func runBuild(args []string) int {
 	// ids that define the same Term — both survive on disk, so allArticles carries
 	// the pair and the disagreement is flagged. (The harder same-id case, where
 	// two sources resolve to one wiki/<id>.md and the later write silently
-	// overwrites the earlier, is NOT recovered here: detectContradictions dedupes
+	// overwrites the earlier, is NOT recovered here: contradiction.Detect dedupes
 	// on nameKey+sourceID, and same-id candidates share a sourceID, so they
 	// collapse to one member whether they arrive via results or allArticles.) The
 	// per-results pass is thus redundant with allArticles for the distinct-id case
@@ -299,16 +301,16 @@ func runBuild(args []string) int {
 	// future change that lets results carry a glossary article not yet on disk.
 	// Within a single run `results` is append-only — no in-run duplicates to
 	// recover. Detection lives in contradiction.go.
-	var contradictions []Contradiction
+	var contradictions []contradiction.Finding
 	if contraMode != "off" {
-		var buildCands []ContradictionCandidate
+		var buildCands []contradiction.Candidate
 		for _, r := range results {
 			if r.article != nil && r.article.Kind == "glossary" {
-				buildCands = append(buildCands, candidatesFromArticles([]*model.WikiArticle{r.article})...)
+				buildCands = append(buildCands, contradiction.CandidatesFromArticles([]*model.WikiArticle{r.article})...)
 			}
 		}
-		buildCands = append(buildCands, candidatesFromArticles(allArticles)...)
-		contradictions = detectContradictions(buildCands, ContradictionConfig{Mode: contraMode})
+		buildCands = append(buildCands, contradiction.CandidatesFromArticles(allArticles)...)
+		contradictions = contradiction.Detect(buildCands, contradiction.Config{Mode: contraMode})
 	}
 
 	sort.Strings(failed)
@@ -337,7 +339,7 @@ func runBuild(args []string) int {
 		if len(contradictions) > 0 {
 			fmt.Fprintf(os.Stderr, "\n%d glossary contradiction(s) — sources disagree on a definition:\n", len(contradictions))
 			for _, c := range contradictions {
-				fmt.Fprintln(os.Stderr, "  "+formatContradictionIssue(c))
+				fmt.Fprintln(os.Stderr, "  "+contradiction.FormatIssue(c))
 			}
 			fmt.Fprintln(os.Stderr, "Resolve which definition is canonical, then rebuild. (`kb glossary validate` re-lists these.)")
 		}

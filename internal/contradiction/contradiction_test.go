@@ -1,36 +1,28 @@
-// contradiction_test.go — Failing-first test suite for cross-source definition
-// contradiction detection (issue #19).
-// Created: 2026-06-02
-//
-// Locks the contract for the contradiction subsystem:
-//   - detectContradictions: pure, offline grouping of glossary candidates by
-//     normalized term/alias key, flagging materially-different definitions
-//   - the "strict" vs "loose" materially-different threshold
-//   - glossaryValidate surfacing CONTRADICTION findings (on-disk path)
-//   - the build/recompile hook capturing silently-overwritten same-ID candidates
-//
-// All tests EXPECT TO FAIL until contradiction.go and the cmdBuild/glossaryValidate
-// hooks land.
-package main
+// Tests for contradiction detection (issue #19): Detect groups glossary
+// candidates by normalized term/alias key and flags materially different
+// definitions, the "strict" (first sentence) threshold, single-source and
+// identical definitions never flagged, alias matches, and findings carrying
+// both definitions' snippets. glossary.Validate's CONTRADICTION findings are
+// tested in internal/glossary.
+
+package contradiction
 
 import (
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/qbtrix/kb-go/internal/model"
-	"github.com/qbtrix/kb-go/internal/store"
-	"github.com/qbtrix/kb-go/internal/textutil"
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 // --- 1. Pure detector: same term, two sources, different definitions ---------
 
 func TestDetectContradictionsStrictFlagsDivergentDefinitions(t *testing.T) {
-	cands := []ContradictionCandidate{
+	cands := []Candidate{
 		{SourceID: "soul-religious", Term: "Soul", Definition: "The Soul is the immaterial spiritual essence of a person."},
 		{SourceID: "soul-protocol", Term: "Soul", Definition: "Soul is the Soul Protocol persistent agent-identity layer."},
 	}
-	found := detectContradictions(cands, ContradictionConfig{Mode: "strict"})
+	found := Detect(cands, Config{Mode: "strict"})
 	if len(found) != 1 {
 		t.Fatalf("expected 1 contradiction, got %d: %+v", len(found), found)
 	}
@@ -49,11 +41,11 @@ func TestDetectContradictionsStrictFlagsDivergentDefinitions(t *testing.T) {
 // --- 2. Identical definitions across sources are NOT a contradiction ---------
 
 func TestDetectContradictionsIgnoresIdenticalDefinitions(t *testing.T) {
-	cands := []ContradictionCandidate{
+	cands := []Candidate{
 		{SourceID: "a", Term: "Pocket", Definition: "Pocket is a PocketPaw workspace container."},
 		{SourceID: "b", Term: "Pocket", Definition: "Pocket is a PocketPaw workspace container."},
 	}
-	found := detectContradictions(cands, ContradictionConfig{Mode: "strict"})
+	found := Detect(cands, Config{Mode: "strict"})
 	if len(found) != 0 {
 		t.Fatalf("identical definitions should not be a contradiction, got %+v", found)
 	}
@@ -62,10 +54,10 @@ func TestDetectContradictionsIgnoresIdenticalDefinitions(t *testing.T) {
 // --- 3. A single source per term is never a contradiction --------------------
 
 func TestDetectContradictionsSingleSourceNoConflict(t *testing.T) {
-	cands := []ContradictionCandidate{
+	cands := []Candidate{
 		{SourceID: "only", Term: "Ripple", Definition: "Ripple is the reactive widget runtime."},
 	}
-	found := detectContradictions(cands, ContradictionConfig{Mode: "strict"})
+	found := Detect(cands, Config{Mode: "strict"})
 	if len(found) != 0 {
 		t.Fatalf("single source should not contradict itself, got %+v", found)
 	}
@@ -74,11 +66,11 @@ func TestDetectContradictionsSingleSourceNoConflict(t *testing.T) {
 // --- 4. Alias-level conflict: term on A matches an alias on B -----------------
 
 func TestDetectContradictionsMatchesViaAlias(t *testing.T) {
-	cands := []ContradictionCandidate{
+	cands := []Candidate{
 		{SourceID: "fabric-textile", Term: "Fabric", Definition: "Fabric is a woven textile material."},
 		{SourceID: "fabric-onto", Term: "Ontology", Aliases: []string{"Fabric"}, Definition: "Fabric is the PocketPaw typed ontology layer."},
 	}
-	found := detectContradictions(cands, ContradictionConfig{Mode: "strict"})
+	found := Detect(cands, Config{Mode: "strict"})
 	if len(found) != 1 {
 		t.Fatalf("expected 1 contradiction via alias match, got %d: %+v", len(found), found)
 	}
@@ -87,68 +79,28 @@ func TestDetectContradictionsMatchesViaAlias(t *testing.T) {
 // --- 5. Strict threshold: same first sentence, different tail = NOT flagged ---
 
 func TestDetectContradictionsStrictKeyedOnFirstSentence(t *testing.T) {
-	cands := []ContradictionCandidate{
+	cands := []Candidate{
 		{SourceID: "a", Term: "Paw", Definition: "Paw is the agent runtime. It schedules tasks."},
 		{SourceID: "b", Term: "Paw", Definition: "Paw is the agent runtime. It also handles memory."},
 	}
-	found := detectContradictions(cands, ContradictionConfig{Mode: "strict"})
+	found := Detect(cands, Config{Mode: "strict"})
 	if len(found) != 0 {
 		t.Fatalf("matching first sentence should not trip strict mode, got %+v", found)
 	}
 }
 
-// --- 6. On-disk: glossaryValidate surfaces CONTRADICTION findings ------------
-
-func TestGlossaryValidateSurfacesContradiction(t *testing.T) {
-	scope := "test-contra-validate-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
-
-	seedGlossaryArticle(t, scope, &model.WikiArticle{
-		ID: "soul-religious", Title: "Soul (religious)", Content: "The Soul is the immaterial spiritual essence of a being.",
-		Kind: "glossary", Term: "Soul", Version: 1,
-	})
-	seedGlossaryArticle(t, scope, &model.WikiArticle{
-		ID: "soul-protocol", Title: "Soul (protocol)", Content: "Soul is the Soul Protocol persistent agent-identity layer.",
-		Kind: "glossary", Term: "Soul", Version: 1,
-	})
-
-	issues, err := glossaryValidate(scope)
-	if err != nil {
-		t.Fatalf("glossaryValidate err = %v", err)
-	}
-	if !containsIssue(issues, "contradiction") {
-		t.Errorf("expected a CONTRADICTION finding. Got: %v", issues)
-	}
-	if !containsIssue(issues, "soul-religious") || !containsIssue(issues, "soul-protocol") {
-		t.Errorf("contradiction should name both conflicting source ids. Got: %v", issues)
-	}
-}
+// --- 6. On-disk: glossary.Validate surfaces CONTRADICTION findings ------------
 
 // --- 7. On-disk: agreeing definitions produce no contradiction ---------------
-
-func TestGlossaryValidateNoContradictionWhenAgreeing(t *testing.T) {
-	scope := "test-contra-agree-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
-
-	seedGlossaryArticle(t, scope, &model.WikiArticle{
-		ID: "pocket", Title: "Pocket", Content: "Pocket is a PocketPaw workspace container.",
-		Kind: "glossary", Term: "Pocket", Version: 1,
-	})
-
-	issues, _ := glossaryValidate(scope)
-	if containsIssue(issues, "contradiction") {
-		t.Errorf("single clean term should not be flagged. Got: %v", issues)
-	}
-}
 
 // --- 8. Snippet content is preserved for human review ------------------------
 
 func TestContradictionSnippetsCarryBothDefinitions(t *testing.T) {
-	cands := []ContradictionCandidate{
+	cands := []Candidate{
 		{SourceID: "pocket-clothing", Term: "Pocket", Definition: "A pocket is a small bag sewn into clothing."},
 		{SourceID: "pocket-workspace", Term: "Pocket", Definition: "Pocket is a PocketPaw workspace container."},
 	}
-	found := detectContradictions(cands, ContradictionConfig{Mode: "strict"})
+	found := Detect(cands, Config{Mode: "strict"})
 	if len(found) != 1 {
 		t.Fatalf("expected 1 contradiction, got %d", len(found))
 	}
@@ -156,4 +108,8 @@ func TestContradictionSnippetsCarryBothDefinitions(t *testing.T) {
 	if !strings.Contains(joined, "clothing") || !strings.Contains(joined, "workspace container") {
 		t.Errorf("snippets should carry both definitions, got: %q", joined)
 	}
+}
+
+func TestMain(m *testing.M) {
+	os.Exit(kbtest.Main(m))
 }
