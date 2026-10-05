@@ -9,14 +9,16 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/qbtrix/kb-go/internal/compile"
 )
 
 // compilerFromArgs resolves the hook: --compiler wins over KB_COMPILER.
 // --compiler-timeout takes a Go duration ("90s", "2m") or whole seconds.
-func compilerFromArgs(args []string) (compilerSpec, error) {
-	spec := compilerSpec{
+func compilerFromArgs(args []string) (compile.Spec, error) {
+	spec := compile.Spec{
 		Command: flagStr(args, "--compiler", os.Getenv("KB_COMPILER")),
-		Timeout: defaultCompilerTimeout,
+		Timeout: compile.DefaultTimeout,
 	}
 	if raw := flagStr(args, "--compiler-timeout", ""); raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -38,7 +40,7 @@ func compilerFromArgs(args []string) (compilerSpec, error) {
 // mustCompilerFromArgs is compilerFromArgs for commands: a bad flag is a usage
 // error (exit 2), and the removed --model flag is rejected with a pointer to
 // --compiler instead of being silently ignored.
-func mustCompilerFromArgs(args []string) compilerSpec {
+func mustCompilerFromArgs(args []string) compile.Spec {
 	if flagBool(args, "--model") {
 		usageExit("--model was removed in kb v0.4.0: kb no longer calls an LLM itself.\n" +
 			"  Pick the model inside your --compiler command (e.g. `claude -p --model haiku ...`,\n" +
@@ -52,8 +54,8 @@ func mustCompilerFromArgs(args []string) compilerSpec {
 }
 
 // requireCompiler exits 2 with guidance when no compiler is configured.
-func requireCompiler(spec compilerSpec, command, alternative string) {
-	if spec.enabled() {
+func requireCompiler(spec compile.Spec, command, alternative string) {
+	if spec.Enabled() {
 		return
 	}
 	msg := fmt.Sprintf("kb %s needs a compiler: kb does not call an LLM itself.\n"+

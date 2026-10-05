@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
 )
 
@@ -154,7 +155,7 @@ Knowledge base:
 
 // lintWithHook runs the LLM review through the compiler hook and parses the
 // JSON array of issues it prints. Unparseable output is an error.
-func lintWithHook(scope string, spec compilerSpec) ([]model.LintIssue, error) {
+func lintWithHook(scope string, spec compile.Spec) ([]model.LintIssue, error) {
 	articles, _ := listArticles(scope)
 	if len(articles) == 0 {
 		return []model.LintIssue{{
@@ -163,11 +164,11 @@ func lintWithHook(scope string, spec compilerSpec) ([]model.LintIssue, error) {
 		}}, nil
 	}
 
-	out, err := runCompiler(spec, buildLintPrompt(articles), "lint")
+	out, err := compile.Run(spec, buildLintPrompt(articles), "lint")
 	if err != nil {
 		return nil, err
 	}
-	text := stripFences(string(out))
+	text := compile.StripFences(string(out))
 	var issues []model.LintIssue
 	if err := json.Unmarshal([]byte(text), &issues); err != nil {
 		i, j := strings.Index(text, "["), strings.LastIndex(text, "]")

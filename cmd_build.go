@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/parse"
 	"github.com/qbtrix/kb-go/internal/textutil"
@@ -213,7 +214,7 @@ func runBuild(args []string) int {
 
 				// Compile through the caller's hook. A failure writes no
 				// article and no cache entry: never the raw text in its place.
-				compArticle, err := compileWithHook(spec, j.text, j.relPath, codeMod, terse)
+				compArticle, err := compile.Article(spec, j.text, j.relPath, parse.PromptBlock(codeMod), terse)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error: compile failed for %s: %v\n", j.relPath, err)
 					mu.Lock()

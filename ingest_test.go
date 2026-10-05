@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
@@ -73,7 +74,7 @@ func TestIngestAllowFallbackSavesVerbatimArticle(t *testing.T) {
 	scope := tempHomeScope(t, "ingest-fallback")
 
 	text := "verbatim raw text stored on explicit request"
-	err := ingestText(scope, "notes.md", compilerSpec{}, "", "", text, true, false)
+	err := ingestText(scope, "notes.md", compile.Spec{}, "", "", text, true, false)
 	if err != nil {
 		t.Fatalf("ingestText with allowFallback should succeed, got: %v", err)
 	}

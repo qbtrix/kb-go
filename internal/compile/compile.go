@@ -1,22 +1,23 @@
-// Article compilation through a caller-owned compiler. kb holds no LLM client:
-// it builds the compile prompt (buildCompilePrompt, shared with `kb prepare`),
-// hands it to the user's `--compiler` command (or KB_COMPILER) on stdin, and
-// parses ONE JSON article object from that command's stdout. The caller picks
-// the model and pays for it through their own metered path (an agent backend,
-// a LiteLLM/OpenAI-compatible gateway, a local Claude Code login).
+// Package compile turns source text into a wiki article through a
+// caller-owned compiler. kb holds no LLM client: Prompt builds the compile
+// prompt (shared with `kb prepare`), Run hands it to the user's `--compiler`
+// command on stdin, and Article parses ONE JSON article object from that
+// command's stdout. The caller picks the model and pays for it through their
+// own metered path (an agent backend, a LiteLLM/OpenAI-compatible gateway, a
+// local Claude Code login). Resolving the hook from flags is the CLI's job.
 //
 // Invariants:
 //   - A failed compile (non-zero exit, timeout, unparseable or incomplete
 //     output) is an error for that item. Callers never store the raw text as
 //     the article in its place; `kb ingest --allow-fallback` is the only
 //     explicit verbatim path.
-//   - The command runs through the platform shell (compiler_shell_*.go) so the
-//     same string works as typed in a terminal; its stderr is passed through
-//     line by line, prefixed with the source being compiled.
-//   - `usage` in the output is optional and parsed leniently: wrong-typed or
-//     unknown keys are dropped, never fatal.
-
-package main
+//   - The command runs through the platform shell (shell_unix.go /
+//     shell_windows.go) so the same string works as typed in a terminal; its
+//     stderr is passed through line by line, prefixed with the source being
+//     compiled.
+//   - `usage` in the output is optional and parsed leniently (ParseUsage):
+//     wrong-typed or unknown keys are dropped, never fatal.
+package compile
 
 import (
 	"bytes"
@@ -32,25 +33,24 @@ import (
 	"time"
 
 	"github.com/qbtrix/kb-go/internal/model"
-	"github.com/qbtrix/kb-go/internal/parse"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
-const defaultCompilerTimeout = 300 * time.Second
+const DefaultTimeout = 300 * time.Second
 
-// compilerSpec is the resolved `--compiler` hook. A zero Command means no
+// Spec is the resolved `--compiler` hook. A zero Command means no
 // compiler is configured.
-type compilerSpec struct {
+type Spec struct {
 	Command string
 	Timeout time.Duration
 	Stderr  io.Writer // where the compiler's stderr is relayed; nil = os.Stderr
 }
 
-func (c compilerSpec) enabled() bool { return strings.TrimSpace(c.Command) != "" }
+func (c Spec) Enabled() bool { return strings.TrimSpace(c.Command) != "" }
 
-// label is the default compiled_with value: "compiler:<first word>", with
+// Label is the default compiled_with value: "compiler:<first word>", with
 // quotes and directories stripped from that word.
-func (c compilerSpec) label() string {
+func (c Spec) Label() string {
 	cmd := strings.TrimSpace(c.Command)
 	var first string
 	if strings.HasPrefix(cmd, `"`) || strings.HasPrefix(cmd, `'`) {
@@ -67,18 +67,10 @@ func (c compilerSpec) label() string {
 	return "compiler:" + first
 }
 
-// codeContextBlock renders the AST context section of the compile prompt.
-func codeContextBlock(codeMod *parse.Module) string {
-	if codeMod == nil {
-		return ""
-	}
-	return fmt.Sprintf("\nAST-extracted structure:\n```\n%s```\n\n", parse.FormatContext(codeMod))
-}
-
-// buildCompilePrompt constructs the compilation prompt shared by the compiler
+// Prompt constructs the compilation prompt shared by the compiler
 // hook and cmdPrepare. When terse is true, the prompt targets 120-180 words
 // for agent context budgets; otherwise 400-800 words for human documentation.
-func buildCompilePrompt(source, contextBlock, rawText string, terse bool) string {
+func Prompt(source, contextBlock, rawText string, terse bool) string {
 	var instructions string
 	if terse {
 		instructions = `Target 120-180 words. Write an overview, not a deep explanation.
@@ -102,12 +94,13 @@ Source text:
 %s`, source, contextBlock, instructions, rawText)
 }
 
-// compileWithHook compiles one source through the compiler hook. On any
+// Article compiles one source through the compiler hook. contextBlock is the
+// prompt's optional code-structure section (parse.PromptBlock, or ""). On any
 // failure it returns (nil, err): the caller decides how to report, and must
 // not substitute the raw text.
-func compileWithHook(spec compilerSpec, rawText, source string, codeMod *parse.Module, terse bool) (*model.WikiArticle, error) {
-	prompt := buildCompilePrompt(source, codeContextBlock(codeMod), rawText, terse)
-	out, err := runCompiler(spec, prompt, source)
+func Article(spec Spec, rawText, source, contextBlock string, terse bool) (*model.WikiArticle, error) {
+	prompt := Prompt(source, contextBlock, rawText, terse)
+	out, err := Run(spec, prompt, source)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +122,7 @@ func compileWithHook(spec compilerSpec, rawText, source string, codeMod *parse.M
 		Categories:   textutil.NilToEmpty(res.Categories),
 		WordCount:    textutil.WordCount(res.Content),
 		CompiledAt:   time.Now().UTC().Format(time.RFC3339),
-		CompiledWith: compiledWithFor(res.CompiledWith, res.Usage, spec.label()),
+		CompiledWith: CompiledWith(res.CompiledWith, res.Usage, spec.Label()),
 		Version:      1,
 		Audience:     audience,
 		Depth:        depth,
@@ -138,9 +131,9 @@ func compileWithHook(spec compilerSpec, rawText, source string, codeMod *parse.M
 	}, nil
 }
 
-// compiledWithFor picks compiled_with: explicit value, else usage.model, else
+// CompiledWith picks compiled_with: explicit value, else usage.model, else
 // the caller's default.
-func compiledWithFor(explicit string, usage *model.ArticleUsage, fallback string) string {
+func CompiledWith(explicit string, usage *model.ArticleUsage, fallback string) string {
 	if explicit != "" {
 		return explicit
 	}
@@ -165,7 +158,7 @@ type compiledArticle struct {
 // Tolerates ```json fences and a stray line around the object; requires title
 // and content.
 func parseCompiledArticle(out []byte) (*compiledArticle, error) {
-	text := stripFences(string(out))
+	text := StripFences(string(out))
 	var raw struct {
 		Title        string          `json:"title"`
 		Summary      string          `json:"summary"`
@@ -188,11 +181,11 @@ func parseCompiledArticle(out []byte) (*compiledArticle, error) {
 	return &compiledArticle{
 		Title: raw.Title, Summary: raw.Summary, Content: raw.Content,
 		Concepts: raw.Concepts, Categories: raw.Categories,
-		CompiledWith: raw.CompiledWith, Usage: parseUsage(raw.Usage),
+		CompiledWith: raw.CompiledWith, Usage: ParseUsage(raw.Usage),
 	}, nil
 }
 
-func stripFences(text string) string {
+func StripFences(text string) string {
 	text = strings.TrimSpace(text)
 	text = strings.TrimPrefix(text, "```json")
 	text = strings.TrimPrefix(text, "```")
@@ -200,10 +193,10 @@ func stripFences(text string) string {
 	return strings.TrimSpace(text)
 }
 
-// parseUsage reads the optional usage object leniently: each known key is
+// ParseUsage reads the optional usage object leniently: each known key is
 // taken only when it has the right type; anything else is ignored. Returns
 // nil when nothing usable is present.
-func parseUsage(raw json.RawMessage) *model.ArticleUsage {
+func ParseUsage(raw json.RawMessage) *model.ArticleUsage {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -230,9 +223,9 @@ func parseUsage(raw json.RawMessage) *model.ArticleUsage {
 	return u
 }
 
-// usageTotals sums usage across articles: how many carry usage, and their
+// UsageTotals sums usage across articles: how many carry usage, and their
 // input/output tokens and cost.
-func usageTotals(articles []*model.WikiArticle) (n, in, out int, cost float64) {
+func UsageTotals(articles []*model.WikiArticle) (n, in, out int, cost float64) {
 	for _, a := range articles {
 		if a == nil || a.Usage == nil {
 			continue
@@ -245,15 +238,15 @@ func usageTotals(articles []*model.WikiArticle) (n, in, out int, cost float64) {
 	return
 }
 
-// runCompiler runs the hook once: prompt on stdin, stdout returned. Non-zero
+// Run runs the hook once: prompt on stdin, stdout returned. Non-zero
 // exit and timeout are errors. label names the item in relayed stderr lines.
-func runCompiler(spec compilerSpec, prompt, label string) ([]byte, error) {
-	if !spec.enabled() {
+func Run(spec Spec, prompt, label string) ([]byte, error) {
+	if !spec.Enabled() {
 		return nil, errors.New("no compiler configured")
 	}
 	timeout := spec.Timeout
 	if timeout <= 0 {
-		timeout = defaultCompilerTimeout
+		timeout = DefaultTimeout
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

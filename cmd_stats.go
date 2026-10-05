@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/qbtrix/kb-go/internal/compile"
 )
 
 func cmdStats(args []string) {
@@ -26,7 +28,7 @@ func cmdStats(args []string) {
 		totalWords += a.WordCount
 	}
 	vectorCount := vectorIndexCount(scope)
-	usageN, usageIn, usageOut, usageCost := usageTotals(articles)
+	usageN, usageIn, usageOut, usageCost := compile.UsageTotals(articles)
 
 	if jsonOut {
 		out := map[string]any{

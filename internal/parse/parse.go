@@ -152,3 +152,12 @@ func FormatContext(mod *Module) string {
 
 	return sb.String()
 }
+
+// PromptBlock renders mod as the "AST-extracted structure" section of the
+// compile prompt; empty for a nil module.
+func PromptBlock(codeMod *Module) string {
+	if codeMod == nil {
+		return ""
+	}
+	return fmt.Sprintf("\nAST-extracted structure:\n```\n%s```\n\n", FormatContext(codeMod))
+}

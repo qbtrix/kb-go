@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/parse"
 	"github.com/qbtrix/kb-go/internal/textutil"
@@ -112,11 +113,11 @@ func cmdIngest(args []string) {
 // already persisted at that point, so no content is lost, but NO article is
 // written. Split out of cmdIngest so the failure contract is testable
 // in-process (fatal calls os.Exit).
-func ingestText(scope, source string, spec compilerSpec, lang, filePath, text string, allowFallback, jsonOut bool) error {
+func ingestText(scope, source string, spec compile.Spec, lang, filePath, text string, allowFallback, jsonOut bool) error {
 	if strings.TrimSpace(text) == "" {
 		return fmt.Errorf("No content to ingest")
 	}
-	if !spec.enabled() && !allowFallback {
+	if !spec.Enabled() && !allowFallback {
 		return fmt.Errorf("no compiler configured: pass --compiler, --article-json or --allow-fallback")
 	}
 
@@ -151,8 +152,8 @@ func ingestText(scope, source string, spec compilerSpec, lang, filePath, text st
 	// Compile — ingest always uses non-terse mode (full documentation).
 	var article *model.WikiArticle
 	err := fmt.Errorf("no compiler configured")
-	if spec.enabled() {
-		article, err = compileWithHook(spec, text, source, codeMod, false)
+	if spec.Enabled() {
+		article, err = compile.Article(spec, text, source, parse.PromptBlock(codeMod), false)
 	}
 	if err != nil {
 		if !allowFallback {
@@ -243,8 +244,8 @@ func ingestArticleJSON(scope string, data []byte, jsonOut bool) error {
 		return fmt.Errorf("failed to save raw doc: %v", err)
 	}
 
-	usage := parseUsage(payload.Article.Usage)
-	compiledWith := compiledWithFor(payload.Article.CompiledWith, usage, "external")
+	usage := compile.ParseUsage(payload.Article.Usage)
+	compiledWith := compile.CompiledWith(payload.Article.CompiledWith, usage, "external")
 
 	article := &model.WikiArticle{
 		ID:           textutil.Slugify(payload.Article.Title),

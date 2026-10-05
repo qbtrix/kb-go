@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
 )
 
@@ -58,7 +59,7 @@ func cmdRecompile(args []string) {
 			fmt.Printf("Recompiling: %s\n", a.Title)
 		}
 
-		newArticle, err := compileWithHook(spec, combined, source, nil, terse)
+		newArticle, err := compile.Article(spec, combined, source, "", terse)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: recompile failed for %s: %v\n", a.ID, err)
 			failed++

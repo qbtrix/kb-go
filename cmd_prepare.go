@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/parse"
 	"github.com/qbtrix/kb-go/internal/textutil"
@@ -107,7 +108,7 @@ func cmdPrepare(args []string) {
 		saveRawDoc(scope, raw)
 
 		// Build the same prompt the --compiler hook gets — shared helpers keep them in sync.
-		prompt := buildCompilePrompt(relPath, codeContextBlock(parse.Code(f, string(text))), string(text), terse)
+		prompt := compile.Prompt(relPath, parse.PromptBlock(parse.Code(f, string(text))), string(text), terse)
 
 		items = append(items, prepareItem{
 			Source:  relPath,

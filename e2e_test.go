@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/textutil"
@@ -319,7 +320,7 @@ func TestUsageFrontmatterBackwardCompatible(t *testing.T) {
 	if a.Usage != nil {
 		t.Errorf("legacy article should load with nil usage")
 	}
-	n, _, _, _ := usageTotals([]*model.WikiArticle{a})
+	n, _, _, _ := compile.UsageTotals([]*model.WikiArticle{a})
 	if n != 0 {
 		t.Errorf("no usage → zero articles counted")
 	}

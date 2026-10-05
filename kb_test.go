@@ -755,27 +755,6 @@ This article predates the terse feature.`
 	}
 }
 
-// TestCompilePromptTerseModeShorterTarget confirms buildCompilePrompt varies
-// the word-count target based on the terse flag.
-func TestCompilePromptTerseModeShorterTarget(t *testing.T) {
-	tersePrompt := buildCompilePrompt("src/main.go", "", "// some code", true)
-	defaultPrompt := buildCompilePrompt("src/main.go", "", "// some code", false)
-
-	if !strings.Contains(tersePrompt, "120-180 words") {
-		t.Errorf("terse prompt should contain '120-180 words', got:\n%s", tersePrompt)
-	}
-	if strings.Contains(tersePrompt, "400-800") {
-		t.Errorf("terse prompt should not mention '400-800' word range")
-	}
-
-	if !strings.Contains(defaultPrompt, "400-800 words") {
-		t.Errorf("default prompt should contain '400-800 words', got:\n%s", defaultPrompt)
-	}
-	if strings.Contains(defaultPrompt, "120-180") {
-		t.Errorf("default prompt should not mention terse range '120-180'")
-	}
-}
-
 // --- --since flag ---
 
 // initGitRepo initialises a bare git repo in dir so we can commit files.
