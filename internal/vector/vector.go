@@ -1,5 +1,6 @@
 // Package vector is brute-force dense-vector search: cosine similarity over
-// float32 slices and a flat in-memory Index with JSON persistence, plus
+// float32 slices and a flat in-memory Index with binary persistence
+// (binary.go, what kb writes) and JSON persistence (legacy files), plus
 // LoadFile for a query/embedding vector file ({"vector": [...]} or a bare
 // array). Sufficient for <100k vectors at sub-millisecond query latency.
 // Vectors are supplied externally: kb never embeds text itself. This is the
@@ -25,6 +26,10 @@ type Entry struct {
 // Not thread-safe — caller serializes access (fine for CLI usage).
 type Index struct {
 	Entries []Entry `json:"entries"`
+
+	// norms[i] is sumSquares(Entries[i].Vector), loaded from a binary file;
+	// nil (or stale length) means Search computes norms itself.
+	norms []float64
 }
 
 // Result is a single search hit with its cosine similarity score.
@@ -40,6 +45,7 @@ func New() *Index {
 
 // Add inserts a vector with the given document ID. Overwrites if ID already exists.
 func (idx *Index) Add(id string, vector []float32) {
+	idx.norms = nil
 	for i, e := range idx.Entries {
 		if e.ID == id {
 			idx.Entries[i].Vector = vector
@@ -51,6 +57,7 @@ func (idx *Index) Add(id string, vector []float32) {
 
 // Remove deletes a vector by ID. Returns true if found.
 func (idx *Index) Remove(id string) bool {
+	idx.norms = nil
 	for i, e := range idx.Entries {
 		if e.ID == id {
 			idx.Entries = append(idx.Entries[:i], idx.Entries[i+1:]...)
@@ -73,8 +80,22 @@ func (idx *Index) Search(query []float32, topK int) []Result {
 	}
 	results := make([]scored, 0, len(idx.Entries))
 
-	for _, e := range idx.Entries {
-		s := Cosine(query, e.Vector)
+	// Same float32 bits as Cosine(query, e.Vector): the query's sum of
+	// squares is taken once instead of per row, and a row's comes from the
+	// binary file when loaded from one.
+	normQ := sumSquares(query)
+	norms := idx.norms
+	if len(norms) != len(idx.Entries) {
+		norms = nil
+	}
+	for i, e := range idx.Entries {
+		var normE float64
+		if norms != nil {
+			normE = norms[i]
+		} else {
+			normE = sumSquares(e.Vector)
+		}
+		s := cosineNormed(query, e.Vector, normQ, normE)
 		if s > 0 {
 			results = append(results, scored{id: e.ID, score: s})
 		}
@@ -138,6 +159,21 @@ func Cosine(a, b []float32) float32 {
 		dot += ai * bi
 		normA += ai * ai
 		normB += bi * bi
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return float32(dot / (math.Sqrt(normA) * math.Sqrt(normB)))
+}
+
+// cosineNormed is Cosine with both sums of squares supplied.
+func cosineNormed(a, b []float32, normA, normB float64) float32 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
 	}
 	if normA == 0 || normB == 0 {
 		return 0

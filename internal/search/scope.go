@@ -2,7 +2,8 @@
 // proves the index fresh (fresh.go), scoring reads only the query terms'
 // postings plus the per-doc metadata in the doc table, and only the ranked
 // top-k articles are read from disk. This is the `kb search` / MCP kb_search
-// path for one scope; multi-scope searches still list every article.
+// path for one scope, and the BM25 side of hybrid search; multi-scope
+// searches still list every article.
 //
 // Invariant: results equal BM25WithIndex over store.ListArticles, ids AND
 // scores — full-scope searches use the postings arithmetic, --exclude-tags
@@ -16,6 +17,7 @@ import (
 	"math"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,11 +38,21 @@ type scoredDoc struct {
 // nil. Returns nil when the scope has no wiki/ or no parseable article — and
 // then writes nothing, so a search never creates a scope.
 func FreshIndex(scope string, cached *Index) (si *Index, listed []*model.WikiArticle) {
+	si, listed, _ = freshIndex(scope, cached)
+	return si, listed
+}
+
+// freshIndex is FreshIndex that also reports why wiki/ could not be listed
+// (a missing wiki/ is not an error), as store.ListArticles would.
+func freshIndex(scope string, cached *Index) (si *Index, listed []*model.WikiArticle, err error) {
 	dir := wikiDir(scope)
 	now := time.Now()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, nil
+		if os.IsNotExist(err) {
+			err = nil
+		}
+		return nil, nil, err
 	}
 	hasMarkdown := false
 	for _, e := range entries {
@@ -50,7 +62,7 @@ func FreshIndex(scope string, cached *Index) (si *Index, listed []*model.WikiArt
 		}
 	}
 	if !hasMarkdown {
-		return nil, nil
+		return nil, nil, nil
 	}
 	candidates := []func() *Index{
 		func() *Index { return cached },
@@ -68,7 +80,7 @@ func FreshIndex(scope string, cached *Index) (si *Index, listed []*model.WikiArt
 					_ = writeFileAtomic(IndexPath(scope), data)
 				}
 			}
-			return cand, nil
+			return cand, nil, nil
 		}
 	}
 
@@ -77,12 +89,21 @@ func FreshIndex(scope string, cached *Index) (si *Index, listed []*model.WikiArt
 	snap := snapshotWiki(dir, entries, now)
 	listed, err = store.ListArticles(scope)
 	if err != nil || len(listed) == 0 {
-		return nil, nil
+		return nil, nil, err
 	}
 	si = BuildIndex(listed)
 	si.stamps, si.ignored = assignStamps(snap, si.DocIDs)
 	_ = SaveIndex(scope, si)
-	return si, listed
+	return si, listed, nil
+}
+
+// docIndex returns id's position in a fresh (ascending-id) index, or -1.
+func (si *Index) docIndex(id string) int {
+	i := sort.SearchStrings(si.DocIDs, id)
+	if i < len(si.DocIDs) && si.DocIDs[i] == id {
+		return i
+	}
+	return -1
 }
 
 // SearchScope is `kb search` over one scope: BM25 from a fresh index (cached
