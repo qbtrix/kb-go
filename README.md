@@ -307,6 +307,18 @@ Cache works across both modes. Run `prepare` again and unchanged files are skipp
 CONTEXT=$(kb search "authentication flow" --scope myapp --context)
 ```
 
+Each hit becomes a `## <Title>` block, and blocks are joined by a `---` line. An article that fits the per-article budget comes back whole. A longer one is cut down to the sections that match the query (kept in document order, with their headings, `…` where text was skipped). Tables are never split mid-row. Budgets are in bytes:
+
+- `--context-chars N`: per-article budget (default 4000)
+- `--context-total N`: total budget (default 8000). The top hit is trimmed to fit, never dropped.
+
+Article bodies can contain their own `---` rules, so splitting the text output on the separator is fragile. Add `--json` to get the same excerpts as an array:
+
+```bash
+kb search "shoe sizes" --scope shop --context --json
+# [{"id": "size-guide", "title": "Size Guide", "text": "<excerpt, no title line>", "truncated": false}]
+```
+
 `--json` on every command for machine consumption:
 
 ```bash

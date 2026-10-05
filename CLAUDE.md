@@ -25,6 +25,7 @@ kb build <path> --scope <name> --pattern "*.go,*.py,*.ts"
 kb prepare <path> --scope <name> --pattern "*.go"   # Agent mode: output prompts
 kb accept --scope <name>                             # Agent mode: read compiled articles from stdin
 kb search <query> --scope <name>
+kb search <query> --scope <name> --context [--context-chars 4000] [--context-total 8000] [--json]  # prompt-ready excerpts
 kb ingest [file] --scope <name>                      # Fails loudly (exit 1) if LLM compile fails: raw doc kept, NO article
 kb ingest [file] --scope <name> --allow-fallback     # Old behavior: store raw text verbatim as the article
 kb ingest --article-json --scope <name>              # Read {"raw_text","article"} from stdin — caller supplies the compiled article, no API key
@@ -52,6 +53,7 @@ kb clear --scope <name>
 - Parallel LLM compilation (5 concurrent goroutines, configurable via --concurrency)
 - AST parsing: Go via go/ast (stdlib), Python via regex, TypeScript/JS via regex
 - BM25 search with title (3x), concept (2x), and glossary exact-Term/Alias (10x) boosting, scored from a versioned inverted index (`cache/search_index.json`, `{"v":2, postings: term -> [(docIdx, tf)]}`); old-format index files are ignored and search falls back to tokenize-on-the-fly until the next index write upgrades them
+- `search --context`: each hit is `## Title\n` + the whole body if it fits `--context-chars` (default 4000 bytes), else a query-focused excerpt (`contextExcerpt`: sections split at headings, BM25 over the article's own sections, heading terms 3x, chosen sections in document order with `…` for gaps, tables/lists never cut mid-row). Never summary-only. Blocks joined by `\n\n---\n\n` up to `--context-total` (default 8000); the top hit is trimmed, never dropped. Add `--json` for `[{"id","title","text","truncated"}]`, which avoids mis-splitting bodies that contain a `---` rule
 - Glossary articles: files under any `glossary/` directory skip LLM compilation and round-trip verbatim
 - Loud-fail ingest: a failed LLM compile keeps the raw doc, writes NO article, and exits 1 (a silent verbatim fallback poisons search — proven on a 4M-word scope). `--allow-fallback` opts back into verbatim storage; `--article-json` accepts an externally compiled article on stdin (no `ANTHROPIC_API_KEY`); ingest `--json` output reports `compiled_with`
 - `--json` flag for machine-readable output on all commands
