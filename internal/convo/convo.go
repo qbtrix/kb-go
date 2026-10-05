@@ -1,10 +1,9 @@
-// Conversation mode library: parses transcripts (JSON array, JSONL, plain
-// "Speaker: message" text), extracts entities, decisions and preferences with
-// deterministic patterns (no LLM), clusters turns into topics by entity overlap,
-// and generates one wiki article per topic. The `kb convo` commands live in
-// cmd_convo.go.
-
-package main
+// Package convo is kb's conversation mode: it parses transcripts (JSON
+// array, JSONL, plain "Speaker: message" text), extracts entities, decisions
+// and preferences with deterministic patterns (no LLM), clusters turns into
+// topics by entity overlap, and generates one wiki article per topic. The
+// `kb convo` commands live in the CLI.
+package convo
 
 import (
 	"crypto/sha256"
@@ -22,30 +21,30 @@ import (
 
 // --- Data models ---
 
-// ConvoTurn is a single turn in a conversation.
-type ConvoTurn struct {
+// Turn is a single turn in a conversation.
+type Turn struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 	Index   int    `json:"index"`
 }
 
-// ConvoSession is a parsed conversation with extracted metadata.
-type ConvoSession struct {
-	ID       string      `json:"id"`
-	Source   string      `json:"source"`
-	Turns    []ConvoTurn `json:"turns"`
-	ParsedAt string      `json:"parsed_at"`
+// Session is a parsed conversation with extracted metadata.
+type Session struct {
+	ID       string `json:"id"`
+	Source   string `json:"source"`
+	Turns    []Turn `json:"turns"`
+	ParsedAt string `json:"parsed_at"`
 }
 
-// ExtractedEntity is a named entity found in conversation text.
-type ExtractedEntity struct {
+// Entity is a named entity found in conversation text.
+type Entity struct {
 	Name  string `json:"name"`
 	Type  string `json:"type"` // person, technology, project, organization, unknown
 	Count int    `json:"count"`
 }
 
-// ExtractedDecision is a decision or preference found in text.
-type ExtractedDecision struct {
+// Decision is a decision or preference found in text.
+type Decision struct {
 	Text      string `json:"text"`
 	Type      string `json:"type"` // decision, preference, event
 	TurnIndex int    `json:"turn_index"`
@@ -61,11 +60,11 @@ type TopicCluster struct {
 
 // --- Transcript parsing ---
 
-// parseTranscript auto-detects format and parses into turns.
-func parseTranscript(data []byte, source string) (*ConvoSession, error) {
+// ParseTranscript auto-detects format and parses into turns.
+func ParseTranscript(data []byte, source string) (*Session, error) {
 	text := strings.TrimSpace(string(data))
 
-	var turns []ConvoTurn
+	var turns []Turn
 
 	// Try JSON array first
 	if strings.HasPrefix(text, "[") {
@@ -91,7 +90,7 @@ func parseTranscript(data []byte, source string) (*ConvoSession, error) {
 				if role == "" || content == "" {
 					continue
 				}
-				turns = append(turns, ConvoTurn{Role: normalizeRole(role), Content: content, Index: i})
+				turns = append(turns, Turn{Role: normalizeRole(role), Content: content, Index: i})
 			}
 			if len(turns) > 0 {
 				return makeSession(turns, source), nil
@@ -112,7 +111,7 @@ func parseTranscript(data []byte, source string) (*ConvoSession, error) {
 				Content string `json:"content"`
 			}
 			if err := json.Unmarshal([]byte(line), &m); err == nil && m.Role != "" && m.Content != "" {
-				turns = append(turns, ConvoTurn{Role: normalizeRole(m.Role), Content: m.Content, Index: i})
+				turns = append(turns, Turn{Role: normalizeRole(m.Role), Content: m.Content, Index: i})
 			}
 		}
 		if len(turns) > 0 {
@@ -131,15 +130,15 @@ func parseTranscript(data []byte, source string) (*ConvoSession, error) {
 
 var plainTextRoleRe = regexp.MustCompile(`(?i)^(user|assistant|human|ai|system|claude|gpt|bot|agent|you|me)\s*:\s*`)
 
-func parsePlainText(text string) []ConvoTurn {
-	var turns []ConvoTurn
+func parsePlainText(text string) []Turn {
+	var turns []Turn
 	var currentRole string
 	var currentContent strings.Builder
 	idx := 0
 
 	flush := func() {
 		if currentRole != "" && currentContent.Len() > 0 {
-			turns = append(turns, ConvoTurn{
+			turns = append(turns, Turn{
 				Role:    normalizeRole(currentRole),
 				Content: strings.TrimSpace(currentContent.String()),
 				Index:   idx,
@@ -179,7 +178,7 @@ func normalizeRole(role string) string {
 	}
 }
 
-func makeSession(turns []ConvoTurn, source string) *ConvoSession {
+func makeSession(turns []Turn, source string) *Session {
 	// Content-based hash so ingesting the same file twice is idempotent.
 	var buf strings.Builder
 	for _, t := range turns {
@@ -187,7 +186,7 @@ func makeSession(turns []ConvoTurn, source string) *ConvoSession {
 		buf.WriteString(t.Content)
 	}
 	h := sha256.Sum256([]byte(buf.String()))
-	return &ConvoSession{
+	return &Session{
 		ID:       fmt.Sprintf("convo-%x", h[:8]),
 		Source:   source,
 		Turns:    turns,
@@ -243,8 +242,8 @@ var commonWords = map[string]bool{
 	"thanks": true, "great": true, "right": true, "nice": true, "good": true,
 }
 
-// extractEntities finds named entities in text using heuristics.
-func extractEntities(text string) []ExtractedEntity {
+// ExtractEntities finds named entities in text using heuristics.
+func ExtractEntities(text string) []Entity {
 	counts := map[string]string{} // name -> type
 	freq := map[string]int{}
 
@@ -311,9 +310,9 @@ func extractEntities(text string) []ExtractedEntity {
 		}
 	}
 
-	var entities []ExtractedEntity
+	var entities []Entity
 	for name, typ := range counts {
-		entities = append(entities, ExtractedEntity{Name: name, Type: typ, Count: freq[name]})
+		entities = append(entities, Entity{Name: name, Type: typ, Count: freq[name]})
 	}
 	sort.Slice(entities, func(i, j int) bool { return entities[i].Count > entities[j].Count })
 	return entities
@@ -382,8 +381,8 @@ var eventPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(yesterday|today|last (week|month|sprint)|this (morning|afternoon))\b`),
 }
 
-func extractDecisions(turns []ConvoTurn) []ExtractedDecision {
-	var decisions []ExtractedDecision
+func ExtractDecisions(turns []Turn) []Decision {
+	var decisions []Decision
 	for _, turn := range turns {
 		if turn.Role != "user" {
 			continue // Decisions come from the user, not the assistant
@@ -392,7 +391,7 @@ func extractDecisions(turns []ConvoTurn) []ExtractedDecision {
 		for _, sent := range sentences {
 			for _, pat := range decisionPatterns {
 				if pat.MatchString(sent) {
-					decisions = append(decisions, ExtractedDecision{
+					decisions = append(decisions, Decision{
 						Text: strings.TrimSpace(sent), Type: "decision", TurnIndex: turn.Index,
 					})
 					break
@@ -400,7 +399,7 @@ func extractDecisions(turns []ConvoTurn) []ExtractedDecision {
 			}
 			for _, pat := range preferencePatterns {
 				if pat.MatchString(sent) {
-					decisions = append(decisions, ExtractedDecision{
+					decisions = append(decisions, Decision{
 						Text: strings.TrimSpace(sent), Type: "preference", TurnIndex: turn.Index,
 					})
 					break
@@ -408,7 +407,7 @@ func extractDecisions(turns []ConvoTurn) []ExtractedDecision {
 			}
 			for _, pat := range eventPatterns {
 				if pat.MatchString(sent) {
-					decisions = append(decisions, ExtractedDecision{
+					decisions = append(decisions, Decision{
 						Text: strings.TrimSpace(sent), Type: "event", TurnIndex: turn.Index,
 					})
 					break
@@ -436,11 +435,11 @@ func splitSentences(text string) []string {
 
 // --- Topic clustering (entity overlap) ---
 
-func clusterTopics(session *ConvoSession) []TopicCluster {
+func ClusterTopics(session *Session) []TopicCluster {
 	// Extract entities per turn
 	turnEntities := make([]map[string]bool, len(session.Turns))
 	for i, turn := range session.Turns {
-		entities := extractEntities(turn.Content)
+		entities := ExtractEntities(turn.Content)
 		m := map[string]bool{}
 		for _, e := range entities {
 			m[strings.ToLower(e.Name)] = true
@@ -564,11 +563,11 @@ func setsOverlap(a, b map[string]bool) bool {
 
 // --- Article generation from conversation ---
 
-func generateConvoArticles(session *ConvoSession, clusters []TopicCluster, decisions []ExtractedDecision) []*model.WikiArticle {
+func GenerateArticles(session *Session, clusters []TopicCluster, decisions []Decision) []*model.WikiArticle {
 	var articles []*model.WikiArticle
 
 	// Build a decision lookup by turn index
-	decByTurn := map[int][]ExtractedDecision{}
+	decByTurn := map[int][]Decision{}
 	for _, d := range decisions {
 		decByTurn[d.TurnIndex] = append(decByTurn[d.TurnIndex], d)
 	}
@@ -591,7 +590,7 @@ func generateConvoArticles(session *ConvoSession, clusters []TopicCluster, decis
 		}
 
 		// Extracted decisions for this cluster
-		var clusterDecisions []ExtractedDecision
+		var clusterDecisions []Decision
 		for _, idx := range cluster.TurnIdxs {
 			clusterDecisions = append(clusterDecisions, decByTurn[idx]...)
 		}
