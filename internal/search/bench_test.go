@@ -1,7 +1,8 @@
 // Search benchmarks: Tokenize, BM25 over a synthetic corpus, the inverted-index
 // fast path vs tokenize-on-the-fly on a large corpus (50 docs x 50k words),
 // store.RebuildIndex over the same synthetic corpus, one CLI search process
-// over a 385-article scope on disk (BenchmarkSearchCLIPath), and BuildIndex.
+// over a 385-article scope on disk (BenchmarkSearchCLIPath) and its hybrid
+// twin with a 385 x 1024 vector index (BenchmarkHybridCLIPath), and BuildIndex.
 // Run: go test -bench=. -benchmem ./internal/search
 
 package search
@@ -18,6 +19,7 @@ import (
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
+	"github.com/qbtrix/kb-go/internal/vector"
 )
 
 // generateCorpus creates n synthetic WikiArticles with realistic content.
@@ -206,5 +208,36 @@ func BenchmarkBuildIndex(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		BuildIndex(corpus)
+	}
+}
+
+// BenchmarkHybridCLIPath simulates one `kb search --hybrid` process: the
+// BM25 side from the persisted index, a 385 x 1024 vector index loaded from
+// disk, RRF, and the fused top 10 loaded.
+func BenchmarkHybridCLIPath(b *testing.B) {
+	scope := seedCLIBenchScope(b)
+	r := rand.New(rand.NewSource(5))
+	all, _ := store.ListArticles(scope)
+	vidx := vector.New()
+	for _, a := range all {
+		v := make([]float32, 1024)
+		for j := range v {
+			v[j] = float32(r.NormFloat64())
+		}
+		vidx.Add(a.ID, v)
+	}
+	if err := store.SaveVectors(scope, vidx); err != nil {
+		b.Fatal(err)
+	}
+	q := make([]float32, 1024)
+	for j := range q {
+		q[j] = float32(r.NormFloat64())
+	}
+	qs := []string{"async database", "middleware routing", "cache queue handler", "encrypted storage"}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if hits, err := HybridSearch(scope, qs[i%len(qs)], q, 10); err != nil || len(hits) == 0 {
+			b.Fatal("no hits", err)
+		}
 	}
 }

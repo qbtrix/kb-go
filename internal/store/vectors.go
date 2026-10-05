@@ -1,5 +1,6 @@
-// Vector-index persistence for a scope: the per-scope vectors.json path,
-// load-or-create and save, the vector count for stats, attaching an
+// Vector-index persistence for a scope: the per-scope vectors.bin (binary,
+// vector/binary.go) with the legacy vectors.json read as a fallback and
+// removed by the next save, load-or-create and save, the vector count for stats, attaching an
 // externally computed embedding to an existing article (`kb ingest --vec`), and
 // the contained-path vector loader the MCP server uses (agent-supplied paths
 // must stay inside the knowledge base, issue #23).
@@ -19,14 +20,28 @@ import (
 // Mirrors the storage layout used by raw/ and wiki/ — both are subdirs under
 // ~/.knowledge-base/{scope}/, the vector index is a flat sibling file.
 func VectorIndexPath(scope string) string {
+	return filepath.Join(ScopeDir(scope), "vectors.bin")
+}
+
+// legacyVectorPath is the JSON vector index kb wrote before vectors.bin.
+func legacyVectorPath(scope string) string {
 	return filepath.Join(ScopeDir(scope), "vectors.json")
 }
 
-// LoadVectors returns the on-disk index for the scope, or a fresh
-// empty one if the file doesn't exist yet. Errors only on actual I/O / parse
-// failures — a missing file is the expected first-write case.
+// LoadVectors returns the on-disk index for the scope: vectors.bin, else a
+// legacy vectors.json, else a fresh empty index. Errors only on actual I/O /
+// parse failures — a missing file is the expected first-write case. A corrupt
+// vectors.bin is an error, never an empty index: the next write would
+// otherwise drop every stored vector.
 func LoadVectors(scope string) (*vector.Index, error) {
-	path := VectorIndexPath(scope)
+	idx, err := vector.LoadBinary(VectorIndexPath(scope))
+	if err == nil {
+		return idx, nil
+	}
+	if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("%s: %w", filepath.Base(VectorIndexPath(scope)), err)
+	}
+	path := legacyVectorPath(scope)
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return vector.New(), nil
@@ -36,14 +51,21 @@ func LoadVectors(scope string) (*vector.Index, error) {
 	return vector.Load(path)
 }
 
-// SaveVectors persists the vector index to ~/.knowledge-base/{scope}/vectors.json.
-// Creates the parent directory if missing (matches EnsureDirs idiom for raw/, wiki/).
+// SaveVectors persists the vector index to ~/.knowledge-base/{scope}/vectors.bin
+// and removes a legacy vectors.json (the migration: its vectors were loaded
+// into idx). Creates the parent directory if missing (matches EnsureDirs idiom
+// for raw/, wiki/).
 func SaveVectors(scope string, idx *vector.Index) error {
 	path := VectorIndexPath(scope)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return idx.Save(path)
+	if err := idx.SaveBinary(path); err != nil {
+		return err
+	}
+	// Best-effort: vectors.bin wins over a leftover JSON on every load.
+	_ = os.Remove(legacyVectorPath(scope))
+	return nil
 }
 
 // LoadContainedVector is the agent-reachable variant of

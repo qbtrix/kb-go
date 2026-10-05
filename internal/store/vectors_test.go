@@ -1,5 +1,7 @@
 // Tests for per-scope vector persistence: load-or-create on first use, the
-// vectors.json path surviving across invocations, AttachVector's validation
+// vectors.bin path surviving across invocations, a legacy vectors.json read as
+// a fallback and migrated by the next write, corrupt files reported as errors
+// (never as an empty index a write would then persist), AttachVector's validation
 // (empty id, missing article) and happy path, and VectorCount.
 
 package store
@@ -103,9 +105,9 @@ func TestVectorIndexPath_PersistsAcrossInvocations(t *testing.T) {
 	// vector survived. We never touch the in-memory idx from the first call.
 	indexPath := VectorIndexPath(scope)
 	if _, err := os.Stat(indexPath); err != nil {
-		t.Fatalf("vectors.json should exist on disk: %v", err)
+		t.Fatalf("vectors.bin should exist on disk: %v", err)
 	}
-	loaded, err := vector.Load(indexPath)
+	loaded, err := vector.LoadBinary(indexPath)
 	if err != nil {
 		t.Fatalf("LoadVectorIndex: %v", err)
 	}
@@ -117,6 +119,80 @@ func TestVectorIndexPath_PersistsAcrossInvocations(t *testing.T) {
 	}
 	if len(loaded.Entries[0].Vector) != 3 {
 		t.Errorf("vector dim: want 3, got %d", len(loaded.Entries[0].Vector))
+	}
+}
+
+func TestLegacyVectorsJSONMigratesToBinary(t *testing.T) {
+	dir, scope := vectorTestEnv(t, "migrate")
+	stubArticle(t, scope, "a", "A", "s", "body")
+	stubArticle(t, scope, "b", "B", "s", "body")
+	legacy := vector.New()
+	legacy.Add("a", []float32{0.25, -1.5, 3})
+	jsonPath := filepath.Join(ScopeDir(scope), "vectors.json")
+	if err := legacy.Save(jsonPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read path: the JSON file is the fallback while no .bin exists.
+	idx, err := LoadVectors(scope)
+	if err != nil || idx.Len() != 1 || idx.Entries[0].ID != "a" {
+		t.Fatalf("legacy vectors.json not loaded: %v %+v", err, idx)
+	}
+	if VectorCount(scope) != 1 {
+		t.Fatal("VectorCount ignored the legacy file")
+	}
+
+	// The next vector write (kb ingest --vec) migrates it.
+	vecPath := kbtest.WriteVecJSON(t, dir, "vb.json", []float32{1, 2, 3}, "array")
+	if _, total, err := AttachVector(scope, "b", vecPath); err != nil || total != 2 {
+		t.Fatalf("attach: total=%d err=%v", total, err)
+	}
+	if _, err := os.Stat(jsonPath); !os.IsNotExist(err) {
+		t.Fatalf("vectors.json left behind after the migration (err=%v)", err)
+	}
+	got, err := vector.LoadBinary(VectorIndexPath(scope))
+	if err != nil || got.Len() != 2 || got.Entries[0].ID != "a" || got.Entries[1].ID != "b" {
+		t.Fatalf("migrated vectors.bin: %v %+v", err, got)
+	}
+	for i, x := range []float32{0.25, -1.5, 3} {
+		if got.Entries[0].Vector[i] != x {
+			t.Fatalf("migrated vector changed: %v", got.Entries[0].Vector)
+		}
+	}
+}
+
+func TestCorruptVectorFilesError(t *testing.T) {
+	_, scope := vectorTestEnv(t, "corrupt")
+	jsonPath := filepath.Join(ScopeDir(scope), "vectors.json")
+
+	// Corrupt legacy JSON: an error, as it always was.
+	os.WriteFile(jsonPath, []byte("{corrupt"), 0o644)
+	if _, err := LoadVectors(scope); err == nil {
+		t.Fatal("corrupt vectors.json loaded")
+	}
+
+	// Corrupt or truncated .bin: an error even with a valid JSON beside it
+	// (the stale JSON must not resurrect), never an empty index.
+	good := vector.New()
+	good.Add("a", []float32{1, 2})
+	good.Save(jsonPath)
+	idx := vector.New()
+	idx.Add("a", []float32{1, 2})
+	idx.Add("b", []float32{3, 4})
+	data, _ := idx.MarshalBinary()
+	for name, bad := range map[string][]byte{
+		"truncated": data[:len(data)-3],
+		"flipped":   append(append([]byte(nil), data[:30]...), append([]byte{data[30] ^ 1}, data[31:]...)...),
+		"empty":     {},
+		"json":      []byte(`{"entries":[]}`),
+	} {
+		os.WriteFile(VectorIndexPath(scope), bad, 0o644)
+		if got, err := LoadVectors(scope); err == nil {
+			t.Fatalf("%s vectors.bin loaded as %d entries", name, got.Len())
+		}
+		if VectorCount(scope) != 0 {
+			t.Fatalf("%s: VectorCount should report 0 for an unreadable index", name)
+		}
 	}
 }
 

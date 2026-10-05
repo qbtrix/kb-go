@@ -115,16 +115,16 @@ func VectorSearch(scope string, queryVec []float32, topK int) ([]Hit, error) {
 // does not re-score with raw values, so the BM25 and cosine numbers don't
 // have to be on the same scale.
 //
-// articlesByID lets us materialize the fused ID order back into article
-// pointers without re-listing on each lookup. Articles missing from the
-// listing are skipped (orphan vectors, mid-query deletions).
+// The BM25 side ranks from the self-healing search index (FreshIndex, the same
+// path as a single-scope `kb search`), so no article is read to rank. Only the
+// fused top-k are materialized; an id the index does not hold (orphan vector,
+// mid-query deletion) is skipped exactly as before.
 func HybridSearch(scope string, queryText string, queryVec []float32, topK int) ([]Hit, error) {
 	// BM25 side — same code path as the existing search.
-	allArticles, err := store.ListArticles(scope)
+	si, listed, err := freshIndex(scope, nil)
 	if err != nil {
 		return nil, fmt.Errorf("list articles: %w", err)
 	}
-	si := LoadIndex(scope)
 	// For RRF we want a deeper BM25 list than topK so low-vec-ranked items
 	// have a chance to surface via fusion. 4*topK is a coarse heuristic; the
 	// CLI doesn't expose a fusion-depth flag yet (see future-upgrades).
@@ -132,10 +132,11 @@ func HybridSearch(scope string, queryText string, queryVec []float32, topK int) 
 	if bm25Depth < 20 {
 		bm25Depth = 20
 	}
-	bm25Articles := BM25WithIndex(allArticles, queryText, bm25Depth, si)
-	bm25IDs := make([]string, len(bm25Articles))
-	for i, a := range bm25Articles {
-		bm25IDs[i] = a.ID
+	var bm25IDs []string
+	if si != nil {
+		for _, r := range scoreIndex(si, queryText, bm25Depth, "") {
+			bm25IDs = append(bm25IDs, si.DocIDs[r.doc])
+		}
 	}
 
 	// Vector side.
@@ -153,12 +154,6 @@ func HybridSearch(scope string, queryText string, queryVec []float32, topK int) 
 		vecIDs[i] = h.ID
 	}
 
-	// Build an article lookup so RRF output can be materialized cheaply.
-	articlesByID := make(map[string]*model.WikiArticle, len(allArticles))
-	for _, a := range allArticles {
-		articlesByID[a.ID] = a
-	}
-
 	fusedIDs, fusedScores, bm25RankByID, vecRankByID := rrfFuse(bm25IDs, vecIDs)
 
 	out := make([]Hit, 0, len(fusedIDs))
@@ -166,9 +161,16 @@ func HybridSearch(scope string, queryText string, queryVec []float32, topK int) 
 		if topK > 0 && fusedRank >= topK {
 			break
 		}
-		a, ok := articlesByID[id]
-		if !ok {
+		if si == nil {
+			continue
+		}
+		doc := si.docIndex(id)
+		if doc < 0 {
 			// Vector points at a deleted article. Skip without polluting output.
+			continue
+		}
+		hits := loadHits(scope, si, listed, []scoredDoc{{doc: doc}})
+		if len(hits) == 0 {
 			continue
 		}
 		bm25Rank, ok1 := bm25RankByID[id]
@@ -180,7 +182,7 @@ func HybridSearch(scope string, queryText string, queryVec []float32, topK int) 
 			vecRank = -1
 		}
 		out = append(out, Hit{
-			Article:   a,
+			Article:   hits[0],
 			Score:     fusedScores[fusedRank],
 			BM25Rank:  bm25Rank,
 			VecRank:   vecRank,
