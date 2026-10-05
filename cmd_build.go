@@ -123,7 +123,7 @@ func runBuild(args []string) int {
 	// no compiler. Glossary-only and fully cached builds need none.
 	for _, j := range jobs {
 		if !isGlossarySource(j.relPath) {
-			requireCompiler(spec, "build", "Or compile in your own agent: `kb prepare` emits the prompts, `kb accept` stores the articles.")
+			requireCompiler(spec, "build", "Compile in your own agent: `kb prepare` emits the prompts, `kb accept` stores the articles.")
 			break
 		}
 	}

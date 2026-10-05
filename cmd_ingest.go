@@ -48,7 +48,7 @@ func cmdIngest(args []string) {
 	}
 
 	if !allowFallback {
-		requireCompiler(spec, "ingest", "Or pipe an already compiled article to `kb ingest --article-json`, or pass\n  --allow-fallback to store the text verbatim without compiling.")
+		requireCompiler(spec, "ingest", "Pipe an already compiled article to `kb ingest --article-json`, or pass\n     --allow-fallback to store the text verbatim without compiling.")
 	}
 
 	ensureDirs(scope)
