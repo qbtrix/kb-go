@@ -1,115 +1,144 @@
-// porter_test.go — Tests for the vendored Porter stemmer.
+// porter_test.go — Tests for stem (Porter step 1: plurals and -ed/-ing).
 //
 // Three layers:
-//   1. TestPorterStem_Canonical — hand-verified word->stem pairs spanning every
-//      step of Porter's reference algorithm, guarding against a porting bug.
-//   2. TestPorterStem_Guards / _Idempotent — the conservative guards
-//      (<=2 letters, non-alpha tokens) and stem(stem(x))==stem(x).
-//   3. TestPorterStem_MorphologicalFamilies + the BM25 retrieval tests below —
-//      the actual recall fix: morphological variants collapse to one stem, and
-//      an over-stem false positive we worried about does NOT happen.
+//   1. TestStem_Canonical — hand-traced word->stem pairs through steps 1a, 1b
+//      and 1c, guarding against a porting bug, and proof that steps 2-5 no
+//      longer run (relational, adjustable, cease keep their suffixes).
+//   2. TestStem_Guards / _Idempotent — the conservative guards (<=2 letters,
+//      non-alpha tokens) and stem(stem(x))==stem(x).
+//   3. TestStem_WantedConflations / _NoOverConflation — the retrieval
+//      contract: inflections of one word share a stem, and the derivational
+//      merges full Porter made (generating/general, use/us) do not happen.
 
 package search
 
 import "testing"
 
-func TestPorterStem_Canonical(t *testing.T) {
-	// Every pair below was traced through the full algorithm (all 5 steps),
-	// not just the single step that Porter's paper uses to illustrate a rule
-	// (paper examples like "agreed->agree" are per-step and reduce further).
+func TestStem_Canonical(t *testing.T) {
 	cases := map[string]string{
-		"caresses":  "caress",
-		"ponies":    "poni",
-		"ties":      "ti",
-		"caress":    "caress",
-		"cats":      "cat",
-		"cat":       "cat",
-		"feed":      "feed",
-		"sing":      "sing",
-		"hopping":   "hop",
-		"tanned":    "tan",
-		"falling":   "fall",
-		"hissing":   "hiss",
-		"happy":     "happi",
-		"sky":       "sky",
-		"rate":      "rate",
-		"roll":      "roll",
-		"controll":  "control",
-		"cease":     "ceas",
-		"probate":   "probat",
-		"plastered": "plaster",
-		"motoring":  "motor",
+		// 1a: plurals
+		"caresses": "caress",
+		"ponies":   "poni",
+		"ties":     "ti",
+		"caress":   "caress",
+		"cats":     "cat",
+		"cat":      "cat",
+		// 1b: -eed/-ed/-ing, with the at/bl/iz, double-consonant and cvc fix-ups
+		"feed":       "feed",
+		"agreed":     "agree",
+		"sing":       "sing",
+		"plastered":  "plaster",
+		"motoring":   "motor",
+		"conflated":  "conflate",
+		"troubled":   "trouble",
+		"sized":      "size",
+		"hopping":    "hop",
+		"tanned":     "tan",
+		"falling":    "fall",
+		"hissing":    "hiss",
+		"fizzed":     "fizz",
+		"failing":    "fail",
+		"filing":     "file",
+		"generating": "generate",
+		// 1c: y -> i when the stem has a vowel
+		"happy": "happi",
+		"sky":   "sky",
+		// steps 2-5 are gone: derivational suffixes and final e survive
+		"relational": "relational",
+		"adjustable": "adjustable",
+		"general":    "general",
+		"experiment": "experiment",
+		"cease":      "cease",
+		"rate":       "rate",
+		"controll":   "controll",
 	}
 	for in, want := range cases {
-		if got := porterStem(in); got != want {
-			t.Errorf("porterStem(%q) = %q, want %q", in, got, want)
+		if got := stem(in); got != want {
+			t.Errorf("stem(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
 
-func TestPorterStem_Guards(t *testing.T) {
-	// Words <= 2 letters are never stemmed (Porter's documented DEPARTURE), so
-	// stopword-ish short tokens like "is"/"as" survive intact.
-	for _, w := range []string{"is", "as", "be", "a", "i", "of", "to"} {
-		if got := porterStem(w); got != w {
-			t.Errorf("porterStem(%q) = %q, want unchanged (<=2 letters)", w, got)
+func TestStem_Guards(t *testing.T) {
+	// Words <= 2 letters are never stemmed, so short tokens like "is"/"as"
+	// survive intact.
+	for _, w := range []string{"is", "as", "be", "a", "i", "of", "to", "on", "us"} {
+		if got := stem(w); got != w {
+			t.Errorf("stem(%q) = %q, want unchanged (<=2 letters)", w, got)
 		}
 	}
 	// Non-lowercase-ASCII tokens (digits, alphanumerics) pass through untouched.
-	for _, w := range []string{"123", "utf8", "s3", "abc123", "v2"} {
-		if got := porterStem(w); got != w {
-			t.Errorf("porterStem(%q) = %q, want unchanged (non-alpha)", w, got)
+	for _, w := range []string{"123", "utf8", "s3", "abc123", "v2", "files2"} {
+		if got := stem(w); got != w {
+			t.Errorf("stem(%q) = %q, want unchanged (non-alpha)", w, got)
 		}
 	}
 }
 
-func TestPorterStem_Idempotent(t *testing.T) {
+func TestStem_Idempotent(t *testing.T) {
 	for _, w := range []string{
-		"opens", "opening", "located", "location", "serving", "authentication",
-		"caresses", "relational", "digitizer", "adjustable", "controll",
+		"opens", "opening", "located", "returning", "shipped", "packages",
+		"caresses", "relational", "happy", "generating", "sizes", "agreed",
 	} {
-		once := porterStem(w)
-		twice := porterStem(once)
+		once := stem(w)
+		twice := stem(once)
 		if once != twice {
-			t.Errorf("porterStem not idempotent: %q -> %q -> %q", w, once, twice)
+			t.Errorf("stem not idempotent: %q -> %q -> %q", w, once, twice)
 		}
 	}
 }
 
-// TestPorterStem_MorphologicalFamilies is the crux of the recall fix: every
-// surface form in a family must reduce to the same stem so that a query in one
-// form retrieves a document written in another.
-func TestPorterStem_MorphologicalFamilies(t *testing.T) {
+// TestStem_WantedConflations: every inflection in a family reduces to the
+// same stem, so a query in one form retrieves a document written in another.
+// These are the shopper-question forms ("returning a jacket", "shipped").
+func TestStem_WantedConflations(t *testing.T) {
 	families := [][]string{
-		{"open", "opens", "opening", "opened"},         // the exact T5 case
-		{"locate", "located", "location", "locations"}, // located <-> location
-		{"serve", "serves", "served", "serving"},       // serves <-> serving
+		{"return", "returns", "returning", "returned"},
+		{"ship", "ships", "shipped", "shipping"},
+		{"open", "opens", "opening", "opened"},
+		{"package", "packages"},
+		{"size", "sizes"},
+		{"locate", "located", "locates"},
+		{"query", "queries"},
+		{"separate", "separated", "separating", "separates"},
 	}
 	for _, fam := range families {
-		want := porterStem(fam[0])
+		want := stem(fam[0])
 		for _, w := range fam {
-			if got := porterStem(w); got != want {
-				t.Errorf("family %v: porterStem(%q) = %q, want %q (same stem as %q)",
+			if got := stem(w); got != want {
+				t.Errorf("family %v: stem(%q) = %q, want %q (same stem as %q)",
 					fam, w, got, want, fam[0])
 			}
 		}
 	}
 }
 
-// TestPorterStem_NoOverStem guards the false positive we worried about: the
-// stemmer is aggressive enough to unify open/opens/opening but must NOT merge
-// "open" with the unrelated "operate/operation/operator" family (they stem to
-// "oper", not "open").
-func TestPorterStem_NoOverStem(t *testing.T) {
-	if porterStem("open") == porterStem("operator") {
-		t.Errorf("over-stem: %q and %q collapsed to the same stem %q",
-			"open", "operator", porterStem("open"))
+// TestStem_NoOverConflation pins the merges full Porter made and step 1 must
+// not: derivational suffix stripping (-al, -ment/-ence, -ate) and final-e
+// removal collapsed unrelated words into one stem, inflating document
+// frequency and firing the title boost on lemmas.
+func TestStem_NoOverConflation(t *testing.T) {
+	pairs := [][2]string{
+		{"generating", "general"},
+		{"generate", "general"},
+		{"experiment", "experience"},
+		{"one", "on"},
+		{"ones", "on"},
+		{"use", "us"},
+		{"open", "operator"},
+		{"operate", "operator"},
+		{"location", "locate"}, // nouns keep -ion: step 1 does not touch derivation
 	}
-	// The operate family should still be internally consistent.
-	oper := porterStem("operate")
-	for _, w := range []string{"operates", "operation", "operator", "operating"} {
-		if got := porterStem(w); got != oper {
-			t.Errorf("porterStem(%q) = %q, want %q (operate family)", w, got, oper)
+	for _, p := range pairs {
+		if a, b := stem(p[0]), stem(p[1]); a == b {
+			t.Errorf("over-conflation: stem(%q) = stem(%q) = %q", p[0], p[1], a)
+		}
+	}
+	// separating stays with separate (an inflection) instead of collapsing to
+	// Porter's "separ", which it shared with "separately", "separation", ...
+	for _, w := range []string{"separately", "separation"} {
+		if stem("separating") == stem(w) {
+			t.Errorf("over-conflation: stem(%q) = stem(%q) = %q", "separating", w, stem(w))
 		}
 	}
 }

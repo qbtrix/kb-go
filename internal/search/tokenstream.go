@@ -1,5 +1,5 @@
 // Streaming tokenizer for index builds: lowercases rune by rune while it scans,
-// splits on non-letter/non-digit runes and Porter-stems each token through a
+// splits on non-letter/non-digit runes and stems each token (porter.go) through a
 // per-build memo, without building a lowered copy of the text or a token
 // slice.
 //
@@ -19,7 +19,7 @@ import (
 )
 
 // tokenStream is one build's tokenizer state: a reusable token buffer and a
-// stem memo (raw lowered token -> Porter stem). Not safe for concurrent use.
+// stem memo (raw lowered token -> stem). Not safe for concurrent use.
 type tokenStream struct {
 	buf   []byte
 	stems map[string]string
@@ -64,13 +64,13 @@ func (ts *tokenStream) each(text string, fn func(tok string)) {
 	ts.buf = buf
 }
 
-// stem returns porterStem(string(raw)), memoized for the build.
+// stem returns stem(string(raw)), memoized for the build.
 func (ts *tokenStream) stem(raw []byte) string {
 	if s, ok := ts.stems[string(raw)]; ok {
 		return s
 	}
 	key := string(raw)
-	s := porterStem(key)
+	s := stem(key)
 	ts.stems[key] = s
 	return s
 }

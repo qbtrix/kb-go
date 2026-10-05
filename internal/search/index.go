@@ -1,10 +1,11 @@
 // Package search is kb's retrieval layer over a scope's wiki articles:
-// Porter-stemmed tokenization, BM25 ranking with title (3x), concept (2x) and
-// glossary exact-Term/Alias (10x) boosts, the persisted inverted index
-// (index.go, binary codec in indexfile.go, wiki freshness in fresh.go), the
-// single-scope search path that ranks from the index alone and loads only the
-// top-k articles (scope.go), `kb search --context` excerpts (context.go), and
-// vector and hybrid (RRF) search over the per-scope vector index (vector.go).
+// stemmed tokenization (Porter step 1, porter.go), BM25 ranking with title
+// (3x), concept (2x) and glossary exact-Term/Alias (10x) boosts, the persisted
+// inverted index (index.go, binary codec in indexfile.go, wiki freshness in
+// fresh.go), the single-scope search path that ranks from the index alone and
+// loads only the top-k articles (scope.go), `kb search --context` excerpts
+// (context.go), and vector and hybrid (RRF) search over the per-scope vector
+// index (vector.go).
 //
 // Invariants:
 //   - The index stores stemmed postings under IndexVersion. Changing Tokenize
@@ -29,11 +30,12 @@ import (
 
 // IndexVersion is bumped whenever the on-disk shape OR the tokens it stores
 // change. v1 was a JSON token dump, v2 a JSON inverted index with raw terms,
-// v3 the same JSON with Porter-stemmed terms (cache/search_index.json), v4 the
-// binary cache/search_index.bin (indexfile.go) that also carries the per-doc
-// metadata search needs (glossary keys, categories, file stamps). Older files
-// are never read; the next index write or search replaces them.
-const IndexVersion = 4
+// v3 the same JSON with full-Porter-stemmed terms (cache/search_index.json), v4
+// the binary cache/search_index.bin (indexfile.go) that also carries the
+// per-doc metadata search needs (glossary keys, categories, file stamps), v5
+// the same binary layout with Porter step-1 terms and glossary keys. Older
+// files are never read; the next index write or search replaces them.
+const IndexVersion = 5
 
 const (
 	indexFileName       = "search_index.bin"
@@ -66,8 +68,8 @@ type Index struct {
 	ConceptTokens [][]string
 
 	glossary   []bool     // Kind == "glossary"
-	termKeys   []string   // porterStem(lower(Term)), glossary docs only
-	aliasKeys  [][]string // porterStem(lower(Alias)), glossary docs only
+	termKeys   []string   // stem(lower(Term)), glossary docs only
+	aliasKeys  [][]string // stem(lower(Alias)), glossary docs only
 	categories [][]string // raw categories, for --exclude-tags
 
 	stamps  []docStamp    // wiki file stamp per doc (nil: not taken yet)
@@ -131,10 +133,10 @@ func BuildIndex(articles []*model.WikiArticle) *Index {
 		si.categories[i] = a.Categories
 		if a.Kind == "glossary" {
 			si.glossary[i] = true
-			si.termKeys[i] = porterStem(strings.ToLower(a.Term))
+			si.termKeys[i] = stem(strings.ToLower(a.Term))
 			keys := make([]string, len(a.Aliases))
 			for k, al := range a.Aliases {
-				keys[k] = porterStem(strings.ToLower(al))
+				keys[k] = stem(strings.ToLower(al))
 			}
 			si.aliasKeys[i] = keys
 		}

@@ -2,6 +2,11 @@
 // full), frozen as it was before the binary index, so parity tests compare
 // the index-only search path against the code it replaced rather than against
 // itself. Returns ids AND scores. Test-only; never called by production code.
+//
+// Tokenization is NOT frozen: the pipeline calls the live Tokenize and stem,
+// the same functions the index uses, so a stemmer change moves both sides
+// equally and the parity tests keep checking the scoring arithmetic (BM25,
+// boosts, ties, filtering) rather than which stemmer is current.
 
 package search
 
@@ -147,10 +152,10 @@ func legacyGlossary(articles []*model.WikiArticle, queryTerms []string, scores [
 			continue
 		}
 		matched := false
-		termLower := porterStem(strings.ToLower(articles[i].Term))
+		termLower := stem(strings.ToLower(articles[i].Term))
 		aliasesLower := make([]string, len(articles[i].Aliases))
 		for k, al := range articles[i].Aliases {
-			aliasesLower[k] = porterStem(strings.ToLower(al))
+			aliasesLower[k] = stem(strings.ToLower(al))
 		}
 		for _, qt := range queryTerms {
 			qLower := strings.ToLower(qt)

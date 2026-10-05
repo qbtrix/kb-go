@@ -583,7 +583,9 @@ The tool flags, it does not resolve. A human decides which definition is canonic
 
 ### Search ranking
 
-`kb search` applies a 10× boost on top of the normal BM25 score whenever a query token exactly matches a glossary article's `Term` or any `Alias` (case-insensitive). Hand-curated definitions outrank module articles that merely mention the term in passing.
+Query and article text are lowercased and stemmed the same way before scoring. The stemmer only undoes inflection (step 1 of the Porter stemmer: plurals and -ed/-ing), so "open" matches "opens" and "opening", and "returning" matches "returns", while "general" and "generating" stay distinct.
+
+`kb search` applies a 10× boost on top of the normal BM25 score whenever a query token matches a glossary article's `Term` or any `Alias` (case-insensitive, after the same stemming, so the plural Term "Connectors" fires on "connector"). Hand-curated definitions outrank module articles that merely mention the term in passing.
 
 ## Pairing with Soul Protocol
 
@@ -735,7 +737,7 @@ BM25 inverted index (versioned postings: term → (doc, tf), weighted by title a
 ~/.knowledge-base/{scope}/
 ├── raw/       original source, kept for recompilation
 ├── wiki/      compiled articles as .md files
-├── cache/     SHA256 hashes + inverted search index (v2; old-format files are ignored and rebuilt on the next search or index write)
+├── cache/     SHA256 hashes + inverted search index (versioned; old-format files are ignored and rebuilt on the next search or index write)
 ├── index.json concept graph, backlinks, categories
 └── vectors.bin optional embeddings (binary; a vectors.json from kb v0.4.0 and
                earlier is converted on the first read and kept until the next

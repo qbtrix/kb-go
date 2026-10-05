@@ -13,15 +13,15 @@ import (
 	"github.com/qbtrix/kb-go/internal/model"
 )
 
-// Tokenize lowercases, splits on non-alphanumeric runes, and Porter-stems each
-// token. Stemming is the SINGLE shared step that makes BM25 match morphological
-// variants: because both the index (BuildIndex) and the query
-// (BM25WithIndex) Tokenize through here, "opens" in a doc and the query
-// "open" both reduce to "open" and match. See porter.go.
+// Tokenize lowercases, splits on non-alphanumeric runes, and stems each token
+// (Porter step 1, see porter.go). Stemming is the SINGLE shared step that makes
+// BM25 match inflected variants: because both the index (BuildIndex) and the
+// query (BM25WithIndex) Tokenize through here, "opens" in a doc and the query
+// "open" both reduce to "open" and match.
 //
-// The persisted index stores these stemmed tokens, which is why its format is
-// v3 (IndexVersion): pre-stemming v2 files are ignored and healed.
-// porterStem leaves digits and <=2-letter tokens untouched.
+// The persisted index stores these stemmed tokens, so changing stem means
+// bumping IndexVersion: files written under another stemmer are ignored and
+// healed. stem leaves digits and <=2-letter tokens untouched.
 func Tokenize(text string) []string {
 	lower := strings.ToLower(text)
 	splitter := func(c rune) bool {
@@ -30,7 +30,7 @@ func Tokenize(text string) []string {
 	fields := strings.FieldsFunc(lower, splitter)
 	tokens := make([]string, len(fields))
 	for i, f := range fields {
-		tokens[i] = porterStem(f)
+		tokens[i] = stem(f)
 	}
 	return tokens
 }
@@ -171,15 +171,15 @@ func applyGlossaryBoost(articles []*model.WikiArticle, queryTerms []string, scor
 			continue
 		}
 		matched := false
-		// queryTerms are Porter-stemmed (via Tokenize), so the Term/Alias sides
-		// are stemmed too or a stemmed query token could never equal a raw term.
+		// queryTerms are stemmed (via Tokenize), so the Term/Alias sides are
+		// stemmed too or a stemmed query token could never equal a raw term.
 		// Identical raw inputs stem identically, so every exact hit survives,
-		// and variants like alias "opens" vs query "open" also match. porterStem
+		// and variants like alias "opens" vs query "open" also match. stem
 		// leaves multi-word terms (containing a space) untouched.
-		termLower := porterStem(strings.ToLower(articles[i].Term))
+		termLower := stem(strings.ToLower(articles[i].Term))
 		aliasesLower := make([]string, len(articles[i].Aliases))
 		for k, al := range articles[i].Aliases {
-			aliasesLower[k] = porterStem(strings.ToLower(al))
+			aliasesLower[k] = stem(strings.ToLower(al))
 		}
 		for _, qt := range queryTerms {
 			qLower := strings.ToLower(qt)

@@ -1,8 +1,10 @@
-// Tests for the binary search index (v4) and the index-only single-scope
-// search path: the streaming tokenizer equals Tokenize; SearchScope ranks ids
-// AND scores exactly like the frozen v3 pipeline (legacy_ref_test.go) over
-// generated corpora, including glossary boosts, --exclude-tags, limit edges,
-// empty and no-match queries; a v3 JSON index heals to v4 .bin; a missing,
+// Tests for the binary search index (IndexVersion) and the index-only
+// single-scope search path: the streaming tokenizer equals Tokenize;
+// SearchScope ranks ids AND scores exactly like the frozen v3 pipeline
+// (legacy_ref_test.go) over generated corpora, including glossary boosts,
+// --exclude-tags, limit edges, empty and no-match queries; a v3 JSON index
+// heals to a current .bin; a fresh-looking v4 .bin (full-Porter terms) is
+// rejected and rebuilt; a missing,
 // corrupt or truncated .bin falls back to a rebuild without panicking; and a
 // stale doc table (file added, removed, rewritten under the same id, even with
 // the same mtime and size) is never trusted.
@@ -258,11 +260,46 @@ func TestV3JSONIndexHealsToBinary(t *testing.T) {
 	}
 	checkScope(t, scope, "cache handler", "")
 	si := LoadIndex(scope)
-	if si == nil || si.V != 4 || !IndexMatches(si, all) {
-		t.Fatalf("search did not heal to a v4 .bin matching the scope")
+	if si == nil || si.V != IndexVersion || !IndexMatches(si, all) {
+		t.Fatalf("search did not heal to a current .bin matching the scope")
 	}
 	if _, err := os.Stat(jsonPath); !os.IsNotExist(err) {
 		t.Fatalf("the v3 search_index.json was left behind")
+	}
+}
+
+// TestV4IndexRejectedAndHealed: a v4 .bin stores full-Porter terms
+// ("gener" for "generating"), which step-1 query tokens never hit. Its doc
+// table would still pass the freshness check, so only the version keeps it
+// from mis-scoring: it must not load, and a search must rewrite it.
+func TestV4IndexRejectedAndHealed(t *testing.T) {
+	kbtest.SetHome(t, t.TempDir())
+	scope := "heal-v4"
+	all := seedScope(t, scope, append(parityCorpus(10, 4), &model.WikiArticle{
+		ID: "zz-gen", Title: "Generating reports", Content: "Generating a report takes a minute.", Version: 1,
+	}))
+	if err := SaveIndex(scope, BuildIndex(all)); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(IndexPath(scope))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The header is outside the CRC, so this is a well-formed v4 file.
+	binary.LittleEndian.PutUint32(data[4:], 4)
+	if err := os.WriteFile(IndexPath(scope), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if si := LoadIndex(scope); si != nil {
+		t.Fatalf("a v4 index loaded (v=%d); its terms predate the current stemmer", si.V)
+	}
+	checkScope(t, scope, "generating report", "")
+	si := LoadIndex(scope)
+	if si == nil || si.V != IndexVersion || si.V == 4 || !IndexMatches(si, all) {
+		t.Fatalf("search did not heal the v4 index to v%d", IndexVersion)
+	}
+	if len(si.postingsFor("generate")) == 0 {
+		t.Fatalf("healed index has no postings for the step-1 stem %q", "generate")
 	}
 }
 
