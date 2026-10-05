@@ -4,27 +4,34 @@ Headless knowledge base engine. One Go binary, no frameworks: a thin root `packa
 
 ## Structure
 
-- `main.go` — entry point, command dispatch, usage text, version; `flags.go` — minimal flag parsing; `compiler_flags.go` — compile-path resolution (`--compiler`/`KB_COMPILER`, `--compiler-timeout`, `--model`, `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`) and the exit-2 refusals
-- `cmd_<name>.go` — one file per command (`cmd_build.go`, `cmd_search.go`, `cmd_ingest.go`, `cmd_accept.go`, `cmd_graph.go`, `cmd_convo.go`, `cmd_glossary.go`, `cmd_serve.go`, …) with the helpers only that command uses; `helpers.go` — small CLI helpers
-- `internal/` — the library, one folder package per concern, layered (a package imports only lower layers): layer 0 `textutil`, `model`, `vector`; layer 1 `parse`, `compile`, `store`, `contradiction`, `convo`; layer 2 `search`, `glossary`, `lint`, `export`; layer 3 `mcp`; the rest still lives in the root `package main` while the split lands
-  - `internal/search/` — Porter-stemmed `Tokenize`, `BM25`/`BM25WithIndex` with title/concept/glossary boosts, the persisted inverted `Index` (`BuildIndex`, `LoadOrHealIndex`, `IndexVersion`), `--context` excerpts (`FormatContext`, `ContextJSON`), `VectorSearch`/`HybridSearch` (RRF)
-  - `internal/store/` — on-disk storage under `~/.knowledge-base/{scope}/` (raw/, wiki/, cache/, index.json, vectors.json): articles + frontmatter, raw docs, `IDRegistry` (same-title articles never overwrite each other), index, build cache, vector persistence; `ValidateID` guards every id that reaches a path
+- `main.go` — the whole root package: `os.Exit(cli.Run(os.Args[1:]))`. It stays at the module root so `go install github.com/qbtrix/kb-go@vX` builds a binary named `kb-go`
+- `internal/` — everything else, one folder package per concern, strictly layered (a package imports only packages from lower layers; no cycles):
+
+  | Layer | Packages |
+  |---|---|
+  | 0 | `textutil`, `model`, `vector` |
+  | 1 | `parse`, `compile`, `store`, `contradiction`, `convo` |
+  | 2 | `search`, `glossary`, `lint`, `export` |
+  | 3 | `mcp` |
+  | 4 | `cli` (then the root `main.go`) |
+
   - `internal/textutil/` — pure text helpers (`Slugify`, `ContentHash`, `WordCount`, `Truncate`, `NilToEmpty`), stdlib only
-  - `internal/mcp/` — `kb serve`: read-only JSON-RPC MCP server on stdio (`NewServer`, `Server.Serve`; kb_search/kb_show/kb_glossary/kb_stats/kb_list) with the cross-process article cache
   - `internal/model/` — shared data types (`WikiArticle`, `RawDoc`, `KnowledgeIndex`, `Concept`, `Cache`, `ArticleUsage`, `LintIssue`, …)
-  - `internal/compile/` — article compilation: `Article` dispatches to the `--compiler` hook (`Run` pipes `Prompt` to the caller's command, one JSON article back) or the built-in Anthropic Messages client (`anthropic.go`: `CallAnthropic`, `DefaultModel`, `BaseURLFromEnv` for `ANTHROPIC_BASE_URL`, token usage); `ParseUsage`, `UsageTotals`; `shell_{unix,windows}.go` — platform shell + process-tree kill
+  - `internal/vector/` — flat cosine vector index (`Index`, `New`, `Load`, `Cosine`) and `LoadFile` for vector JSON files
+  - `internal/parse/` — source structure extraction (`Code`, `Module`, `FormatContext`, `PromptBlock` for the compile prompt): Go via go/ast, Python and TypeScript/JS via regex
+  - `internal/compile/` — article compilation: `Article` dispatches to the `--compiler` hook (`Run` pipes `Prompt` to the caller's command, one JSON article back) or the built-in Anthropic Messages client (`anthropic.go`: `CallAnthropic`, `DefaultModel`, `BaseURLFromEnv` for `ANTHROPIC_BASE_URL`, token usage); `ParseUsage`, `UsageTotals`; `shell_{unix,windows}.go` — platform shell + process-tree kill (build-tagged). Does not import `parse`: callers pass `parse.PromptBlock` as a string
+  - `internal/store/` — on-disk storage under `~/.knowledge-base/{scope}/` (raw/, wiki/, cache/, index.json, vectors.json): articles + frontmatter, raw docs, `IDRegistry` (same-title articles never overwrite each other), index, build cache, vector persistence; `ValidateID` guards every id that reaches a path
   - `internal/contradiction/` — offline cross-source definition contradiction detection (`Detect`, `CandidatesFromArticles`, `Finding`, `Config`, `FormatIssue`)
   - `internal/convo/` — conversation mode library: `ParseTranscript` (JSON, JSONL, plain text), `ExtractEntities`/`ExtractDecisions` (deterministic, no LLM), `ClusterTopics`, `GenerateArticles`
-  - `internal/export/` — `Wiki` (markdown wiki export) and the concept graph behind `kb graph` (`ConceptGraph`, `ConceptSubgraph`, `ArticleSubgraph`, `Mermaid`, `Dot`)
+  - `internal/search/` — Porter-stemmed `Tokenize`, `BM25`/`BM25WithIndex` with title/concept/glossary boosts, the persisted inverted `Index` (`BuildIndex`, `LoadOrHealIndex`, `IndexVersion`), `--context` excerpts (`FormatContext`, `ContextJSON`), `VectorSearch`/`HybridSearch` (RRF); also home of the LongMemEval harness
   - `internal/glossary/` — domain glossary: `IsSource`/`ParseSource` (skip-LLM verbatim passthrough) and `List`/`Show`/`Validate` behind `kb glossary`
   - `internal/lint/` — `Structural` (offline) and `LLM` (review over the same compile path as build: hook or built-in client) lint, plus category normalisation (`ClusterCategories`, `ApplyCanonical`)
-  - `internal/parse/` — source structure extraction (`Code`, `Module`, `FormatContext`, `PromptBlock` for the compile prompt): Go via go/ast, Python and TypeScript/JS via regex
-  - `internal/vector/` — flat cosine vector index (`Index`, `New`, `Load`, `Cosine`) and `LoadFile` for vector JSON files
-- `watch.go`, `scan.go` — watch mode and the build file scanner
+  - `internal/export/` — `Wiki` (markdown wiki export) and the concept graph behind `kb graph` (`ConceptGraph`, `ConceptSubgraph`, `ArticleSubgraph`, `Mermaid`, `Dot`)
+  - `internal/mcp/` — `kb serve`: read-only JSON-RPC MCP server on stdio (`NewServer`, `Server.Serve`; kb_search/kb_show/kb_glossary/kb_stats/kb_list) with the cross-process article cache
+  - `internal/cli/` — the command layer: `Run` (dispatch, usage text, version), `cmd_<name>.go` per command, `flags.go` (minimal flag parsing, `fatal`), `compiler_flags.go` (compile-path resolution: `--compiler`/`KB_COMPILER`, `--compiler-timeout`, `--model`, `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`; the exit-2 refusals), `scan.go` (build file discovery, `--since`), `watch.go`, `helpers.go`. Every exit code lives here; the library only returns errors
+  - `internal/kbtest/` — shared test plumbing (stdlib only, imports nothing internal): `kbtest.Main` (every package's TestMain: isolates HOME and USERPROFILE for the whole run, clears `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` / `KB_COMPILER` so the suite never hits a real API, and acts as the fake compiler when `KB_FAKE_COMPILER` is set), `SetHome`/`IsolatedHome`, repo-root fixture paths (`Path`, `RootPath`), `BuildBinary`/`RunKB`, `WriteFiles`, `WriteVecJSON`, `NewStubAnthropic` (a local fake Messages API)
+- Tests live with their package (white-box, same package name). `e2e_test.go` at the root holds the tests that exec the built binary (both compile paths through every command, their precedence, exit-2 refusals, MCP-vs-CLI parity and latency)
 - `examples/compilers/` — ready-made compilers: `claude_code.py` (headless Claude Code, user's login), `openai_compatible.py` (LiteLLM proxy / LM Studio / Ollama)
-- root `*_test.go` — tests for the code still in package main (`kb_test.go`, `delete_test.go`, `ingest_test.go`, …); each internal package keeps its own tests; `compiler_test.go` — compile-path flag resolution, usage and version tests; `anthropic_test.go` — built-in client failure through ingest and build; `e2e_test.go` — tests that exec the built binary (both compile paths through every command, precedence, exit-2 refusals, MCP-vs-CLI parity)
-- `internal/kbtest/` — shared test plumbing: `kbtest.Main` (every package's TestMain: isolates HOME and USERPROFILE for the whole run, clears `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` / `KB_COMPILER` so the suite never hits a real API, and acts as the fake compiler when `KB_FAKE_COMPILER` is set), `SetHome`/`IsolatedHome`, repo-root fixture paths (`Path`, `RootPath`), `BuildBinary`/`RunKB`, `NewStubAnthropic` (a local fake Messages API)
-- `kb_bench_test.go` — 10 performance benchmarks
 - `bench.sh` — Integration benchmark script (full pipeline; build steps need `ANTHROPIC_API_KEY` or `KB_COMPILER`)
 - `SKILL.md` — skills.sh distribution
 - `go.mod` — Module: `github.com/qbtrix/kb-go`, one dep: fsnotify
@@ -34,7 +41,7 @@ Headless knowledge base engine. One Go binary, no frameworks: a thin root `packa
 ```bash
 go build -o kb .
 go test -v ./...
-go test -bench=. -benchmem
+go test -bench=. -benchmem ./...
 
 # Usage. Compile path: --compiler > KB_COMPILER > built-in Anthropic client (ANTHROPIC_API_KEY) > exit 2
 kb build <path> --scope <name> --pattern "*.go,*.py,*.ts"                     # built-in client; --model MODEL; ANTHROPIC_BASE_URL for a proxy
@@ -64,7 +71,7 @@ kb clear --scope <name>
 
 ## Patterns
 
-- One `package main`, one file per concern; new commands go in their own `cmd_<name>.go`, shared code in the concern file it belongs to
+- Folder packages under `internal/`, layered as in Structure; a new command goes in `internal/cli/cmd_<name>.go`, its library code in the package that owns the concern (or a new one in the right layer). Only `cli` prints usage errors or exits; library packages return errors
 - Manual CLI arg parsing (no cobra/urfave)
 - Built-in compile is the default: direct HTTP to the Anthropic Messages API (no SDK) when `ANTHROPIC_API_KEY` is set; `--model` (default claude-haiku-4-5-20251001); `ANTHROPIC_BASE_URL` (SDK convention, default https://api.anthropic.com) → `<base>/v1/messages`, so a LiteLLM proxy can meter it. Usage (model + input/output tokens from the response, no cost: no price table) is stored on the article; `compiled_with` = the requested model
 - Extension: bring your own compiler. Precedence `--compiler` > `KB_COMPILER` > built-in (key set) > exit 2 listing all options. `--model` with a compiler is exit 2 (the compiler picks its model). `--compiler "<cmd>"` runs once per item through the platform shell (`sh -c`; `cmd /S /C` via raw `SysProcAttr.CmdLine` on Windows), prompt on stdin, ONE JSON article on stdout; stderr relayed with a `[compiler <source>]` prefix; `--compiler-timeout` (default 300s) kills the whole process tree. A failed item on either path (hook: exit != 0, timeout, no title/content; built-in: network error, non-200, unparseable reply) gets no article and no cache entry, and the command exits 1 after saving the rest
@@ -83,11 +90,11 @@ kb clear --scope <name>
 
 ## Testing
 
-Unit tests (230+) + 10 benchmarks. No external test deps. Every test package's `TestMain` is `kbtest.Main`, which points both `HOME` and `USERPROFILE` (`os.UserHomeDir` reads `USERPROFILE` on Windows) at a throwaway dir, so the suite never touches your real `~/.knowledge-base`; a test that needs its own home calls `kbtest.SetHome`/`kbtest.IsolatedHome` (never `t.Setenv("HOME", …)` alone). Fixture files resolve from the module root via `kbtest.Path`.
+Unit tests (230+) + benchmarks, each with its package. No external test deps. Every test package's `TestMain` is `kbtest.Main`, which points both `HOME` and `USERPROFILE` (`os.UserHomeDir` reads `USERPROFILE` on Windows) at a throwaway dir, so the suite never touches your real `~/.knowledge-base`; a test that needs its own home calls `kbtest.SetHome`/`kbtest.IsolatedHome` (never `t.Setenv("HOME", …)` alone). Fixture files resolve from the module root via `kbtest.Path`.
 
 ```bash
 go test -v ./...              # All unit tests
-go test -bench=. -benchmem    # Performance benchmarks
+go test -bench=. -benchmem ./...  # Performance benchmarks
 ./bench.sh small              # Integration benchmarks (needs ANTHROPIC_API_KEY or KB_COMPILER)
 ```
 

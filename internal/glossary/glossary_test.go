@@ -19,7 +19,7 @@ import (
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
-// --- Helpers (local to this file, no collision with kb_test.go) ---
+// --- Helpers ---
 
 // seedGlossaryArticle writes a glossary WikiArticle to scope and fails the
 // test on error. Returns the article pointer for further inspection.

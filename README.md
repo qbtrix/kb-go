@@ -121,7 +121,7 @@ Breakdown by question type:
 | single-session-assistant | 92.9% | Harder — user-only corpus, assistant answers implicit |
 | single-session-preference | 76.7% | Semantic gap — "cocktail" vs "gin and tonic" |
 
-Reproduce: `go test -v -run TestLongMemEval_BM25_Small -timeout 120s .` (requires downloading the dataset from [HuggingFace](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)).
+Reproduce: `go test -v -run TestLongMemEval_BM25_Small -timeout 120s ./internal/search` (requires downloading the dataset from [HuggingFace](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)).
 
 Full benchmark harness and error analysis in [`benchmarks/longmemeval/`](benchmarks/longmemeval/).
 
@@ -743,7 +743,7 @@ Articles are plain markdown with JSON frontmatter. `cat` them, `grep` them, comm
 
 ## Architecture
 
-One `package main`, split by concern: [`main.go`](main.go) (dispatch), one `cmd_<name>.go` per command, and files for storage, search index, BM25, context excerpts, compilation, lint and parsers. [`convo.go`](convo.go) is conversation mode, [`mcp.go`](mcp.go) the MCP server. One dependency: `fsnotify` for watch mode.
+A thin root [`main.go`](main.go) calls [`internal/cli`](internal/cli) (dispatch, one `cmd_<name>.go` per command); the library is one folder package per concern under [`internal/`](internal): `store` (storage), `search` (index, BM25, context excerpts, vector/hybrid), `compile` (the built-in Anthropic client and the `--compiler` hook), `parse`, `lint`, `export`, `glossary`, `contradiction`, `convo` (conversation mode) and `mcp` (the MCP server). Packages are layered and import only lower layers. One dependency: `fsnotify` for watch mode.
 
 | Component | ~Lines | What it does |
 |-----------|--------|-------------|
@@ -783,7 +783,7 @@ go test -bench=. ./... # Benchmarks
 ### Reproduce the benchmarks
 
 ```bash
-go test -bench=. -benchmem                    # Offline, seconds
+go test -bench=. -benchmem ./...              # Offline, seconds
 ./bench.sh small                              # 10 files, ~30s
 ./examples/fetch.sh all && ./bench.sh medium  # 129 files, ~6 min
 cat bench_results.json

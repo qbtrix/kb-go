@@ -43,24 +43,9 @@ func runKB(t *testing.T, env []string, stdin string, args ...string) (stdout, st
 	return kbtest.RunKB(t, env, stdin, args...)
 }
 
-func writeFiles(t *testing.T, files map[string]string) string {
-	t.Helper()
-	dir := t.TempDir()
-	for name, body := range files {
-		p := filepath.Join(dir, name)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return dir
-}
-
 func TestCommandsWithoutCompilerExit2(t *testing.T) {
 	kbtest.IsolatedHome(t)
-	src := writeFiles(t, map[string]string{"a.md": "# A\nalpha", "b.md": "# B\nbeta"})
+	src := kbtest.WriteFiles(t, map[string]string{"a.md": "# A\nalpha", "b.md": "# B\nbeta"})
 	// No compile path at all: no hook and no key.
 	env := []string{"KB_COMPILER=", "ANTHROPIC_API_KEY="}
 
@@ -102,7 +87,7 @@ func TestCommandsWithoutCompilerExit2(t *testing.T) {
 // the flag or from KB_COMPILER.
 func TestModelWithCompilerIsUsageError(t *testing.T) {
 	kbtest.IsolatedHome(t)
-	src := writeFiles(t, map[string]string{"a.md": "alpha"})
+	src := kbtest.WriteFiles(t, map[string]string{"a.md": "alpha"})
 	env := []string{"KB_FAKE_COMPILER=ok", "ANTHROPIC_API_KEY=sk-dummy"}
 	_, stderr, code := runKB(t, env, "", "build", src, "--scope", "m", "--pattern", "*.md",
 		"--model", "claude-haiku", "--compiler", kbtest.FakeCompilerCommand(t, ""))
@@ -121,7 +106,7 @@ func TestModelWithCompilerIsUsageError(t *testing.T) {
 
 func TestBuildGlossaryOnlyNeedsNoCompiler(t *testing.T) {
 	kbtest.IsolatedHome(t)
-	src := writeFiles(t, map[string]string{
+	src := kbtest.WriteFiles(t, map[string]string{
 		"glossary/pocket.md": "---\n{\"id\":\"pocket\",\"title\":\"Pocket\",\"kind\":\"glossary\",\"term\":\"Pocket\"}\n---\n\nA Pocket is a workspace.",
 	})
 	_, stderr, code := runKB(t, []string{"KB_COMPILER="}, "", "build", src, "--scope", "gl", "--pattern", "*.md")
@@ -132,7 +117,7 @@ func TestBuildGlossaryOnlyNeedsNoCompiler(t *testing.T) {
 
 func TestBuildWithCompilerHook(t *testing.T) {
 	kbtest.IsolatedHome(t)
-	src := writeFiles(t, map[string]string{"a.md": "# A\nalpha", "b.md": "# B\nbeta"})
+	src := kbtest.WriteFiles(t, map[string]string{"a.md": "# A\nalpha", "b.md": "# B\nbeta"})
 	env := []string{"KB_FAKE_COMPILER=ok", "KB_COMPILER=" + kbtest.FakeCompilerCommand(t, "")}
 
 	out, stderr, code := runKB(t, env, "", "build", src, "--scope", "hook", "--pattern", "*.md", "--json", "--concurrency", "2")
@@ -187,7 +172,7 @@ func TestBuildWithCompilerHook(t *testing.T) {
 
 func TestBuildCompilerFlagWinsOverEnv(t *testing.T) {
 	kbtest.IsolatedHome(t)
-	src := writeFiles(t, map[string]string{"a.md": "alpha"})
+	src := kbtest.WriteFiles(t, map[string]string{"a.md": "alpha"})
 	env := []string{"KB_FAKE_COMPILER=ok", "KB_COMPILER=exit 7"}
 	_, stderr, code := runKB(t, env, "", "build", src, "--scope", "fw", "--pattern", "*.md", "--compiler", kbtest.FakeCompilerCommand(t, ""))
 	if code != 0 {
@@ -197,7 +182,7 @@ func TestBuildCompilerFlagWinsOverEnv(t *testing.T) {
 
 func TestBuildCompilerFailureIsLoud(t *testing.T) {
 	kbtest.IsolatedHome(t)
-	src := writeFiles(t, map[string]string{"a.md": "alpha text", "b.md": "beta raw text MUST_NOT_BE_STORED"})
+	src := kbtest.WriteFiles(t, map[string]string{"a.md": "alpha text", "b.md": "beta raw text MUST_NOT_BE_STORED"})
 	env := []string{"KB_FAKE_COMPILER=fail-on:b.md", "KB_COMPILER=" + kbtest.FakeCompilerCommand(t, "")}
 
 	_, stderr, code := runKB(t, env, "", "build", src, "--scope", "loud", "--pattern", "*.md")
@@ -226,7 +211,7 @@ func TestBuildCompilerFailureIsLoud(t *testing.T) {
 
 func TestIngestWithCompilerHook(t *testing.T) {
 	kbtest.IsolatedHome(t)
-	src := writeFiles(t, map[string]string{"notes.md": "meeting notes"})
+	src := kbtest.WriteFiles(t, map[string]string{"notes.md": "meeting notes"})
 	out, stderr, code := runKB(t, []string{"KB_FAKE_COMPILER=ok"}, "",
 		"ingest", filepath.Join(src, "notes.md"), "--scope", "ing", "--json", "--compiler", kbtest.FakeCompilerCommand(t, ""))
 	if code != 0 {
@@ -240,8 +225,9 @@ func TestIngestWithCompilerHook(t *testing.T) {
 func TestRecompileWithCompilerHook(t *testing.T) {
 	kbtest.IsolatedHome(t)
 	scope := "recomp"
-	if err := ingestArticleJSON(scope, []byte(`{"raw_text":"original raw","article":{"title":"Orig","content":"orig body","source":"orig.md"}}`), false); err != nil {
-		t.Fatal(err)
+	if _, stderr, code := runKB(t, nil, `{"raw_text":"original raw","article":{"title":"Orig","content":"orig body","source":"orig.md"}}`,
+		"ingest", "--article-json", "--scope", scope); code != 0 {
+		t.Fatalf("ingest --article-json failed: code=%d stderr=%s", code, stderr)
 	}
 	_, stderr, code := runKB(t, []string{"KB_FAKE_COMPILER=ok", "KB_COMPILER=" + kbtest.FakeCompilerCommand(t, "")}, "",
 		"recompile", "orig", "--scope", scope)
@@ -541,10 +527,8 @@ func TestMCPLatencyDelta(t *testing.T) {
 	}
 }
 
-// TODO: passes after glossary feature lands
 func TestGlossaryBuildPreservesBodyVerbatim(t *testing.T) {
-	// Use the binary subprocess pattern (matches TestNormalizeCategoriesCLI* in
-	// kb_test.go). With no compiler configured, a build that needed one would
+	// Binary subprocess pattern, like TestNormalizeCategoriesCLI*. With no compiler configured, a build that needed one would
 	// refuse (exit 2) — so this passes only because cmdBuild's glossary branch
 	// parses the frontmatter and populates Kind/Term/Aliases/Category/Related
 	// from the source file without compiling.
@@ -620,7 +604,7 @@ A Pocket is a workspace container. ` + marker + ` lives in this body.`
 func TestBuildWithBuiltinClient(t *testing.T) {
 	kbtest.IsolatedHome(t)
 	s := kbtest.NewStubAnthropic(t, http.StatusOK, nil)
-	src := writeFiles(t, map[string]string{"a.md": "# A\nalpha", "b.md": "# B\nbeta"})
+	src := kbtest.WriteFiles(t, map[string]string{"a.md": "# A\nalpha", "b.md": "# B\nbeta"})
 
 	out, stderr, code := runKB(t, s.Env(), "", "build", src, "--scope", "bi", "--pattern", "*.md", "--json")
 	if code != 0 {
@@ -681,7 +665,7 @@ func TestIngestAndLintWithBuiltinClient(t *testing.T) {
 // environment never overrides a configured compiler.
 func TestCompilePathPrecedence(t *testing.T) {
 	kbtest.IsolatedHome(t)
-	src := writeFiles(t, map[string]string{"a.md": "alpha"})
+	src := kbtest.WriteFiles(t, map[string]string{"a.md": "alpha"})
 	cases := []struct {
 		name      string
 		env       []string
@@ -787,4 +771,38 @@ func toolText(t *testing.T, name string, result any) string {
 type serveResponse struct {
 	ID     json.RawMessage `json:"id,omitempty"`
 	Result any             `json:"result,omitempty"`
+}
+
+func wikiArticleCount(t *testing.T, scope string) int {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(store.ScopeDir(scope), "wiki"))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".md") {
+			n++
+		}
+	}
+	return n
+}
+
+func rawDocCount(t *testing.T, scope string) int {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(store.ScopeDir(scope), "raw"))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".json") {
+			n++
+		}
+	}
+	return n
+}
+
+func TestMain(m *testing.M) {
+	os.Exit(kbtest.Main(m))
 }
