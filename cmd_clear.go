@@ -5,15 +5,17 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 func cmdClear(args []string) {
 	scope := flagStr(args, "--scope", "default")
 	jsonOut := flagBool(args, "--json")
 
-	root := scopeDir(scope)
+	root := store.ScopeDir(scope)
 	os.RemoveAll(root)
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 
 	if jsonOut {
 		printJSON(map[string]any{"ok": true, "scope": scope})

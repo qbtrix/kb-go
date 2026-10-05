@@ -20,6 +20,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/vector"
 )
 
@@ -40,7 +41,7 @@ func seedArticle(t *testing.T, scope, id, title string, concepts, categories []s
 		WordCount:   3,
 		IngestedAt:  "2026-07-03T00:00:00Z",
 	}
-	if err := saveRawDoc(scope, raw); err != nil {
+	if err := store.SaveRawDoc(scope, raw); err != nil {
 		t.Fatalf("saveRawDoc %s: %v", rawID, err)
 	}
 	a := &model.WikiArticle{
@@ -57,18 +58,18 @@ func seedArticle(t *testing.T, scope, id, title string, concepts, categories []s
 		CompiledWith: "test",
 		Version:      1,
 	}
-	if err := saveArticle(scope, a); err != nil {
+	if err := store.SaveArticle(scope, a); err != nil {
 		t.Fatalf("saveArticle %s: %v", id, err)
 	}
 }
 
 func flushIndexes(t *testing.T, scope string) {
 	t.Helper()
-	all, _ := listArticles(scope)
+	all, _ := store.ListArticles(scope)
 	if err := saveSearchIndex(scope, buildSearchIndex(all)); err != nil {
 		t.Fatalf("saveSearchIndex: %v", err)
 	}
-	if err := saveIndex(scope, rebuildIndex(scope, all)); err != nil {
+	if err := store.SaveIndex(scope, store.RebuildIndex(scope, all)); err != nil {
 		t.Fatalf("saveIndex: %v", err)
 	}
 }
@@ -77,7 +78,7 @@ func TestCmdDelete_RemovesArticleEverywhere(t *testing.T) {
 	dir := t.TempDir()
 	kbtest.SetHome(t, dir)
 	scope := "del-" + filepath.Base(dir)
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 
 	// Two articles that share concept "auth" so we can prove the concept
 	// survives (still referenced by the survivor) while a solo concept is
@@ -93,20 +94,20 @@ func TestCmdDelete_RemovesArticleEverywhere(t *testing.T) {
 	vidx := vector.New()
 	vidx.Add("target", []float32{0.1, 0.2})
 	vidx.Add("keeper", []float32{0.3, 0.4})
-	if err := saveVectorIndex(scope, vidx); err != nil {
+	if err := store.SaveVectors(scope, vidx); err != nil {
 		t.Fatalf("saveVectorIndex: %v", err)
 	}
 
 	// Plant a hash-cache entry mapping some source path -> target.
-	cache := loadCache(scope)
+	cache := store.LoadCache(scope)
 	cache.Files["src/target.go"] = model.CacheEntry{Hash: "abc", ArticleID: "target", CompiledAt: "x"}
 	cache.Files["src/keeper.go"] = model.CacheEntry{Hash: "def", ArticleID: "keeper", CompiledAt: "x"}
-	if err := saveCache(scope, cache); err != nil {
+	if err := store.SaveCache(scope, cache); err != nil {
 		t.Fatalf("saveCache: %v", err)
 	}
 
 	// Sanity: before deletion search finds the target.
-	before, _ := listArticles(scope)
+	before, _ := store.ListArticles(scope)
 	si := loadSearchIndex(scope)
 	hits := bm25SearchWithIndex(before, "Target", 10, si)
 	found := false
@@ -123,22 +124,22 @@ func TestCmdDelete_RemovesArticleEverywhere(t *testing.T) {
 	cmdDelete([]string{"target", "--scope", scope})
 
 	// Files gone — wiki article AND its SourceDocs-referenced raw doc.
-	if fileExists(filepath.Join(scopeDir(scope), "wiki", "target.md")) {
+	if fileExists(filepath.Join(store.ScopeDir(scope), "wiki", "target.md")) {
 		t.Errorf("wiki/target.md still present after delete")
 	}
-	if fileExists(filepath.Join(scopeDir(scope), "raw", "target-raw.json")) {
+	if fileExists(filepath.Join(store.ScopeDir(scope), "raw", "target-raw.json")) {
 		t.Errorf("raw/target-raw.json (SourceDocs raw doc) still present after delete")
 	}
 	// Keeper untouched — wiki AND raw doc survive.
-	if !fileExists(filepath.Join(scopeDir(scope), "wiki", "keeper.md")) {
+	if !fileExists(filepath.Join(store.ScopeDir(scope), "wiki", "keeper.md")) {
 		t.Errorf("wiki/keeper.md was removed but should survive")
 	}
-	if !fileExists(filepath.Join(scopeDir(scope), "raw", "keeper-raw.json")) {
+	if !fileExists(filepath.Join(store.ScopeDir(scope), "raw", "keeper-raw.json")) {
 		t.Errorf("raw/keeper-raw.json was removed but should survive")
 	}
 
 	// Index: target gone, keeper stays.
-	idx := loadIndex(scope)
+	idx := store.LoadIndex(scope)
 	if _, ok := idx.Articles["target"]; ok {
 		t.Errorf("index still lists target after delete")
 	}
@@ -170,12 +171,12 @@ func TestCmdDelete_RemovesArticleEverywhere(t *testing.T) {
 	}
 
 	// Search cache invalidated (file removed; rebuilds on next search).
-	if fileExists(filepath.Join(scopeDir(scope), "cache", "search_index.json")) {
+	if fileExists(filepath.Join(store.ScopeDir(scope), "cache", "search_index.json")) {
 		t.Errorf("search_index.json should be removed to force a clean rebuild")
 	}
 
 	// Search no longer returns the target (fresh load from disk).
-	after, _ := listArticles(scope)
+	after, _ := store.ListArticles(scope)
 	hits2 := bm25SearchWithIndex(after, "Target", 10, loadSearchIndex(scope))
 	for _, h := range hits2 {
 		if h.ID == "target" {
@@ -184,7 +185,7 @@ func TestCmdDelete_RemovesArticleEverywhere(t *testing.T) {
 	}
 
 	// Hash cache: target entry dropped, keeper entry retained.
-	cache2 := loadCache(scope)
+	cache2 := store.LoadCache(scope)
 	for _, e := range cache2.Files {
 		if e.ArticleID == "target" {
 			t.Errorf("hash cache still holds an entry for deleted target")
@@ -195,7 +196,7 @@ func TestCmdDelete_RemovesArticleEverywhere(t *testing.T) {
 	}
 
 	// Vector index: target removed, keeper retained.
-	vidx2, err := loadOrCreateVectorIndex(scope)
+	vidx2, err := store.LoadVectors(scope)
 	if err != nil {
 		t.Fatalf("load vector index: %v", err)
 	}
@@ -219,13 +220,13 @@ func TestCmdDelete_NonExistentIsNoOp(t *testing.T) {
 	dir := t.TempDir()
 	kbtest.SetHome(t, dir)
 	scope := "del-noop-" + filepath.Base(dir)
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 
 	// No panic, no error, no exit — deleting an id that was never there is a
 	// clean no-op. (If cmdDelete called fatal() this test would exit non-zero.)
 	cmdDelete([]string{"ghost", "--scope", scope})
 
-	idx := loadIndex(scope)
+	idx := store.LoadIndex(scope)
 	if _, ok := idx.Articles["ghost"]; ok {
 		t.Errorf("ghost id somehow appeared in index")
 	}
@@ -235,19 +236,19 @@ func TestCmdDelete_RefusesTraversalID(t *testing.T) {
 	dir := t.TempDir()
 	kbtest.SetHome(t, dir)
 	scope := "del-traverse-" + filepath.Base(dir)
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 
 	// Plant a file where "../../secret" would land after filepath.Join Clean.
-	escapeTarget := filepath.Join(basePath(), "secret.md")
+	escapeTarget := filepath.Join(store.BaseDir(), "secret.md")
 	if err := os.WriteFile(escapeTarget, []byte("# Leaked\n\nTOP SECRET"), 0o644); err != nil {
 		t.Fatalf("plant escape target: %v", err)
 	}
-	resolved := filepath.Join(scopeDir(scope), "wiki", "../../secret"+".md")
+	resolved := filepath.Join(store.ScopeDir(scope), "wiki", "../../secret"+".md")
 	if resolved != escapeTarget {
 		t.Fatalf("test assumption broke: %q != %q", resolved, escapeTarget)
 	}
 
-	// cmdDelete validates via containedID before touching any path. We can't
+	// cmdDelete validates via store.ValidateID before touching any path. We can't
 	// call cmdDelete directly here because it calls fatal()/os.Exit on a bad
 	// id, which would abort the test binary — so assert the guard it relies on
 	// rejects every traversal shape, and that the planted file is untouched.
@@ -264,7 +265,7 @@ func TestCmdDelete_RefusesTraversalID(t *testing.T) {
 		"",
 	}
 	for _, id := range bad {
-		if err := containedID(id); err == nil {
+		if err := store.ValidateID(id); err == nil {
 			t.Errorf("containedID(%q) accepted a traversal/invalid id; cmdDelete would join it into a path", id)
 		}
 	}

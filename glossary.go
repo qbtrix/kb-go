@@ -21,6 +21,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -63,7 +64,7 @@ func parseGlossarySource(raw []byte, relPath string) (*model.WikiArticle, error)
 		return nil, fmt.Errorf("glossary source %s: missing frontmatter (expected leading '---')", relPath)
 	}
 
-	fmText, body, ok := splitFrontmatter(text)
+	fmText, body, ok := store.SplitFrontmatter(text)
 	if !ok {
 		return nil, fmt.Errorf("glossary source %s: malformed frontmatter (need opening + closing '---')", relPath)
 	}
@@ -96,7 +97,7 @@ func parseGlossarySource(raw []byte, relPath string) (*model.WikiArticle, error)
 	}
 
 	// Body is everything after the closing '---'. Preserve it verbatim aside
-	// from a leading newline trim — saveArticle/parseArticle round-trip uses
+	// from a leading newline trim — store.SaveArticle/store.ParseArticle round-trip uses
 	// TrimSpace too, so we stay consistent. The marker assertion in test #4
 	// only checks Contains, so internal bytes are what matter.
 	content := strings.TrimSpace(body)
@@ -130,7 +131,7 @@ func parseGlossarySource(raw []byte, relPath string) (*model.WikiArticle, error)
 // glossaryList writes a tab-aligned table of glossary entries to out. Returns
 // nil with a "no entries" line if the scope contains no glossary articles.
 func glossaryList(scope string, out io.Writer) error {
-	articles, err := listArticles(scope)
+	articles, err := store.ListArticles(scope)
 	if err != nil {
 		return err
 	}
@@ -171,7 +172,7 @@ func glossaryList(scope string, out io.Writer) error {
 // writes its body to out. Returns an error preserving the input term's casing
 // if no match is found.
 func glossaryShow(scope, term string, out io.Writer) error {
-	articles, err := listArticles(scope)
+	articles, err := store.ListArticles(scope)
 	if err != nil {
 		return err
 	}
@@ -205,19 +206,19 @@ func glossaryShow(scope, term string, out io.Writer) error {
 //  3. Alias collides with another article's Term (case-insensitive)
 //  4. Dangling Related reference (no Term or alias resolves it)
 func glossaryValidate(scope string) ([]string, error) {
-	articles, err := listArticles(scope)
+	articles, err := store.ListArticles(scope)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter glossary-only, stable-ordered (listArticles already sorts by ID).
+	// Filter glossary-only, stable-ordered (store.ListArticles already sorts by ID).
 	var entries []*model.WikiArticle
 	for _, a := range articles {
 		if a.Kind == "glossary" {
 			entries = append(entries, a)
 		}
 	}
-	// Defensive re-sort in case listArticles' ordering ever changes upstream.
+	// Defensive re-sort in case store.ListArticles' ordering ever changes upstream.
 	sort.Slice(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
 
 	var issues []string

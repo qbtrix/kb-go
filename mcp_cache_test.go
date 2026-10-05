@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -45,14 +46,14 @@ func cacheTestArticle(id, title, word string) *model.WikiArticle {
 func cacheTestScope(t *testing.T, suffix string) string {
 	t.Helper()
 	scope := "test-mcpcache-" + suffix + "-" + textutil.ContentHash(t.Name())[:8]
-	os.RemoveAll(scopeDir(scope))
-	t.Cleanup(func() { os.RemoveAll(scopeDir(scope)) })
+	os.RemoveAll(store.ScopeDir(scope))
+	t.Cleanup(func() { os.RemoveAll(store.ScopeDir(scope)) })
 	for _, a := range []*model.WikiArticle{
 		cacheTestArticle("alpha", "Alpha", "aardvark"),
 		cacheTestArticle("beta", "Beta", "buffalo"),
 		cacheTestArticle("gamma", "Gamma", "gazelle"),
 	} {
-		if err := saveArticle(scope, a); err != nil {
+		if err := store.SaveArticle(scope, a); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -65,8 +66,8 @@ func cacheTestScope(t *testing.T, suffix string) string {
 // what finishIngest / build / accept / recompile do after writing articles.
 func cliRebuild(t *testing.T, scope string) {
 	t.Helper()
-	all, _ := listArticles(scope)
-	if err := saveIndex(scope, rebuildIndex(scope, all)); err != nil {
+	all, _ := store.ListArticles(scope)
+	if err := store.SaveIndex(scope, store.RebuildIndex(scope, all)); err != nil {
 		t.Fatal(err)
 	}
 	if err := saveSearchIndex(scope, buildSearchIndex(all)); err != nil {
@@ -78,7 +79,7 @@ func cliRebuild(t *testing.T, scope string) {
 func backdateScope(t *testing.T, scope string, age time.Duration) {
 	t.Helper()
 	old := time.Now().Add(-age)
-	filepath.Walk(scopeDir(scope), func(p string, info os.FileInfo, err error) error {
+	filepath.Walk(store.ScopeDir(scope), func(p string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() {
 			os.Chtimes(p, old, old)
 		}
@@ -144,7 +145,7 @@ func TestMCPCacheSeesNewArticle(t *testing.T) {
 	}
 
 	// Another process ingests a new article (full CLI write path).
-	if err := saveArticle(scope, cacheTestArticle("delta", "Delta", "dolphin")); err != nil {
+	if err := store.SaveArticle(scope, cacheTestArticle("delta", "Delta", "dolphin")); err != nil {
 		t.Fatal(err)
 	}
 	cliRebuild(t, scope)
@@ -153,7 +154,7 @@ func TestMCPCacheSeesNewArticle(t *testing.T) {
 	}
 
 	// Wiki-only writer (convo ingest): no index.json / search index refresh.
-	if err := saveArticle(scope, cacheTestArticle("epsilon", "Epsilon", "elephant")); err != nil {
+	if err := store.SaveArticle(scope, cacheTestArticle("epsilon", "Epsilon", "elephant")); err != nil {
 		t.Fatal(err)
 	}
 	if ids := searchIDs(t, srv, scope, "elephant"); !hasID(ids, "epsilon") {
@@ -180,7 +181,7 @@ func TestMCPCacheSeesOverwrite(t *testing.T) {
 	// Recompile-style overwrite: new content + index rebuild.
 	b := cacheTestArticle("beta", "Beta Revised", "bison")
 	b.Version = 2
-	if err := saveArticle(scope, b); err != nil {
+	if err := store.SaveArticle(scope, b); err != nil {
 		t.Fatal(err)
 	}
 	cliRebuild(t, scope)
@@ -196,7 +197,7 @@ func TestMCPCacheSeesOverwrite(t *testing.T) {
 
 	// Wiki-only overwrite (category normalization rewrites the file only).
 	b.Title = "Beta Normalized"
-	if err := saveArticle(scope, b); err != nil {
+	if err := store.SaveArticle(scope, b); err != nil {
 		t.Fatal(err)
 	}
 	if got := listTitles(t, srv, scope)["beta"]; got != "Beta Normalized" {
@@ -215,17 +216,17 @@ func TestMCPCacheSeesSameSizeSameMtimeOverwrite(t *testing.T) {
 	srv := newCacheTestServer(scope)
 
 	// Fresh write (mtime ~ now), read immediately by the server.
-	if err := saveArticle(scope, cacheTestArticle("gamma", "Gamma One", "gazelle")); err != nil {
+	if err := store.SaveArticle(scope, cacheTestArticle("gamma", "Gamma One", "gazelle")); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(scopeDir(scope), "wiki", "gamma.md")
+	path := filepath.Join(store.ScopeDir(scope), "wiki", "gamma.md")
 	before, _ := os.Stat(path)
 	if got := listTitles(t, srv, scope)["gamma"]; got != "Gamma One" {
 		t.Fatalf("title = %q", got)
 	}
 
 	// Same-length rewrite, then pin the mtime back to the original value.
-	if err := saveArticle(scope, cacheTestArticle("gamma", "Gamma Two", "gazelle")); err != nil {
+	if err := store.SaveArticle(scope, cacheTestArticle("gamma", "Gamma Two", "gazelle")); err != nil {
 		t.Fatal(err)
 	}
 	os.Chtimes(path, before.ModTime(), before.ModTime())
@@ -246,7 +247,7 @@ func TestMCPCacheDropsDeleted(t *testing.T) {
 		t.Fatalf("warm-up search missed alpha: %v", ids)
 	}
 	// Raw file removal, no index refresh.
-	if err := os.Remove(filepath.Join(scopeDir(scope), "wiki", "alpha.md")); err != nil {
+	if err := os.Remove(filepath.Join(store.ScopeDir(scope), "wiki", "alpha.md")); err != nil {
 		t.Fatal(err)
 	}
 	if ids := searchIDs(t, srv, scope, "aardvark"); hasID(ids, "alpha") {
@@ -285,11 +286,11 @@ func TestMCPCacheClearScope(t *testing.T) {
 	}
 
 	// Scope directory removed entirely, then repopulated.
-	os.RemoveAll(scopeDir(scope))
+	os.RemoveAll(store.ScopeDir(scope))
 	if ids := searchIDs(t, srv, scope, "gazelle"); len(ids) != 0 {
 		t.Fatalf("search on removed scope returned %v", ids)
 	}
-	if err := saveArticle(scope, cacheTestArticle("zeta", "Zeta", "zebra")); err != nil {
+	if err := store.SaveArticle(scope, cacheTestArticle("zeta", "Zeta", "zebra")); err != nil {
 		t.Fatal(err)
 	}
 	if ids := searchIDs(t, srv, scope, "zebra"); !hasID(ids, "zeta") {
@@ -307,10 +308,10 @@ func TestMCPCacheMultiScope(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("multi-scope warm-up: want 2 rows, got %v", rows)
 	}
-	if err := saveArticle(b, cacheTestArticle("eta", "Eta", "emu")); err != nil {
+	if err := store.SaveArticle(b, cacheTestArticle("eta", "Eta", "emu")); err != nil {
 		t.Fatal(err)
 	}
-	os.Remove(filepath.Join(scopeDir(a), "wiki", "alpha.md"))
+	os.Remove(filepath.Join(store.ScopeDir(a), "wiki", "alpha.md"))
 
 	rows = toolRows(t, srv, "kb_search", map[string]any{"query": "emu aardvark", "scope": multi, "limit": 10})
 	got := map[string]string{}
@@ -335,20 +336,20 @@ func TestMCPCacheMultiScope(t *testing.T) {
 func seedBenchScope(b *testing.B, n int) string {
 	b.Helper()
 	scope := fmt.Sprintf("bench-mcpcache-%d", n)
-	os.RemoveAll(scopeDir(scope))
-	b.Cleanup(func() { os.RemoveAll(scopeDir(scope)) })
+	os.RemoveAll(store.ScopeDir(scope))
+	b.Cleanup(func() { os.RemoveAll(store.ScopeDir(scope)) })
 	corpus := generateCorpus(n)
 	for _, a := range corpus {
 		a.Content = strings.Repeat(a.Content+"\n\n", 8) // ~5-10 KB per article
-		if err := saveArticle(scope, a); err != nil {
+		if err := store.SaveArticle(scope, a); err != nil {
 			b.Fatal(err)
 		}
 	}
-	all, _ := listArticles(scope)
-	saveIndex(scope, rebuildIndex(scope, all))
+	all, _ := store.ListArticles(scope)
+	store.SaveIndex(scope, store.RebuildIndex(scope, all))
 	saveSearchIndex(scope, buildSearchIndex(all))
 	old := time.Now().Add(-time.Hour)
-	filepath.Walk(scopeDir(scope), func(p string, info os.FileInfo, err error) error {
+	filepath.Walk(store.ScopeDir(scope), func(p string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() {
 			os.Chtimes(p, old, old)
 		}
@@ -387,7 +388,7 @@ func TestArticleCacheReusesSettledFiles(t *testing.T) {
 		t.Fatalf("unchanged search index was decoded twice")
 	}
 
-	if err := saveArticle(scope, cacheTestArticle("beta", "Beta Two", "bison")); err != nil {
+	if err := store.SaveArticle(scope, cacheTestArticle("beta", "Beta Two", "bison")); err != nil {
 		t.Fatal(err)
 	}
 	third, _ := c.list(scope)
@@ -399,7 +400,7 @@ func TestArticleCacheReusesSettledFiles(t *testing.T) {
 	}
 }
 
-// Cached search must rank exactly like the uncached CLI path (listArticles +
+// Cached search must rank exactly like the uncached CLI path (store.ListArticles +
 // loadOrHealSearchIndex), including ids whose file-name order differs from ID
 // order ("a-b.md" sorts before "a.md", but ID "a" sorts before "a-b"), so the
 // SearchIndex docIdx stays aligned with the cached slice.
@@ -410,7 +411,7 @@ func TestMCPCacheSearchMatchesUncachedPath(t *testing.T) {
 		cacheTestArticle("a-b", "A B", "otter otter routing"),
 		cacheTestArticle("a_c", "A C", "middleware routing"),
 	} {
-		saveArticle(scope, a)
+		store.SaveArticle(scope, a)
 	}
 	cliRebuild(t, scope)
 	backdateScope(t, scope, time.Hour)
@@ -420,7 +421,7 @@ func TestMCPCacheSearchMatchesUncachedPath(t *testing.T) {
 		t.Helper()
 		for _, q := range []string{"otter", "middleware", "routing otter", "testing", "aardvark gazelle"} {
 			got := searchIDs(t, srv, scope, q)
-			all, _ := listArticles(scope)
+			all, _ := store.ListArticles(scope)
 			var want []string
 			for _, a := range bm25SearchWithIndex(all, q, 50, loadOrHealSearchIndex(scope, all)) {
 				want = append(want, a.ID)
@@ -431,9 +432,9 @@ func TestMCPCacheSearchMatchesUncachedPath(t *testing.T) {
 		}
 	}
 	check("settled")
-	saveArticle(scope, cacheTestArticle("a-a", "A A", "otter otter otter"))
+	store.SaveArticle(scope, cacheTestArticle("a-a", "A A", "otter otter otter"))
 	check("after wiki-only add")
-	os.Remove(filepath.Join(scopeDir(scope), "wiki", "a.md"))
+	os.Remove(filepath.Join(store.ScopeDir(scope), "wiki", "a.md"))
 	cliRebuild(t, scope)
 	check("after remove + rebuild")
 }

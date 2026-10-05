@@ -11,6 +11,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 func cmdLint(args []string) {
@@ -91,7 +92,7 @@ func printLintIssues(issues []model.LintIssue, jsonOut bool) {
 // shortest original string, then alphabetical order. This favors the variant
 // humans naturally picked most often while keeping choice deterministic.
 func runCategoryNormalize(scope string, apply, jsonOut bool) {
-	articles, err := listArticles(scope)
+	articles, err := store.ListArticles(scope)
 	if err != nil {
 		fatal("Failed to list articles: %v", err)
 	}

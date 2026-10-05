@@ -1,9 +1,13 @@
-// On-disk storage under the scope directory: base paths and scope resolution
-// ("*", "a,b", single), raw docs, wiki articles (markdown + JSON frontmatter),
-// the article-ID registry that keeps same-title articles from overwriting each
-// other, the knowledge index, and the content-hash build cache.
-
-package main
+// Package store is kb's on-disk storage under ~/.knowledge-base/{scope}/:
+// base paths and scope resolution ("*", "a,b", single), raw docs, wiki
+// articles (markdown + JSON frontmatter), the article-ID registry that keeps
+// same-title articles from overwriting each other, the knowledge index, the
+// content-hash build cache, and the per-scope vector index (vectors.go).
+//
+// Invariant: every article id that reaches a path goes through ValidateID
+// (via LoadArticle and the delete/vector paths), so an id carrying a path
+// separator or ".." can never escape the scope directory (issue #23).
+package store
 
 import (
 	"encoding/json"
@@ -21,14 +25,14 @@ import (
 
 // --- Storage ---
 
-func basePath() string {
+func BaseDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, defaultBaseDir)
 }
 
-func scopeDir(scope string) string {
+func ScopeDir(scope string) string {
 	safe := sanitize(scope)
-	return filepath.Join(basePath(), safe)
+	return filepath.Join(BaseDir(), safe)
 }
 
 var sanitizeRe = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
@@ -37,8 +41,8 @@ func sanitize(s string) string {
 	return sanitizeRe.ReplaceAllString(s, "_")
 }
 
-func ensureDirs(scope string) {
-	root := scopeDir(scope)
+func EnsureDirs(scope string) {
+	root := ScopeDir(scope)
 	os.MkdirAll(filepath.Join(root, "raw"), 0o755)
 	os.MkdirAll(filepath.Join(root, "wiki"), 0o755)
 	os.MkdirAll(filepath.Join(root, "cache"), 0o755)
@@ -46,9 +50,9 @@ func ensureDirs(scope string) {
 
 // --- Raw Doc Storage ---
 
-func saveRawDoc(scope string, doc *model.RawDoc) error {
-	ensureDirs(scope)
-	path := filepath.Join(scopeDir(scope), "raw", doc.ID+".json")
+func SaveRawDoc(scope string, doc *model.RawDoc) error {
+	EnsureDirs(scope)
+	path := filepath.Join(ScopeDir(scope), "raw", doc.ID+".json")
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err
@@ -56,8 +60,8 @@ func saveRawDoc(scope string, doc *model.RawDoc) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-func loadRawDoc(scope, id string) (*model.RawDoc, error) {
-	path := filepath.Join(scopeDir(scope), "raw", id+".json")
+func LoadRawDoc(scope, id string) (*model.RawDoc, error) {
+	path := filepath.Join(ScopeDir(scope), "raw", id+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -71,9 +75,9 @@ func loadRawDoc(scope, id string) (*model.RawDoc, error) {
 
 // --- Article Storage ---
 
-func saveArticle(scope string, a *model.WikiArticle) error {
-	ensureDirs(scope)
-	path := filepath.Join(scopeDir(scope), "wiki", a.ID+".md")
+func SaveArticle(scope string, a *model.WikiArticle) error {
+	EnsureDirs(scope)
+	path := filepath.Join(ScopeDir(scope), "wiki", a.ID+".md")
 
 	fm := model.Frontmatter{
 		Title:        a.Title,
@@ -106,14 +110,14 @@ func saveArticle(scope string, a *model.WikiArticle) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
-// containedID rejects article ids that could escape the scope's wiki dir once
+// ValidateID rejects article ids that could escape the scope's wiki dir once
 // joined and cleaned by filepath.Join (issue #23). Every id kb-go generates is
 // slug-like — slugify() emits only [a-z0-9-], contentHash emits hex, and
 // glossary term ids are slugs — so none legitimately carry a path separator or
 // "..". The CLI (`kb show`, `kb recompile`) and the MCP surface (`kb_show`,
 // `kb_glossary`, and any path that resolves a stored id) all funnel through
-// loadArticle, so guarding here closes traversal for every caller in one place.
-func containedID(id string) error {
+// LoadArticle, so guarding here closes traversal for every caller in one place.
+func ValidateID(id string) error {
 	if id == "" {
 		return fmt.Errorf("article id is empty")
 	}
@@ -128,7 +132,7 @@ func containedID(id string) error {
 //
 // An article's identity is its SOURCE, not its title. Ids start as a slug of
 // the (LLM-chosen) title or file name, but every write path resolves the final
-// id through idRegistry.claim so that:
+// id through IDRegistry.claim so that:
 //   - a source that already has an article keeps that article's id (re-compiling
 //     under a new title replaces it in place, no stale twin), and any older
 //     twins the same source left behind are retired;
@@ -149,26 +153,32 @@ type articleIDEntry struct {
 	rawDocs []string
 }
 
-// idRegistry is a scope's id registry, built once per write command from the
+// IDRegistry is a scope's id registry, built once per write command from the
 // articles on disk and updated as the command claims ids, so same-batch
 // collisions are seen too.
-type idRegistry struct {
+type IDRegistry struct {
 	owner    map[string]string // lower(id) -> SourcePath of the article holding it
 	version  map[string]int    // id -> current version
 	bySource map[string][]articleIDEntry
 	retired  []string // stale twins to remove (see retire)
 }
 
-func loadIDRegistry(scope string) *idRegistry {
-	r := &idRegistry{owner: map[string]string{}, version: map[string]int{}, bySource: map[string][]articleIDEntry{}}
-	articles, _ := listArticles(scope)
+func LoadIDRegistry(scope string) *IDRegistry {
+	r := &IDRegistry{owner: map[string]string{}, version: map[string]int{}, bySource: map[string][]articleIDEntry{}}
+	articles, _ := ListArticles(scope)
 	for _, a := range articles {
 		r.record(a.ID, a.SourcePath, a.SourceDocs, a.Version)
 	}
 	return r
 }
 
-func (r *idRegistry) record(id, source string, rawDocs []string, version int) {
+// Has reports whether id is already recorded (on disk or claimed this run).
+func (r *IDRegistry) Has(id string) bool {
+	_, ok := r.version[id]
+	return ok
+}
+
+func (r *IDRegistry) record(id, source string, rawDocs []string, version int) {
 	r.owner[strings.ToLower(id)] = source
 	r.version[id] = version
 	if source == "" {
@@ -184,11 +194,11 @@ func (r *idRegistry) record(id, source string, rawDocs []string, version int) {
 	r.bySource[source] = append(entries, articleIDEntry{id: id, rawDocs: rawDocs})
 }
 
-// claim resolves the id for a write of source's article, given the slug its
+// Claim resolves the id for a write of source's article, given the slug its
 // title or file name proposes, and records the claim. labelSource marks the
 // ingest paths (see the section comment). Returns the id and the version to
 // write. Stale twins of the same source are queued for retire.
-func (r *idRegistry) claim(proposed, source string, rawDocs []string, labelSource bool) (string, int) {
+func (r *IDRegistry) Claim(proposed, source string, rawDocs []string, labelSource bool) (string, int) {
 	if source != "" {
 		var same []string
 		for _, e := range r.bySource[source] {
@@ -223,10 +233,10 @@ func (r *idRegistry) claim(proposed, source string, rawDocs []string, labelSourc
 	return id, v
 }
 
-// claimFixed records an article whose id is explicit (a glossary entry's
+// ClaimFixed records an article whose id is explicit (a glossary entry's
 // frontmatter id) and retires any other article the same source left behind.
 // Returns the version to write.
-func (r *idRegistry) claimFixed(id, source string, rawDocs []string) int {
+func (r *IDRegistry) ClaimFixed(id, source string, rawDocs []string) int {
 	if source != "" {
 		var same []string
 		for _, e := range r.bySource[source] {
@@ -242,7 +252,7 @@ func (r *idRegistry) claimFixed(id, source string, rawDocs []string) int {
 // retireTwins queues every id in ids except keep for removal. The retired ids
 // stay owned by source for the rest of the command, so no other article can
 // claim one before retire deletes its file.
-func (r *idRegistry) retireTwins(source, keep string, ids []string) {
+func (r *IDRegistry) retireTwins(source, keep string, ids []string) {
 	kept := r.bySource[source][:0]
 	for _, e := range r.bySource[source] {
 		if e.id == keep || !slices.Contains(ids, e.id) {
@@ -254,30 +264,30 @@ func (r *idRegistry) retireTwins(source, keep string, ids []string) {
 	r.bySource[source] = kept
 }
 
-// retire deletes the queued stale twins: their wiki files and vector entries.
+// Retire deletes the queued stale twins: their wiki files and vector entries.
 // Callers rebuild the concept + search indexes from disk afterwards, which
 // drops them there too. Raw docs are kept: a twin usually shares its raw doc
 // with the article that replaced it.
-func (r *idRegistry) retire(scope string) {
+func (r *IDRegistry) Retire(scope string) {
 	if len(r.retired) == 0 {
 		return
 	}
 	for _, id := range r.retired {
-		if containedID(id) != nil {
+		if ValidateID(id) != nil {
 			continue
 		}
-		p := filepath.Join(scopeDir(scope), "wiki", id+".md")
+		p := filepath.Join(ScopeDir(scope), "wiki", id+".md")
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "Warning: failed to remove superseded article %s: %v\n", id, err)
 		}
 	}
-	if vidx, err := loadOrCreateVectorIndex(scope); err == nil {
+	if vidx, err := LoadVectors(scope); err == nil {
 		removed := false
 		for _, id := range r.retired {
 			removed = vidx.Remove(id) || removed
 		}
 		if removed {
-			if err := saveVectorIndex(scope, vidx); err != nil {
+			if err := SaveVectors(scope, vidx); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to update vector index: %v\n", err)
 			}
 		}
@@ -305,26 +315,26 @@ func sharesRaw(a, b []string) bool {
 
 // --- Article Storage ---
 
-func loadArticle(scope, id string) (*model.WikiArticle, error) {
-	if err := containedID(id); err != nil {
+func LoadArticle(scope, id string) (*model.WikiArticle, error) {
+	if err := ValidateID(id); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(scopeDir(scope), "wiki", id+".md")
+	path := filepath.Join(ScopeDir(scope), "wiki", id+".md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return parseArticle(id, string(data))
+	return ParseArticle(id, string(data))
 }
 
-// splitFrontmatter splits "---\n<json>\n---\n<body>" into the JSON and the
+// SplitFrontmatter splits "---\n<json>\n---\n<body>" into the JSON and the
 // body. The closing delimiter is the first line after the opening one that is
 // exactly "---" (a trailing \r is tolerated). It must not be a substring
 // search: JSON string values can hold "---" (a markdown rule or "|---|" table
 // divider in a summary) but never a raw newline, so a line that is only "---"
 // cannot occur inside the JSON. ok is false if text does not start with "---"
 // or the frontmatter is never closed.
-func splitFrontmatter(text string) (fm, body string, ok bool) {
+func SplitFrontmatter(text string) (fm, body string, ok bool) {
 	if !strings.HasPrefix(text, "---") {
 		return "", "", false
 	}
@@ -346,7 +356,7 @@ func splitFrontmatter(text string) (fm, body string, ok bool) {
 	return "", "", false
 }
 
-func parseArticle(id, text string) (*model.WikiArticle, error) {
+func ParseArticle(id, text string) (*model.WikiArticle, error) {
 	if !strings.HasPrefix(text, "---") {
 		return &model.WikiArticle{
 			ID:        id,
@@ -357,7 +367,7 @@ func parseArticle(id, text string) (*model.WikiArticle, error) {
 		}, nil
 	}
 
-	fmText, body, ok := splitFrontmatter(text)
+	fmText, body, ok := SplitFrontmatter(text)
 	if !ok {
 		return &model.WikiArticle{
 			ID:        id,
@@ -414,8 +424,8 @@ func parseArticle(id, text string) (*model.WikiArticle, error) {
 	}, nil
 }
 
-func listArticles(scope string) ([]*model.WikiArticle, error) {
-	dir := filepath.Join(scopeDir(scope), "wiki")
+func ListArticles(scope string) ([]*model.WikiArticle, error) {
+	dir := filepath.Join(ScopeDir(scope), "wiki")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -434,7 +444,7 @@ func listArticles(scope string) ([]*model.WikiArticle, error) {
 		if err != nil {
 			continue
 		}
-		a, err := parseArticle(id, string(data))
+		a, err := ParseArticle(id, string(data))
 		if err != nil {
 			// stderr only: stdout carries JSON / MCP output.
 			fmt.Fprintf(os.Stderr, "warning: skipping article %s: %v\n", id, err)
@@ -448,8 +458,8 @@ func listArticles(scope string) ([]*model.WikiArticle, error) {
 
 // --- Index Storage ---
 
-func loadIndex(scope string) *model.KnowledgeIndex {
-	path := filepath.Join(scopeDir(scope), "index.json")
+func LoadIndex(scope string) *model.KnowledgeIndex {
+	path := filepath.Join(ScopeDir(scope), "index.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return &model.KnowledgeIndex{
@@ -475,9 +485,9 @@ func loadIndex(scope string) *model.KnowledgeIndex {
 	return &idx
 }
 
-func saveIndex(scope string, idx *model.KnowledgeIndex) error {
-	ensureDirs(scope)
-	path := filepath.Join(scopeDir(scope), "index.json")
+func SaveIndex(scope string, idx *model.KnowledgeIndex) error {
+	EnsureDirs(scope)
+	path := filepath.Join(ScopeDir(scope), "index.json")
 	data, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
 		return err
@@ -485,7 +495,7 @@ func saveIndex(scope string, idx *model.KnowledgeIndex) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-func rebuildIndex(scope string, articles []*model.WikiArticle) *model.KnowledgeIndex {
+func RebuildIndex(scope string, articles []*model.WikiArticle) *model.KnowledgeIndex {
 	idx := &model.KnowledgeIndex{
 		Scope:    scope,
 		Articles: map[string]any{},
@@ -529,8 +539,8 @@ func rebuildIndex(scope string, articles []*model.WikiArticle) *model.KnowledgeI
 
 // --- Cache ---
 
-func loadCache(scope string) *model.Cache {
-	path := filepath.Join(scopeDir(scope), "cache", "hashes.json")
+func LoadCache(scope string) *model.Cache {
+	path := filepath.Join(ScopeDir(scope), "cache", "hashes.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return &model.Cache{Version: 1, Files: map[string]model.CacheEntry{}}
@@ -545,9 +555,9 @@ func loadCache(scope string) *model.Cache {
 	return &c
 }
 
-func saveCache(scope string, c *model.Cache) error {
-	ensureDirs(scope)
-	path := filepath.Join(scopeDir(scope), "cache", "hashes.json")
+func SaveCache(scope string, c *model.Cache) error {
+	EnsureDirs(scope)
+	path := filepath.Join(ScopeDir(scope), "cache", "hashes.json")
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
@@ -555,11 +565,11 @@ func saveCache(scope string, c *model.Cache) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// resolveScopes handles "*" (all scopes), "a,b,c" (multi), or single scope.
-func resolveScopes(scope string) []string {
+// ResolveScopes handles "*" (all scopes), "a,b,c" (multi), or single scope.
+func ResolveScopes(scope string) []string {
 	if scope == "*" {
-		// List all scope directories under basePath
-		entries, err := os.ReadDir(basePath())
+		// List all scope directories under BaseDir
+		entries, err := os.ReadDir(BaseDir())
 		if err != nil {
 			return nil
 		}
@@ -567,7 +577,7 @@ func resolveScopes(scope string) []string {
 		for _, e := range entries {
 			if e.IsDir() {
 				// Check it has a wiki/ dir (is a real scope)
-				wikiDir := filepath.Join(basePath(), e.Name(), "wiki")
+				wikiDir := filepath.Join(BaseDir(), e.Name(), "wiki")
 				if info, err := os.Stat(wikiDir); err == nil && info.IsDir() {
 					scopes = append(scopes, e.Name())
 				}

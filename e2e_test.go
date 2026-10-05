@@ -29,6 +29,7 @@ import (
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -148,7 +149,7 @@ func TestBuildWithCompilerHook(t *testing.T) {
 	if res["changed"].(float64) != 2 || res["input_tokens"].(float64) != 200 || res["output_tokens"].(float64) != 20*2 {
 		t.Errorf("build json = %v", res)
 	}
-	a, err := loadArticle("hook", textutil.Slugify("Fake a.md"))
+	a, err := store.LoadArticle("hook", textutil.Slugify("Fake a.md"))
 	if err != nil || a == nil {
 		t.Fatalf("article for a.md missing: %v", err)
 	}
@@ -209,7 +210,7 @@ func TestBuildCompilerFailureIsLoud(t *testing.T) {
 	if !strings.Contains(stderr, "b.md") || !strings.Contains(stderr, "refusing") {
 		t.Errorf("stderr should name the failed source and pass compiler stderr through: %s", stderr)
 	}
-	arts, _ := listArticles("loud")
+	arts, _ := store.ListArticles("loud")
 	if len(arts) != 1 || arts[0].Title != "Fake a.md" {
 		t.Fatalf("partial success must be saved and the failure must write nothing: %+v", arts)
 	}
@@ -250,7 +251,7 @@ func TestRecompileWithCompilerHook(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("recompile failed: code=%d stderr=%s", code, stderr)
 	}
-	a, _ := loadArticle(scope, "orig")
+	a, _ := store.LoadArticle(scope, "orig")
 	if a == nil || a.Version != 2 || a.Usage == nil || !strings.HasPrefix(a.Content, "Fake ") {
 		t.Errorf("recompiled article = %+v", a)
 	}
@@ -260,7 +261,7 @@ func TestRecompileWithCompilerHook(t *testing.T) {
 	if code == 0 {
 		t.Errorf("a failed recompile must exit non-zero; stderr=%s", stderr)
 	}
-	a2, _ := loadArticle(scope, "orig")
+	a2, _ := store.LoadArticle(scope, "orig")
 	if a2 == nil || a2.Version != 2 {
 		t.Errorf("failed recompile must leave the article untouched: %+v", a2)
 	}
@@ -269,7 +270,7 @@ func TestRecompileWithCompilerHook(t *testing.T) {
 func TestLintLLMWithCompilerHook(t *testing.T) {
 	kbtest.IsolatedHome(t)
 	scope := "lintllm"
-	saveArticle(scope, &model.WikiArticle{ID: "a1", Title: "A1", Summary: "s", Content: "x", Concepts: []string{"c"}, Version: 1})
+	store.SaveArticle(scope, &model.WikiArticle{ID: "a1", Title: "A1", Summary: "s", Content: "x", Concepts: []string{"c"}, Version: 1})
 	out, stderr, code := runKB(t, []string{"KB_FAKE_COMPILER=lint", "KB_COMPILER=" + kbtest.FakeCompilerCommand(t, "")}, "",
 		"lint", "--llm", "--scope", scope, "--json")
 	if code != 0 || !strings.Contains(out, "FAKE_LINT_ISSUE") {
@@ -289,20 +290,20 @@ func TestAcceptStoresAndReplacesUsage(t *testing.T) {
 	if _, stderr, code := runKB(t, nil, first, "accept", "--scope", scope); code != 0 {
 		t.Fatalf("accept: %s", stderr)
 	}
-	a, _ := loadArticle(scope, "acc")
+	a, _ := store.LoadArticle(scope, "acc")
 	if a == nil || a.Usage == nil || a.Usage.InputTokens != 10 || a.CompiledWith != "m1" {
 		t.Fatalf("accept usage not stored: %+v", a)
 	}
 	second := strings.Replace(strings.Replace(first, `"input_tokens":10`, `"input_tokens":7`, 1), `"model":"m1"`, `"model":"m2"`, 1)
 	runKB(t, nil, second, "accept", "--scope", scope)
-	a, _ = loadArticle(scope, "acc")
+	a, _ = store.LoadArticle(scope, "acc")
 	if a == nil || a.Usage == nil || a.Usage.InputTokens != 7 || a.Usage.Model != "m2" {
 		t.Errorf("re-accept must replace usage, not sum: %+v", a.Usage)
 	}
 	// No usage at all: the old "agent" default and no usage block.
 	third := `{"articles":[{"source":"b.md","raw_id":"r2","title":"NoUsage","content":"body"}]}`
 	runKB(t, nil, third, "accept", "--scope", scope)
-	b, _ := loadArticle(scope, "nousage")
+	b, _ := store.LoadArticle(scope, "nousage")
 	if b == nil || b.Usage != nil || b.CompiledWith != "agent" {
 		t.Errorf("accept without usage: %+v", b)
 	}
@@ -311,12 +312,12 @@ func TestAcceptStoresAndReplacesUsage(t *testing.T) {
 func TestUsageFrontmatterBackwardCompatible(t *testing.T) {
 	kbtest.IsolatedHome(t)
 	scope := "fm-usage"
-	saveArticle(scope, &model.WikiArticle{ID: "legacy", Title: "Legacy", Content: "x", Version: 1})
-	raw, _ := os.ReadFile(filepath.Join(scopeDir(scope), "wiki", "legacy.md"))
+	store.SaveArticle(scope, &model.WikiArticle{ID: "legacy", Title: "Legacy", Content: "x", Version: 1})
+	raw, _ := os.ReadFile(filepath.Join(store.ScopeDir(scope), "wiki", "legacy.md"))
 	if strings.Contains(string(raw), `"usage"`) {
 		t.Errorf("articles without usage must not grow a usage key:\n%s", raw)
 	}
-	a, _ := loadArticle(scope, "legacy")
+	a, _ := store.LoadArticle(scope, "legacy")
 	if a.Usage != nil {
 		t.Errorf("legacy article should load with nil usage")
 	}
@@ -342,9 +343,9 @@ func TestNormalizeCategoriesCLIEmptyScope(t *testing.T) {
 	// the no-op path behaves correctly (prints the "no articles" message,
 	// exits 0). Exercises runCategoryNormalize end-to-end via the CLI.
 	scope := "test-cli-empty-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 	// Intentionally no articles — scope is empty.
-	_ = os.MkdirAll(scopeDir(scope), 0o755)
+	_ = os.MkdirAll(store.ScopeDir(scope), 0o755)
 
 	binary := kbtest.BuildBinary(t)
 	out, err := exec.Command(binary, "lint", "--scope", scope, "--normalize-categories").CombinedOutput()
@@ -359,14 +360,14 @@ func TestNormalizeCategoriesCLIEmptyScope(t *testing.T) {
 func TestNormalizeCategoriesCLIJSONMode(t *testing.T) {
 	// Integration test: --json output on a scope with a real cluster.
 	scope := "test-cli-json-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	articles := []*model.WikiArticle{
 		{ID: "a1", Title: "A1", Content: "x", Categories: []string{"CLI"}, Version: 1},
 		{ID: "a2", Title: "A2", Content: "x", Categories: []string{"cli"}, Version: 1},
 	}
 	for _, a := range articles {
-		if err := saveArticle(scope, a); err != nil {
+		if err := store.SaveArticle(scope, a); err != nil {
 			t.Fatalf("save: %v", err)
 		}
 	}
@@ -579,7 +580,7 @@ A Pocket is a workspace container. ` + marker + ` lives in this body.`
 	}
 
 	scope := "test-gloss-build-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	binary := kbtest.BuildBinary(t)
 	cmd := exec.Command(binary, "build", srcRoot, "--scope", scope, "--pattern", "*.md")
@@ -591,7 +592,7 @@ A Pocket is a workspace container. ` + marker + ` lives in this body.`
 		t.Fatalf("kb build failed: %v\noutput: %s", err, out)
 	}
 
-	articles, err := listArticles(scope)
+	articles, err := store.ListArticles(scope)
 	if err != nil {
 		t.Fatalf("listArticles: %v", err)
 	}

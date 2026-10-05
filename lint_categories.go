@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 // normalizeCategory reduces a category label to a canonical comparison key.
@@ -124,7 +125,7 @@ func applyCategoryCanonical(scope string, articles []*model.WikiArticle, cluster
 		}
 		if dirty {
 			a.Categories = newCats
-			if err := saveArticle(scope, a); err != nil {
+			if err := store.SaveArticle(scope, a); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save %s: %v\n", a.ID, err)
 				continue
 			}
@@ -133,9 +134,9 @@ func applyCategoryCanonical(scope string, articles []*model.WikiArticle, cluster
 	}
 	// Rebuild and persist the BM25 index since categories flow into it.
 	if changed > 0 {
-		all, _ := listArticles(scope)
-		idx := rebuildIndex(scope, all)
-		if err := saveIndex(scope, idx); err != nil {
+		all, _ := store.ListArticles(scope)
+		idx := store.RebuildIndex(scope, all)
+		if err := store.SaveIndex(scope, idx); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to save index after category normalization: %v\n", err)
 		}
 	}

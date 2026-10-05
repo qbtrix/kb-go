@@ -26,6 +26,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -34,13 +35,13 @@ func tempHomeScope(t *testing.T, prefix string) string {
 	dir := t.TempDir()
 	kbtest.SetHome(t, dir)
 	scope := prefix + "-" + filepath.Base(dir)
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 	return scope
 }
 
 func wikiArticleCount(t *testing.T, scope string) int {
 	t.Helper()
-	entries, err := os.ReadDir(filepath.Join(scopeDir(scope), "wiki"))
+	entries, err := os.ReadDir(filepath.Join(store.ScopeDir(scope), "wiki"))
 	if err != nil {
 		return 0
 	}
@@ -55,7 +56,7 @@ func wikiArticleCount(t *testing.T, scope string) int {
 
 func rawDocCount(t *testing.T, scope string) int {
 	t.Helper()
-	entries, err := os.ReadDir(filepath.Join(scopeDir(scope), "raw"))
+	entries, err := os.ReadDir(filepath.Join(store.ScopeDir(scope), "raw"))
 	if err != nil {
 		return 0
 	}
@@ -79,7 +80,7 @@ func TestIngestAllowFallbackSavesVerbatimArticle(t *testing.T) {
 		t.Fatalf("ingestText with allowFallback should succeed, got: %v", err)
 	}
 
-	article, loadErr := loadArticle(scope, textutil.Slugify("notes.md"))
+	article, loadErr := store.LoadArticle(scope, textutil.Slugify("notes.md"))
 	if loadErr != nil || article == nil {
 		t.Fatalf("fallback article not found: %v", loadErr)
 	}
@@ -117,7 +118,7 @@ func TestIngestArticleJSONHappyPath(t *testing.T) {
 
 	// Raw doc saved from raw_text and linked from the article.
 	rawID := textutil.ContentHash("full raw transcript text here")[:16]
-	raw, err := loadRawDoc(scope, rawID)
+	raw, err := store.LoadRawDoc(scope, rawID)
 	if err != nil || raw.RawText != "full raw transcript text here" {
 		t.Fatalf("raw doc %s should be saved from raw_text: %v", rawID, err)
 	}
@@ -125,7 +126,7 @@ func TestIngestArticleJSONHappyPath(t *testing.T) {
 		t.Errorf("raw doc source = %q, want %q", raw.Source, "docs/auth.md")
 	}
 
-	article, err := loadArticle(scope, textutil.Slugify("Auth Session Handling"))
+	article, err := store.LoadArticle(scope, textutil.Slugify("Auth Session Handling"))
 	if err != nil || article == nil {
 		t.Fatalf("article not saved: %v", err)
 	}
@@ -140,7 +141,7 @@ func TestIngestArticleJSONHappyPath(t *testing.T) {
 	}
 
 	// Search index was refreshed and finds the new article.
-	all, _ := listArticles(scope)
+	all, _ := store.ListArticles(scope)
 	si := loadSearchIndex(scope)
 	hits := bm25SearchWithIndex(all, "sessions", 5, si)
 	found := false
@@ -157,7 +158,7 @@ func TestIngestArticleJSONHappyPath(t *testing.T) {
 	if err := ingestArticleJSON(scope, []byte(payload), false); err != nil {
 		t.Fatalf("second ingestArticleJSON failed: %v", err)
 	}
-	article2, _ := loadArticle(scope, article.ID)
+	article2, _ := store.LoadArticle(scope, article.ID)
 	if article2.Version != 2 {
 		t.Errorf("Version = %d after re-ingest, want 2", article2.Version)
 	}
@@ -170,7 +171,7 @@ func TestIngestArticleJSONDefaultsCompiledWithExternal(t *testing.T) {
 	if err := ingestArticleJSON(scope, []byte(payload), false); err != nil {
 		t.Fatalf("ingestArticleJSON failed: %v", err)
 	}
-	article, err := loadArticle(scope, textutil.Slugify("T"))
+	article, err := store.LoadArticle(scope, textutil.Slugify("T"))
 	if err != nil || article == nil {
 		t.Fatalf("article not saved: %v", err)
 	}
@@ -222,11 +223,11 @@ func TestIngestArticleJSONValidation(t *testing.T) {
 func TestIngestArticleJSONSaveFailureIsLoud(t *testing.T) {
 	scope := tempHomeScope(t, "ingest-savefail")
 
-	// Replace the wiki dir with a regular file so saveArticle's WriteFile
-	// fails (ensureDirs' MkdirAll also fails, silently — that's the trap this
+	// Replace the wiki dir with a regular file so store.SaveArticle's WriteFile
+	// fails (store.EnsureDirs' MkdirAll also fails, silently — that's the trap this
 	// guards: without the error check, ingest would print "Ingested:" and
 	// exit 0 with no article on disk).
-	wikiDir := filepath.Join(scopeDir(scope), "wiki")
+	wikiDir := filepath.Join(store.ScopeDir(scope), "wiki")
 	if err := os.RemoveAll(wikiDir); err != nil {
 		t.Fatalf("remove wiki dir: %v", err)
 	}
@@ -251,7 +252,7 @@ func TestIngestArticleJSONHostileTitleContained(t *testing.T) {
 
 	// Plant a sentinel where a naive filepath.Join(wiki, title+".md") would
 	// land if the title escaped the scope, so we can prove it is untouched.
-	sentinel := filepath.Join(basePath(), "..", "etc-passwd-sentinel")
+	sentinel := filepath.Join(store.BaseDir(), "..", "etc-passwd-sentinel")
 	sentinelAbs := filepath.Clean(sentinel)
 	if err := os.WriteFile(sentinelAbs, []byte("sentinel"), 0o644); err != nil {
 		t.Fatalf("plant sentinel: %v", err)
@@ -273,11 +274,11 @@ func TestIngestArticleJSONHostileTitleContained(t *testing.T) {
 		}
 	}
 	// ...and the article must land inside THIS scope's wiki dir.
-	wikiPath := filepath.Join(scopeDir(scope), "wiki", slug+".md")
+	wikiPath := filepath.Join(store.ScopeDir(scope), "wiki", slug+".md")
 	if _, err := os.Stat(wikiPath); err != nil {
 		t.Fatalf("article not found inside scope wiki dir at %s: %v", wikiPath, err)
 	}
-	article, err := loadArticle(scope, slug)
+	article, err := store.LoadArticle(scope, slug)
 	if err != nil || article == nil || article.Content != "payload body" {
 		t.Fatalf("article should round-trip from inside the scope: %v", err)
 	}
@@ -292,7 +293,7 @@ func TestIngestArticleJSONHostileTitleContained(t *testing.T) {
 	}
 	// A naive filepath.Join(wiki, title+".md") would resolve to
 	// $HOME/etc/passwd.md — prove no "etc" tree appeared outside the base dir.
-	escaped := filepath.Join(basePath(), "..", "etc")
+	escaped := filepath.Join(store.BaseDir(), "..", "etc")
 	if _, err := os.Stat(filepath.Clean(escaped)); err == nil {
 		t.Errorf("hostile title escaped the KB base dir: %s exists", filepath.Clean(escaped))
 	}

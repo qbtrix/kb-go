@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 func cmdConvo(args []string) {
@@ -71,8 +72,8 @@ func cmdConvoIngest(args []string) {
 	articles := generateConvoArticles(session, clusters, decisions)
 
 	// Save raw session
-	ensureDirs(scope)
-	rawPath := filepath.Join(scopeDir(scope), "raw", session.ID+".json")
+	store.EnsureDirs(scope)
+	rawPath := filepath.Join(store.ScopeDir(scope), "raw", session.ID+".json")
 	rawData, err := json.MarshalIndent(session, "", "  ")
 	if err != nil {
 		fatal("Marshal session: %v", err)
@@ -83,7 +84,7 @@ func cmdConvoIngest(args []string) {
 
 	// Save articles
 	for _, a := range articles {
-		if err := saveArticle(scope, a); err != nil {
+		if err := store.SaveArticle(scope, a); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: save article %s: %v\n", a.ID, err)
 		}
 	}
@@ -132,7 +133,7 @@ func cmdConvoSearch(args []string) {
 		fatal("Usage: kb convo search <query> [--scope NAME] [--json]")
 	}
 
-	articles, err := listArticles(scope)
+	articles, err := store.ListArticles(scope)
 	if err != nil {
 		fatal("Cannot load articles: %v", err)
 	}
@@ -187,7 +188,7 @@ func cmdConvoList(args []string) {
 	scope := flagStr(args, "--scope", "default")
 	jsonOut := flagBool(args, "--json")
 
-	articles, err := listArticles(scope)
+	articles, err := store.ListArticles(scope)
 	if err != nil {
 		fatal("Cannot load articles: %v", err)
 	}

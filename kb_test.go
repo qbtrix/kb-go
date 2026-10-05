@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -40,269 +41,6 @@ func TestTokenizeEmpty(t *testing.T) {
 	tokens := tokenize("")
 	if len(tokens) != 0 {
 		t.Errorf("tokenize('') should return empty, got %v", tokens)
-	}
-}
-
-// --- Article Parsing ---
-
-func TestParseArticleWithFrontmatter(t *testing.T) {
-	md := `---
-{
-  "title": "Test Article",
-  "summary": "A test summary",
-  "concepts": ["go", "testing"],
-  "categories": ["code"],
-  "source_docs": ["abc123"],
-  "backlinks": [],
-  "word_count": 5,
-  "compiled_at": "2026-04-07T10:00:00Z",
-  "compiled_with": "claude-haiku-4-5-20251001",
-  "version": 1
-}
----
-
-# Test Content
-
-This is the body.`
-
-	a, err := parseArticle("test-article", md)
-	if err != nil {
-		t.Fatalf("parseArticle failed: %v", err)
-	}
-
-	if a.ID != "test-article" {
-		t.Errorf("ID = %q, want %q", a.ID, "test-article")
-	}
-	if a.Title != "Test Article" {
-		t.Errorf("Title = %q, want %q", a.Title, "Test Article")
-	}
-	if a.Summary != "A test summary" {
-		t.Errorf("Summary = %q", a.Summary)
-	}
-	if len(a.Concepts) != 2 || a.Concepts[0] != "go" {
-		t.Errorf("Concepts = %v", a.Concepts)
-	}
-	if a.CompiledWith != "claude-haiku-4-5-20251001" {
-		t.Errorf("CompiledWith = %q", a.CompiledWith)
-	}
-	if !strings.Contains(a.Content, "# Test Content") {
-		t.Errorf("Content should contain body, got %q", a.Content)
-	}
-}
-
-func TestParseArticleNoFrontmatter(t *testing.T) {
-	md := "# Just plain markdown\n\nNo frontmatter here."
-	a, err := parseArticle("plain", md)
-	if err != nil {
-		t.Fatalf("parseArticle failed: %v", err)
-	}
-	if a.Title != "plain" {
-		t.Errorf("Title = %q, want 'plain'", a.Title)
-	}
-	if a.Content != md {
-		t.Errorf("Content should be raw text")
-	}
-	if a.Version != 1 {
-		t.Errorf("Version = %d, want 1", a.Version)
-	}
-}
-
-func TestParseArticleBadFrontmatter(t *testing.T) {
-	md := "---\nnot valid json\n---\n\ncontent"
-	_, err := parseArticle("bad", md)
-	if err == nil {
-		t.Error("expected error for bad frontmatter")
-	}
-}
-
-// --- Article Storage Round-Trip ---
-
-func TestSaveLoadArticle(t *testing.T) {
-	scope := "test-roundtrip-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
-
-	original := &model.WikiArticle{
-		ID:           "test-article",
-		Title:        "Test Article",
-		Summary:      "A test summary",
-		Content:      "# Hello\n\nThis is content.",
-		Concepts:     []string{"go", "testing"},
-		Categories:   []string{"code"},
-		SourceDocs:   []string{"raw123"},
-		Backlinks:    []string{"other-article"},
-		WordCount:    5,
-		CompiledAt:   "2026-04-07T10:00:00Z",
-		CompiledWith: "test",
-		Version:      1,
-	}
-
-	err := saveArticle(scope, original)
-	if err != nil {
-		t.Fatalf("saveArticle failed: %v", err)
-	}
-
-	loaded, err := loadArticle(scope, "test-article")
-	if err != nil {
-		t.Fatalf("loadArticle failed: %v", err)
-	}
-
-	if loaded.Title != original.Title {
-		t.Errorf("Title = %q, want %q", loaded.Title, original.Title)
-	}
-	if loaded.Summary != original.Summary {
-		t.Errorf("Summary mismatch")
-	}
-	if loaded.Content != original.Content {
-		t.Errorf("Content = %q, want %q", loaded.Content, original.Content)
-	}
-	if len(loaded.Concepts) != 2 {
-		t.Errorf("Concepts = %v", loaded.Concepts)
-	}
-	if loaded.Version != 1 {
-		t.Errorf("Version = %d", loaded.Version)
-	}
-
-	os.RemoveAll(scopeDir(scope))
-}
-
-// A "---" inside a frontmatter string value (a markdown rule or table divider
-// in the summary, a title like "A --- B") must not be read as the closing
-// delimiter. Before the fix, parseArticle split on the first "---" anywhere,
-// the JSON parse failed, and listArticles silently dropped the article from
-// every index and search.
-func TestSaveLoadArticleDashesInFrontmatter(t *testing.T) {
-	scope := "test-dashes-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
-
-	cases := []*model.WikiArticle{
-		{ID: "rule-in-summary", Title: "Rule In Summary", Summary: "# Doc\n\nIntro.\n\n---\n\n## Next", Content: "body one"},
-		{ID: "table-in-summary", Title: "Table In Summary", Summary: "| a | b |\n|---|---|\n| 1 | 2 |", Content: "body two"},
-		{ID: "dashes-in-title", Title: "Before --- After", Summary: "plain", Content: "body three\n\n---\n\nmore"},
-		{ID: "plain", Title: "Plain", Summary: "no dashes", Content: "body four"},
-	}
-	for _, a := range cases {
-		if err := saveArticle(scope, a); err != nil {
-			t.Fatalf("saveArticle(%s): %v", a.ID, err)
-		}
-	}
-
-	for _, want := range cases {
-		got, err := loadArticle(scope, want.ID)
-		if err != nil {
-			t.Errorf("loadArticle(%s): %v", want.ID, err)
-			continue
-		}
-		if got.Title != want.Title || got.Summary != want.Summary || got.Content != want.Content {
-			t.Errorf("%s round-trip mismatch: title=%q summary=%q content=%q", want.ID, got.Title, got.Summary, got.Content)
-		}
-	}
-
-	all, err := listArticles(scope)
-	if err != nil {
-		t.Fatalf("listArticles: %v", err)
-	}
-	if len(all) != len(cases) {
-		ids := make([]string, 0, len(all))
-		for _, a := range all {
-			ids = append(ids, a.ID)
-		}
-		t.Errorf("listArticles returned %d articles %v, want %d", len(all), ids, len(cases))
-	}
-}
-
-// --- RawDoc Storage Round-Trip ---
-
-func TestSaveLoadRawDoc(t *testing.T) {
-	scope := "test-raw-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
-
-	raw := &model.RawDoc{
-		ID:          "abc123",
-		SourceType:  "file",
-		Source:      "test.py",
-		Filename:    "test.py",
-		ContentType: "text",
-		RawText:     "print('hello')",
-		WordCount:   1,
-		IngestedAt:  "2026-04-07T10:00:00Z",
-	}
-
-	err := saveRawDoc(scope, raw)
-	if err != nil {
-		t.Fatalf("saveRawDoc failed: %v", err)
-	}
-
-	loaded, err := loadRawDoc(scope, "abc123")
-	if err != nil {
-		t.Fatalf("loadRawDoc failed: %v", err)
-	}
-	if loaded.RawText != "print('hello')" {
-		t.Errorf("RawText = %q", loaded.RawText)
-	}
-	if loaded.Source != "test.py" {
-		t.Errorf("Source = %q", loaded.Source)
-	}
-}
-
-// --- Index ---
-
-func TestRebuildIndex(t *testing.T) {
-	articles := []*model.WikiArticle{
-		{ID: "a1", Title: "Auth Service", Concepts: []string{"auth", "JWT"}, Categories: []string{"code"}},
-		{ID: "a2", Title: "User Service", Concepts: []string{"auth", "users"}, Categories: []string{"code", "api"}},
-	}
-
-	idx := rebuildIndex("test", articles)
-
-	if len(idx.Articles) != 2 {
-		t.Errorf("Articles count = %d, want 2", len(idx.Articles))
-	}
-
-	authConcept := idx.Concepts["auth"]
-	if authConcept == nil {
-		t.Fatal("auth concept not found")
-	}
-	if len(authConcept.Articles) != 2 {
-		t.Errorf("auth concept has %d articles, want 2", len(authConcept.Articles))
-	}
-
-	jwtConcept := idx.Concepts["jwt"]
-	if jwtConcept == nil {
-		t.Fatal("jwt concept not found")
-	}
-	if len(jwtConcept.Articles) != 1 {
-		t.Errorf("jwt concept has %d articles, want 1", len(jwtConcept.Articles))
-	}
-
-	if len(idx.Categories) != 2 {
-		t.Errorf("Categories = %v, want [api, code]", idx.Categories)
-	}
-}
-
-// --- Index Storage Round-Trip ---
-
-func TestSaveLoadIndex(t *testing.T) {
-	scope := "test-idx-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
-
-	idx := &model.KnowledgeIndex{
-		Scope:      scope,
-		Articles:   map[string]any{"a1": map[string]any{"title": "Test"}},
-		Concepts:   map[string]*model.Concept{"go": {Name: "Go", Articles: []string{"a1"}}},
-		Categories: []string{"code"},
-	}
-
-	err := saveIndex(scope, idx)
-	if err != nil {
-		t.Fatalf("saveIndex failed: %v", err)
-	}
-
-	loaded := loadIndex(scope)
-	if loaded.Scope != scope {
-		t.Errorf("Scope = %q", loaded.Scope)
-	}
-	if len(loaded.Concepts) != 1 {
-		t.Errorf("Concepts count = %d", len(loaded.Concepts))
 	}
 }
 
@@ -364,76 +102,12 @@ func TestBM25SearchLimit(t *testing.T) {
 	}
 }
 
-// --- Cache ---
-
-func TestCacheRoundTrip(t *testing.T) {
-	scope := "test-cache-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
-
-	c := &model.Cache{
-		Version: 1,
-		Files: map[string]model.CacheEntry{
-			"src/main.py": {Hash: "abc123", ArticleID: "main-py", CompiledAt: "2026-04-07T10:00:00Z"},
-		},
-	}
-
-	ensureDirs(scope)
-	err := saveCache(scope, c)
-	if err != nil {
-		t.Fatalf("saveCache failed: %v", err)
-	}
-
-	loaded := loadCache(scope)
-	if loaded.Version != 1 {
-		t.Errorf("Version = %d", loaded.Version)
-	}
-	entry, ok := loaded.Files["src/main.py"]
-	if !ok {
-		t.Fatal("cache entry not found")
-	}
-	if entry.Hash != "abc123" {
-		t.Errorf("Hash = %q", entry.Hash)
-	}
-}
-
-func TestCacheHit(t *testing.T) {
-	text := "print('hello world')"
-	hash := textutil.ContentHash(text)
-
-	cache := &model.Cache{
-		Version: 1,
-		Files: map[string]model.CacheEntry{
-			"test.py": {Hash: hash, ArticleID: "test-py"},
-		},
-	}
-
-	entry, ok := cache.Files["test.py"]
-	if !ok || entry.Hash != hash {
-		t.Error("expected cache hit for same content")
-	}
-}
-
-func TestCacheMiss(t *testing.T) {
-	cache := &model.Cache{
-		Version: 1,
-		Files: map[string]model.CacheEntry{
-			"test.py": {Hash: "old-hash", ArticleID: "test-py"},
-		},
-	}
-
-	newHash := textutil.ContentHash("modified content")
-	entry := cache.Files["test.py"]
-	if entry.Hash == newHash {
-		t.Error("expected cache miss for changed content")
-	}
-}
-
 // --- Structural Lint ---
 
 func TestLintEmptyKB(t *testing.T) {
 	scope := "test-lint-empty-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
-	ensureDirs(scope)
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
+	store.EnsureDirs(scope)
 
 	issues := lintStructural(scope)
 	if len(issues) == 0 {
@@ -446,7 +120,7 @@ func TestLintEmptyKB(t *testing.T) {
 
 func TestLintMissingConcepts(t *testing.T) {
 	scope := "test-lint-concepts-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	article := &model.WikiArticle{
 		ID:       "test",
@@ -456,7 +130,7 @@ func TestLintMissingConcepts(t *testing.T) {
 		Concepts: []string{}, // empty
 		Version:  1,
 	}
-	saveArticle(scope, article)
+	store.SaveArticle(scope, article)
 
 	issues := lintStructural(scope)
 	found := false
@@ -472,7 +146,7 @@ func TestLintMissingConcepts(t *testing.T) {
 
 func TestLintBrokenBacklink(t *testing.T) {
 	scope := "test-lint-backlink-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	article := &model.WikiArticle{
 		ID:        "test",
@@ -483,7 +157,7 @@ func TestLintBrokenBacklink(t *testing.T) {
 		Backlinks: []string{"nonexistent"},
 		Version:   1,
 	}
-	saveArticle(scope, article)
+	store.SaveArticle(scope, article)
 
 	issues := lintStructural(scope)
 	found := false
@@ -546,58 +220,6 @@ func TestScanDirMultiPattern(t *testing.T) {
 	}
 }
 
-// --- Format Compatibility (Python ↔ Go) ---
-
-func TestPythonFormatCompatibility(t *testing.T) {
-	// This is the exact format that the Python knowledge-base package writes.
-	// Go must be able to read it.
-	pythonOutput := `---
-{
-  "title": "GroupService",
-  "summary": "Handles group CRUD operations",
-  "concepts": ["GroupService", "membership", "Beanie ODM"],
-  "categories": ["code"],
-  "source_docs": ["abc123def456"],
-  "backlinks": ["message_service"],
-  "word_count": 450,
-  "compiled_at": "2026-04-06T18:00:00+00:00",
-  "compiled_with": "claude-haiku-4-5-20251001",
-  "version": 2
-}
----
-
-# GroupService
-
-Handles group creation, membership, and settings.
-
-## Classes
-
-### GroupService(BaseService)
-
-Main service for group operations.`
-
-	a, err := parseArticle("group_service", pythonOutput)
-	if err != nil {
-		t.Fatalf("Failed to parse Python-format article: %v", err)
-	}
-
-	if a.Title != "GroupService" {
-		t.Errorf("Title = %q", a.Title)
-	}
-	if len(a.Concepts) != 3 {
-		t.Errorf("Concepts = %v", a.Concepts)
-	}
-	if a.Version != 2 {
-		t.Errorf("Version = %d", a.Version)
-	}
-	if !strings.Contains(a.Content, "# GroupService") {
-		t.Error("Content missing body")
-	}
-	if a.Backlinks[0] != "message_service" {
-		t.Errorf("Backlinks = %v", a.Backlinks)
-	}
-}
-
 // --- Graph Export ---
 
 func TestCountSharedArticles(t *testing.T) {
@@ -657,101 +279,6 @@ func TestEscapeMermaid(t *testing.T) {
 	}
 	if got := escapeMermaid("line1\nline2"); got != "line1 line2" {
 		t.Errorf("escapeMermaid newline = %q", got)
-	}
-}
-
-// --- Terse flag + audience/depth frontmatter ---
-
-// TestFrontmatterAudienceDepthRoundTrip verifies that Audience, Depth, and
-// TargetWords survive a save→load round-trip intact.
-func TestFrontmatterAudienceDepthRoundTrip(t *testing.T) {
-	scope := "test-terse-rt-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
-
-	original := &model.WikiArticle{
-		ID:           "terse-article",
-		Title:        "Terse Article",
-		Summary:      "Short overview",
-		Content:      "# Overview\n\nWhat it does.",
-		Concepts:     []string{"auth"},
-		Categories:   []string{"code"},
-		SourceDocs:   []string{"raw001"},
-		WordCount:    5,
-		CompiledAt:   "2026-04-23T10:00:00Z",
-		CompiledWith: "test",
-		Version:      1,
-		Audience:     "agent",
-		Depth:        "overview",
-		TargetWords:  150,
-	}
-
-	if err := saveArticle(scope, original); err != nil {
-		t.Fatalf("saveArticle failed: %v", err)
-	}
-
-	loaded, err := loadArticle(scope, "terse-article")
-	if err != nil {
-		t.Fatalf("loadArticle failed: %v", err)
-	}
-
-	if loaded.Audience != "agent" {
-		t.Errorf("Audience = %q, want %q", loaded.Audience, "agent")
-	}
-	if loaded.Depth != "overview" {
-		t.Errorf("Depth = %q, want %q", loaded.Depth, "overview")
-	}
-	if loaded.TargetWords != 150 {
-		t.Errorf("TargetWords = %d, want 150", loaded.TargetWords)
-	}
-}
-
-// TestFrontmatterLoadBackwardCompat verifies that old .md files without
-// audience/depth/target_words fields load with sensible defaults.
-func TestFrontmatterLoadBackwardCompat(t *testing.T) {
-	scope := "test-terse-compat-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
-
-	// Write a .md file that looks like it was produced before the terse feature.
-	oldFmt := `---
-{
-  "title": "Old Article",
-  "summary": "A legacy summary",
-  "concepts": ["legacy"],
-  "categories": ["code"],
-  "source_docs": ["abc123"],
-  "backlinks": [],
-  "word_count": 100,
-  "compiled_at": "2026-01-01T00:00:00Z",
-  "compiled_with": "claude-haiku-4-5-20251001",
-  "version": 1
-}
----
-
-# Old Article
-
-This article predates the terse feature.`
-
-	ensureDirs(scope)
-	wikiDir := filepath.Join(scopeDir(scope), "wiki")
-	os.MkdirAll(wikiDir, 0o755)
-	if err := os.WriteFile(filepath.Join(wikiDir, "old-article.md"), []byte(oldFmt), 0o644); err != nil {
-		t.Fatalf("failed to write test fixture: %v", err)
-	}
-
-	loaded, err := loadArticle(scope, "old-article")
-	if err != nil {
-		t.Fatalf("loadArticle failed: %v", err)
-	}
-
-	// Defaults: audience=human, depth=deep, target_words=500
-	if loaded.Audience != "human" {
-		t.Errorf("Audience = %q, want %q (default)", loaded.Audience, "human")
-	}
-	if loaded.Depth != "deep" {
-		t.Errorf("Depth = %q, want %q (default)", loaded.Depth, "deep")
-	}
-	if loaded.TargetWords != 500 {
-		t.Errorf("TargetWords = %d, want 500 (default)", loaded.TargetWords)
 	}
 }
 
@@ -848,7 +375,7 @@ func TestBuildSinceRefSkipsUnchanged(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "alpha.py"), []byte("# alpha v2\n"), 0o644)
 
 	scope := "test-since-" + textutil.ContentHash(dir)[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	// Capture stdout from cmdPrepare.
 	origStdout := os.Stdout
@@ -893,7 +420,7 @@ func TestBuildSinceNonGitFallback(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "util.py"), []byte("# util\n"), 0o644)
 
 	scope := "test-since-fallback-" + textutil.ContentHash(dir)[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	// Capture stderr for the warning.
 	origStderr := os.Stderr
@@ -987,51 +514,6 @@ func TestChangedFilesSinceRefNonexistentRef(t *testing.T) {
 	}
 }
 
-// --- SourcePath round-trip ---
-
-func TestSourcePathRoundTrip(t *testing.T) {
-	scope := "test-src-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
-
-	original := &model.WikiArticle{
-		ID:         "src-round",
-		Title:      "Src Round",
-		Content:    "# body",
-		SourcePath: "src/auth/login.go",
-		SourceDocs: []string{"raw-x"},
-		Version:    1,
-	}
-	if err := saveArticle(scope, original); err != nil {
-		t.Fatalf("saveArticle: %v", err)
-	}
-	loaded, err := loadArticle(scope, "src-round")
-	if err != nil {
-		t.Fatalf("loadArticle: %v", err)
-	}
-	if loaded.SourcePath != "src/auth/login.go" {
-		t.Errorf("SourcePath = %q, want %q", loaded.SourcePath, "src/auth/login.go")
-	}
-}
-
-func TestSourcePathEmptyOmitsFromJSON(t *testing.T) {
-	// Backward compat: legacy articles without SourcePath should parse cleanly
-	// and the omitted field should stay out of the serialized frontmatter.
-	scope := "test-src-empty-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
-
-	a := &model.WikiArticle{ID: "legacy", Title: "Legacy", Content: "body", Version: 1}
-	if err := saveArticle(scope, a); err != nil {
-		t.Fatalf("saveArticle: %v", err)
-	}
-	data, err := os.ReadFile(filepath.Join(scopeDir(scope), "wiki", "legacy.md"))
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if strings.Contains(string(data), `"source_path"`) {
-		t.Error("empty SourcePath should be omitted from JSON (omitempty)")
-	}
-}
-
 // --- Category normalization ---
 
 func TestNormalizeCategory(t *testing.T) {
@@ -1078,7 +560,7 @@ func TestPickCanonicalVariant(t *testing.T) {
 
 func TestApplyCategoryCanonical(t *testing.T) {
 	scope := "test-norm-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	articles := []*model.WikiArticle{
 		{ID: "a1", Title: "A1", Content: "x", Categories: []string{"CLI", "storage"}, Version: 1},
@@ -1087,14 +569,14 @@ func TestApplyCategoryCanonical(t *testing.T) {
 		{ID: "a4", Title: "A4", Content: "x", Categories: []string{"cli"}, Version: 1},
 	}
 	for _, a := range articles {
-		if err := saveArticle(scope, a); err != nil {
+		if err := store.SaveArticle(scope, a); err != nil {
 			t.Fatalf("save: %v", err)
 		}
 	}
 
 	// Build clusters manually mirroring runCategoryNormalize's logic so the
 	// test exercises applyCategoryCanonical in isolation.
-	all, _ := listArticles(scope)
+	all, _ := store.ListArticles(scope)
 	clusterMap := map[string]*categoryCluster{}
 	for _, a := range all {
 		for _, cat := range a.Categories {
@@ -1125,7 +607,7 @@ func TestApplyCategoryCanonical(t *testing.T) {
 	// Cluster "cli" has variants {CLI, cli} → canonical "cli" (ASCII sort tie; "cli" is clean form)
 	// Cluster "storage" has variants {storage, Storage} → canonical "storage" (clean form preferred on tie)
 	// "cli tool" and "database" are singleton clusters — not noisy, unchanged.
-	after, _ := listArticles(scope)
+	after, _ := store.ListArticles(scope)
 	seenVariants := map[string]bool{}
 	for _, a := range after {
 		for _, cat := range a.Categories {
@@ -1147,7 +629,7 @@ func TestApplyCategoryCanonical(t *testing.T) {
 func TestApplyCategoryCanonicalDedupesCollapsed(t *testing.T) {
 	// Article with ["CLI", "cli"] should collapse to ["cli"] — no dupes.
 	scope := "test-norm-dedup-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	a := &model.WikiArticle{
 		ID:         "d1",
@@ -1156,10 +638,10 @@ func TestApplyCategoryCanonicalDedupesCollapsed(t *testing.T) {
 		Categories: []string{"CLI", "cli"},
 		Version:    1,
 	}
-	if err := saveArticle(scope, a); err != nil {
+	if err := store.SaveArticle(scope, a); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	all, _ := listArticles(scope)
+	all, _ := store.ListArticles(scope)
 	noisy := []*categoryCluster{
 		{
 			Key:       "cli",
@@ -1171,7 +653,7 @@ func TestApplyCategoryCanonicalDedupesCollapsed(t *testing.T) {
 	if changed := applyCategoryCanonical(scope, all, noisy); changed != 1 {
 		t.Errorf("expected 1 article changed, got %d", changed)
 	}
-	loaded, _ := loadArticle(scope, "d1")
+	loaded, _ := store.LoadArticle(scope, "d1")
 	if len(loaded.Categories) != 1 || loaded.Categories[0] != "cli" {
 		t.Errorf("categories = %v, want [cli]", loaded.Categories)
 	}
@@ -1182,20 +664,20 @@ func TestApplyCategoryPersistsIndex(t *testing.T) {
 	// must reflect the new category set. Earlier version built the index in
 	// memory but forgot to save it, so `kb stats` kept showing stale counts.
 	scope := "test-norm-idx-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	articles := []*model.WikiArticle{
 		{ID: "a1", Title: "A1", Content: "x", Categories: []string{"CLI"}, Version: 1},
 		{ID: "a2", Title: "A2", Content: "x", Categories: []string{"cli"}, Version: 1},
 	}
 	for _, a := range articles {
-		if err := saveArticle(scope, a); err != nil {
+		if err := store.SaveArticle(scope, a); err != nil {
 			t.Fatalf("save: %v", err)
 		}
 	}
 	// Initial index with both variants
-	all, _ := listArticles(scope)
-	_ = saveIndex(scope, rebuildIndex(scope, all))
+	all, _ := store.ListArticles(scope)
+	_ = store.SaveIndex(scope, store.RebuildIndex(scope, all))
 
 	noisy := []*categoryCluster{{
 		Key:       "cli",
@@ -1207,7 +689,7 @@ func TestApplyCategoryPersistsIndex(t *testing.T) {
 	}
 
 	// Load the persisted index from disk and verify it reflects the collapse.
-	data, err := os.ReadFile(filepath.Join(scopeDir(scope), "index.json"))
+	data, err := os.ReadFile(filepath.Join(store.ScopeDir(scope), "index.json"))
 	if err != nil {
 		t.Fatalf("read index: %v", err)
 	}

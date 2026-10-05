@@ -5,6 +5,8 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 func cmdShow(args []string) {
@@ -15,7 +17,7 @@ func cmdShow(args []string) {
 	scope := flagStr(args, "--scope", "default")
 	jsonOut := flagBool(args, "--json")
 
-	a, err := loadArticle(scope, id)
+	a, err := store.LoadArticle(scope, id)
 	if err != nil || a == nil {
 		fatal("Article not found: %s", id)
 	}
