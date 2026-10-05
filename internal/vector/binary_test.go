@@ -3,7 +3,8 @@
 // without panicking, search over a decoded index returning the exact float32
 // cosine bits and order of Cosine, the normalized-dot-product equivalence the
 // format was weighed against, and query/row dim mismatches staying silent
-// zero-score misses as with the JSON index.
+// zero-score misses as with the JSON index, the version-2 source stamp
+// round-tripping, and version-1 files still decoding (with no stamp).
 
 package vector
 
@@ -102,9 +103,52 @@ func TestBinaryCorruptRejected(t *testing.T) {
 			t.Fatalf("flip at byte %d accepted", i)
 		}
 		// Behind a recomputed CRC the structural checks must hold without panics.
-		binary.LittleEndian.PutUint32(b[8:], crc32.Checksum(b[binHeaderLen:], binCRC))
+		binary.LittleEndian.PutUint32(b[8:], crc32.Checksum(b[binCRCFrom:], binCRC))
 		if idx, err := DecodeBinary(b); err == nil {
 			idx.Search(make([]float32, 8), 5)
+		}
+	}
+}
+
+func TestBinarySourceStamp(t *testing.T) {
+	idx := randomIndex(5, 4, 3)
+	src := Source{Size: 3_600_123, ModTime: 1_790_000_000_123_456_700}
+	path := filepath.Join(t.TempDir(), "vectors.bin")
+	if err := idx.SaveBinarySource(path, src); err != nil {
+		t.Fatal(err)
+	}
+	got, stamp, err := LoadBinarySource(path)
+	if err != nil || stamp == nil || *stamp != src {
+		t.Fatalf("stamp: %+v err=%v", stamp, err)
+	}
+	sameVectors(t, got, idx)
+	// MarshalBinary records no source (the zero stamp), still version 2.
+	data, _ := idx.MarshalBinary()
+	if _, stamp, err := DecodeBinarySource(data); err != nil || stamp == nil || *stamp != (Source{}) {
+		t.Fatalf("zero stamp: %+v err=%v", stamp, err)
+	}
+}
+
+func TestBinaryV1StillDecodes(t *testing.T) {
+	idx := randomIndex(7, 6, 4)
+	v2, _ := idx.MarshalBinary()
+	if binary.LittleEndian.Uint32(v2[4:]) != 2 {
+		t.Fatal("MarshalBinary should write version 2")
+	}
+	body := v2[binHeaderLen:]
+	v1 := make([]byte, 24, 24+len(body))
+	copy(v1, v2[:24])
+	binary.LittleEndian.PutUint32(v1[4:], 1)
+	v1 = append(v1, body...)
+	binary.LittleEndian.PutUint32(v1[8:], crc32.Checksum(body, binCRC))
+	got, stamp, err := DecodeBinarySource(v1)
+	if err != nil || stamp != nil {
+		t.Fatalf("v1: stamp=%v err=%v", stamp, err)
+	}
+	sameVectors(t, got, idx)
+	for l := 0; l < len(v1); l++ {
+		if _, err := DecodeBinary(v1[:l]); err == nil {
+			t.Fatalf("v1 truncation to %d bytes decoded", l)
 		}
 	}
 }

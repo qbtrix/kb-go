@@ -1,15 +1,18 @@
-// Binary persistence for Index (vectors.bin, format version 1), the format
-// kb writes; the JSON Save/Load in vector.go stay for reading legacy files.
+// Binary persistence for Index (vectors.bin, format version 2), the format
+// kb writes; version-1 files are still read, and the JSON Save/Load in
+// vector.go stay for reading legacy files.
 //
 // Layout (integers little-endian):
 //
-//	header (24 bytes)
+//	header (40 bytes; version 1 stops at byte 24)
 //	  [0:4]   magic "KBVX"
-//	  [4:8]   u32 version (1)
-//	  [8:12]  u32 CRC-32C (Castagnoli) of every byte after the header
+//	  [4:8]   u32 version (2)
+//	  [8:12]  u32 CRC-32C (Castagnoli) of every byte from 12 on (v1: from 24)
 //	  [12:16] u32 dim: the common row length, 0 when rows differ (Add accepts any)
 //	  [16:20] u32 count
 //	  [20:24] u32 idTableLen
+//	  [24:32] i64 source size:  the vectors.json this file was built from or
+//	  [32:40] i64 source mtime: superseded (Source); both 0 when none
 //	id table, per row in Entries order: uvarint idLen, id bytes, uvarint rowLen
 //	norms:  count x f64, each row's sum of squares (float64, index order)
 //	matrix: the rows' float32 values back to back
@@ -19,6 +22,10 @@
 // feed RRF), and a normalized row cannot reproduce them. The stored norm is
 // the very sum Cosine accumulates for that row, so a search costs one dot
 // product per row and no score changes.
+//
+// The source stamp lets the caller tell whether a vectors.json beside the
+// file is the one it accounts for or a different one; this package only
+// stores it.
 
 package vector
 
@@ -32,10 +39,25 @@ import (
 )
 
 const (
-	binMagic     = "KBVX"
-	binVersion   = 1
-	binHeaderLen = 24
+	binMagic       = "KBVX"
+	binVersion     = 2
+	binHeaderLen   = 40
+	binCRCFrom     = 12 // v2 checksums the rest of the header too
+	binV1HeaderLen = 24
 )
+
+// Source identifies the vectors.json a vectors.bin was built from or
+// superseded: its size and modification time (unix nanoseconds). The zero
+// value records none.
+type Source struct {
+	Size    int64
+	ModTime int64
+}
+
+// SourceOf stamps a file from its os.Stat result.
+func SourceOf(fi os.FileInfo) Source {
+	return Source{Size: fi.Size(), ModTime: fi.ModTime().UnixNano()}
+}
 
 var (
 	binCRC   = crc32.MakeTable(crc32.Castagnoli)
@@ -52,8 +74,14 @@ func sumSquares(v []float32) float64 {
 	return n
 }
 
-// MarshalBinary encodes the index in the vectors.bin format.
+// MarshalBinary encodes the index in the vectors.bin format, with no source.
 func (idx *Index) MarshalBinary() ([]byte, error) {
+	return idx.MarshalBinarySource(Source{})
+}
+
+// MarshalBinarySource encodes the index in the vectors.bin format, stamped
+// with src.
+func (idx *Index) MarshalBinarySource(src Source) ([]byte, error) {
 	count := len(idx.Entries)
 	dim := -1
 	var ids []byte
@@ -82,6 +110,8 @@ func (idx *Index) MarshalBinary() ([]byte, error) {
 	binary.LittleEndian.PutUint32(out[12:], uint32(dim))
 	binary.LittleEndian.PutUint32(out[16:], uint32(count))
 	binary.LittleEndian.PutUint32(out[20:], uint32(len(ids)))
+	binary.LittleEndian.PutUint64(out[24:], uint64(src.Size))
+	binary.LittleEndian.PutUint64(out[32:], uint64(src.ModTime))
 	out = append(out, ids...)
 	for _, e := range idx.Entries {
 		out = binary.LittleEndian.AppendUint64(out, math.Float64bits(sumSquares(e.Vector)))
@@ -91,29 +121,61 @@ func (idx *Index) MarshalBinary() ([]byte, error) {
 			out = binary.LittleEndian.AppendUint32(out, math.Float32bits(x))
 		}
 	}
-	binary.LittleEndian.PutUint32(out[8:], crc32.Checksum(out[binHeaderLen:], binCRC))
+	binary.LittleEndian.PutUint32(out[8:], crc32.Checksum(out[binCRCFrom:], binCRC))
 	return out, nil
 }
 
-// DecodeBinary parses a vectors.bin image. Every row shares one backing
-// array; any malformation (magic, version, CRC, lengths) is an error.
+// DecodeBinary parses a vectors.bin image, dropping its source stamp.
 func DecodeBinary(data []byte) (*Index, error) {
-	if len(data) < binHeaderLen || string(data[:4]) != binMagic ||
-		binary.LittleEndian.Uint32(data[4:]) != binVersion {
-		return nil, errShape
+	idx, _, err := DecodeBinarySource(data)
+	return idx, err
+}
+
+// DecodeBinarySource parses a vectors.bin image (version 1 or 2) and returns
+// its source stamp, nil for a version-1 file (which has none). Every row
+// shares one backing array; any malformation (magic, version, CRC, lengths)
+// is an error.
+func DecodeBinarySource(data []byte) (*Index, *Source, error) {
+	if len(data) < binV1HeaderLen || string(data[:4]) != binMagic {
+		return nil, nil, errShape
 	}
-	if crc32.Checksum(data[binHeaderLen:], binCRC) != binary.LittleEndian.Uint32(data[8:]) {
-		return nil, errShape
+	var src *Source
+	hdr, crcFrom := binHeaderLen, binCRCFrom
+	switch binary.LittleEndian.Uint32(data[4:]) {
+	case 1:
+		hdr, crcFrom = binV1HeaderLen, binV1HeaderLen
+	case binVersion:
+		if len(data) < binHeaderLen {
+			return nil, nil, errShape
+		}
+		src = &Source{
+			Size:    int64(binary.LittleEndian.Uint64(data[24:])),
+			ModTime: int64(binary.LittleEndian.Uint64(data[32:])),
+		}
+	default:
+		return nil, nil, errShape
 	}
+	if crc32.Checksum(data[crcFrom:], binCRC) != binary.LittleEndian.Uint32(data[8:]) {
+		return nil, nil, errShape
+	}
+	idx, err := decodeBody(data, hdr)
+	if err != nil {
+		return nil, nil, err
+	}
+	return idx, src, nil
+}
+
+// decodeBody parses the id table, norms and matrix after a hdr-byte header.
+func decodeBody(data []byte, hdr int) (*Index, error) {
 	dim := int(binary.LittleEndian.Uint32(data[12:]))
 	count := uint64(binary.LittleEndian.Uint32(data[16:]))
 	idLen := uint64(binary.LittleEndian.Uint32(data[20:]))
-	rest := uint64(len(data)) - binHeaderLen
+	rest := uint64(len(data) - hdr)
 	if idLen > rest || count > rest {
 		return nil, errShape
 	}
-	ids := data[binHeaderLen : binHeaderLen+idLen]
-	tail := data[binHeaderLen+idLen:]
+	ids := data[hdr : uint64(hdr)+idLen]
+	tail := data[uint64(hdr)+idLen:]
 
 	entries := make([]Entry, count)
 	lens := make([]int, count)
@@ -159,11 +221,17 @@ func DecodeBinary(data []byte) (*Index, error) {
 	return &Index{Entries: entries, norms: norms}, nil
 }
 
-// SaveBinary writes the index to path in the binary format, via a temp file
-// and rename so a concurrent reader never sees a torn file (falling back to
-// an in-place write where the rename is refused; the CRC catches a torn read).
+// SaveBinary writes the index to path in the binary format with no source.
 func (idx *Index) SaveBinary(path string) error {
-	data, err := idx.MarshalBinary()
+	return idx.SaveBinarySource(path, Source{})
+}
+
+// SaveBinarySource writes the index to path in the binary format stamped
+// with src, via a temp file and rename so a concurrent reader never sees a
+// torn file (falling back to an in-place write where the rename is refused;
+// the CRC catches a torn read).
+func (idx *Index) SaveBinarySource(path string, src Source) error {
+	data, err := idx.MarshalBinarySource(src)
 	if err != nil {
 		return err
 	}
@@ -190,9 +258,16 @@ func (idx *Index) SaveBinary(path string) error {
 // LoadBinary reads a vectors.bin file. A missing file is returned as the
 // os error (callers decide what "missing" means).
 func LoadBinary(path string) (*Index, error) {
+	idx, _, err := LoadBinarySource(path)
+	return idx, err
+}
+
+// LoadBinarySource is LoadBinary that also returns the source stamp (nil
+// for a version-1 file).
+func LoadBinarySource(path string) (*Index, *Source, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return DecodeBinary(data)
+	return DecodeBinarySource(data)
 }

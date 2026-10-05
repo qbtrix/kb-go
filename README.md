@@ -736,7 +736,10 @@ BM25 inverted index (versioned postings: term → (doc, tf), weighted by title a
 ├── raw/       original source, kept for recompilation
 ├── wiki/      compiled articles as .md files
 ├── cache/     SHA256 hashes + inverted search index (v2; old-format files are ignored and rebuilt on the next search or index write)
-└── index.json concept graph, backlinks, categories
+├── index.json concept graph, backlinks, categories
+└── vectors.bin optional embeddings (binary; a vectors.json from kb v0.4.0 and
+               earlier is converted on the first read and kept until the next
+               vector write, so an older kb still finds it after a downgrade)
 ```
 
 Articles are plain markdown with JSON frontmatter. `cat` them, `grep` them, commit them.
