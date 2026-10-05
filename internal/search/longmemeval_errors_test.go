@@ -1,7 +1,7 @@
 // longmemeval_errors_test.go — Error analysis for LongMemEval misses.
 // Dumps the questions that BM25 fails to retrieve at R@5 so we can
 // categorize what dense embeddings / LLM rerank would fix.
-package main
+package search
 
 import (
 	"encoding/json"
