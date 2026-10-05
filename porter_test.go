@@ -82,9 +82,9 @@ func TestPorterStem_Idempotent(t *testing.T) {
 // form retrieves a document written in another.
 func TestPorterStem_MorphologicalFamilies(t *testing.T) {
 	families := [][]string{
-		{"open", "opens", "opening", "opened"},           // the exact T5 case
-		{"locate", "located", "location", "locations"},    // located <-> location
-		{"serve", "serves", "served", "serving"},          // serves <-> serving
+		{"open", "opens", "opening", "opened"},         // the exact T5 case
+		{"locate", "located", "location", "locations"}, // located <-> location
+		{"serve", "serves", "served", "serving"},       // serves <-> serving
 	}
 	for _, fam := range families {
 		want := porterStem(fam[0])
