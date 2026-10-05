@@ -1,10 +1,11 @@
 // stemming_search_test.go — End-to-end BM25 retrieval proofs for stemming
-// (Porter stemmer).
+// (Porter step 1, see porter.go).
 //
-// porter_test.go proves the stemmer in isolation; these prove the actual recall
-// fix through BM25/BM25WithIndex: a query in one morphological form
-// retrieves a document written in another, the glossary boost survives (and now
-// also fires on variants), and the over-stem false positive does NOT happen.
+// porter_test.go proves the stemmer in isolation; these prove the recall fix
+// through BM25/BM25WithIndex: a query in one inflected form retrieves a
+// document written in another, a shopper question ("returning a jacket")
+// reaches the returns policy, the glossary boost survives (and fires on
+// plural/singular variants), and derivational over-stems do NOT match.
 
 package search
 
@@ -42,33 +43,65 @@ func TestStemmingRetrieval_OpenOpens(t *testing.T) {
 	}
 }
 
-// TestStemmingRetrieval_MorphologicalPairs covers two more families end-to-end.
-func TestStemmingRetrieval_MorphologicalPairs(t *testing.T) {
+// TestStemmingRetrieval_InflectionPairs covers more families end-to-end.
+func TestStemmingRetrieval_InflectionPairs(t *testing.T) {
 	articles := []*model.WikiArticle{
 		{ID: "loc", Title: "Where We Are", Content: "The clinic is located behind the central library.", Version: 1},
-		{ID: "menu", Title: "Kitchen", Content: "The kitchen serves lunch and dinner every day.", Version: 1},
+		{ID: "ship", Title: "Delivery", Content: "Orders are shipped within two business days.", Version: 1},
+		{ID: "box", Title: "Gift Wrap", Content: "We wrap packages in recycled paper.", Version: 1},
 		{ID: "noise", Title: "About", Content: "A friendly neighborhood establishment since 1990.", Version: 1},
 	}
-
-	// "located" doc retrieved by the noun query "location".
-	if r := BM25(articles, "location", 5); !resultHasID(r, "loc") {
-		t.Errorf("query %q did not retrieve the 'located' doc; results=%v", "location", articleIDs(r))
+	for q, want := range map[string]string{
+		"locate":   "loc",
+		"shipping": "ship",
+		"ships":    "ship",
+		"package":  "box",
+	} {
+		if r := BM25(articles, q, 5); !resultHasID(r, want) {
+			t.Errorf("query %q did not retrieve %q; results=%v", q, want, articleIDs(r))
+		}
 	}
-	// "serves" doc retrieved by the gerund query "serving".
-	if r := BM25(articles, "serving", 5); !resultHasID(r, "menu") {
-		t.Errorf("query %q did not retrieve the 'serves' doc; results=%v", "serving", articleIDs(r))
+}
+
+// TestStemmingRetrieval_ReturningAJacket is the store-shopper case: the
+// returns article only says "return"/"returns" and shares no other word with
+// the question, while the product named in it has its own, jacket-heavy
+// article. Only stemming "returning" lets the returns policy reach the top
+// results the model answers from, ahead of the unrelated store pages.
+func TestStemmingRetrieval_ReturningAJacket(t *testing.T) {
+	articles := []*model.WikiArticle{
+		{ID: "returns", Title: "Returns and Exchanges",
+			Content: "Return any item within 30 days for store credit or your money back. Returns are free: " +
+				"print the prepaid label from your order page and drop the parcel at any post office.", Version: 1},
+		{ID: "jacket", Title: "Alpine Shell Jacket",
+			Content: "A waterproof jacket for hiking. The jacket packs into its own pocket. " +
+				"Jacket sizes run from XS to XXL.", Version: 1},
+		{ID: "shipping", Title: "Shipping",
+			Content: "We ship worldwide. Orders go out in two business days.", Version: 1},
+		{ID: "care", Title: "Caring for Outerwear",
+			Content: "Wash your shell on a cold cycle and hang it to dry.", Version: 1},
+	}
+	q := "How do I go about returning a jacket?"
+	r := BM25WithIndex(articles, q, 2, BuildIndex(articles))
+	if !resultHasID(r, "returns") {
+		t.Errorf("query %q: the returns article is not in the top 2; results=%v", q, articleIDs(r))
 	}
 }
 
 // TestStemmingRetrieval_NoOverStem is the over-stem guard at the retrieval
-// level: a query "open" must NOT surface a document that is only about
-// "operators" (open->"open", operator->"oper", so they must not match).
+// level: a query must NOT surface a document that only shares a derivational
+// root with it ("open" vs "operators", "generating" vs "general", "use" vs
+// "us"); full Porter merged the last two.
 func TestStemmingRetrieval_NoOverStem(t *testing.T) {
 	articles := []*model.WikiArticle{
 		{ID: "ops", Title: "Operators", Content: "Mobile network operators route calls through regional operator hubs.", Version: 1},
+		{ID: "gen", Title: "General", Content: "General information about the general meeting.", Version: 1},
+		{ID: "us", Title: "About Us", Content: "Contact us or visit us downtown.", Version: 1},
 	}
-	if r := BM25(articles, "open", 5); resultHasID(r, "ops") {
-		t.Errorf("over-stem: query %q wrongly retrieved the operator-only doc; results=%v", "open", articleIDs(r))
+	for q, bad := range map[string]string{"open": "ops", "generating": "gen", "use": "us"} {
+		if r := BM25(articles, q, 5); resultHasID(r, bad) {
+			t.Errorf("over-stem: query %q wrongly retrieved %q; results=%v", q, bad, articleIDs(r))
+		}
 	}
 }
 

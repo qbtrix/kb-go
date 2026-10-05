@@ -1,10 +1,10 @@
 // stemming_index_version_test.go — Pins the search-index version hazard that
 // stemming introduces. A v2 search_index.json (written before search.Tokenize()
-// Porter-stemmed) stores RAW terms in its postings; a stemmed query token like
-// "open" would silently miss a doc stored as "opens" if that index were trusted.
-// The index format is therefore v3 (stemmed postings): a v2 file must be
-// ignored on load, search must fall back to on-the-fly tokenization, and the
-// next full-scope search must heal the file to v3.
+// stemmed) stores RAW terms in its postings; a stemmed query token like "open"
+// would silently miss a doc stored as "opens" if that index were trusted. A v2
+// file must be ignored on load, search must fall back to on-the-fly
+// tokenization, and the next full-scope search must heal the file to the
+// current IndexVersion.
 package cli
 
 import (

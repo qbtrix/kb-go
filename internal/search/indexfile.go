@@ -1,10 +1,10 @@
-// Binary codec for cache/search_index.bin (IndexVersion 4).
+// Binary codec for cache/search_index.bin (IndexVersion 5).
 //
 // Layout (integers little-endian; uvarint/varint are encoding/binary's):
 //
 //	header (36 bytes)
 //	  [0:4]   magic "KBSI"
-//	  [4:8]   u32 version (4)
+//	  [4:8]   u32 version (5)
 //	  [8:12]  u32 CRC-32C (Castagnoli) of every byte after the header
 //	  [12:16] u32 reserved (0)
 //	  [16:20] u32 nDocs    [20:24] u32 nTerms
@@ -193,7 +193,7 @@ func encodeIndex(si *Index) ([]byte, error) {
 	}
 	for _, l := range []int{n, nTerms, len(doc), len(terms), len(post)} {
 		if l > math.MaxUint32 {
-			return nil, errors.New("search index: too large for the v4 format")
+			return nil, errors.New("search index: too large for the binary format")
 		}
 	}
 
@@ -283,7 +283,7 @@ func (r *docReader) stamp() docStamp {
 	return docStamp{mtime: r.varint(), size: r.varint(), hash: r.str()}
 }
 
-// decodeIndex parses the header and doc table of a v4 file and validates the
+// decodeIndex parses the header and doc table of a current-version file and validates the
 // dictionary offsets; postings stay encoded until a term is looked up.
 func decodeIndex(data []byte) (*Index, error) {
 	if len(data) < indexHeaderLen || string(data[:4]) != indexMagic {

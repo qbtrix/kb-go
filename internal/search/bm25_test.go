@@ -12,7 +12,7 @@ import (
 
 func TestTokenize(t *testing.T) {
 	tokens := Tokenize("Hello, World! This is a TEST-123.")
-	// "this" -> "thi": Tokenize now Porter-stems (feat/bm25-stemming); the
+	// "this" -> "thi": Tokenize stems, and step 1a strips the final s; the
 	// <=2-letter guard leaves "is"/"a" and the digit token "123" unchanged.
 	expected := []string{"hello", "world", "thi", "is", "a", "test", "123"}
 	if len(tokens) != len(expected) {
