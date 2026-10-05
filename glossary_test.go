@@ -1,18 +1,15 @@
-// glossary_test.go — Failing test suite for the glossary scope feature (issue #15).
-// Created: 2026-05-23
-// Locks the API contract for kb-go's domain glossary support: new WikiArticle
-// fields (Kind/Term/Aliases/Category/Related), the isGlossarySource path helper,
-// the build-skip-LLM passthrough for glossary sources, exact-term + alias
-// search boosting, and three new sub-commands (list/show/validate) under
-// cmdGlossary. All tests in this file are EXPECTED TO FAIL until the
-// implementer wires up the feature in a follow-up commit.
+// glossary_test.go — Tests for the glossary scope feature (issue #15): the
+// WikiArticle glossary fields (Kind/Term/Aliases/Category/Related), the
+// isGlossarySource path helper, parseGlossarySource, exact-term + alias search
+// boosting, and the list/show/validate functions behind `kb glossary`. The
+// binary-level glossary build check lives in e2e_test.go.
+
 package main
 
 import (
 	"bytes"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -153,82 +150,6 @@ func TestIsGlossarySource(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("isGlossarySource(%q) = %v, want %v", tc.in, got, tc.want)
 		}
-	}
-}
-
-// --- 4. Build preserves glossary body verbatim (no LLM rewrite) -----------------
-
-// TODO: passes after glossary feature lands
-func TestGlossaryBuildPreservesBodyVerbatim(t *testing.T) {
-	// Use the binary subprocess pattern (matches TestNormalizeCategoriesCLI* in
-	// kb_test.go). With no compiler configured, a build that needed one would
-	// refuse (exit 2) — so this passes only because cmdBuild's glossary branch
-	// parses the frontmatter and populates Kind/Term/Aliases/Category/Related
-	// from the source file without compiling.
-	srcRoot := t.TempDir()
-	glossaryDir := filepath.Join(srcRoot, "glossary")
-	if err := os.MkdirAll(glossaryDir, 0o755); err != nil {
-		t.Fatalf("mkdir glossary: %v", err)
-	}
-
-	const marker = "VERBATIM_BODY_MARKER_42"
-	src := `---
-{
-  "id": "pocket",
-  "title": "Pocket",
-  "kind": "glossary",
-  "term": "Pocket",
-  "aliases": ["pkt", "pocket"],
-  "category": "workspace-primitives",
-  "related": ["Soul", "Fabric"],
-  "concepts": [],
-  "categories": [],
-  "word_count": 12
-}
----
-
-A Pocket is a workspace container. ` + marker + ` lives in this body.`
-
-	if err := os.WriteFile(filepath.Join(glossaryDir, "pocket.md"), []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-
-	scope := "test-gloss-build-" + contentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
-
-	binary := buildTestBinary(t)
-	cmd := exec.Command(binary, "build", srcRoot, "--scope", scope, "--pattern", "*.md")
-	// Deliberately clear KB_COMPILER: the glossary branch must bypass the
-	// compiler entirely.
-	cmd.Env = append(os.Environ(), "KB_COMPILER=")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("kb build failed: %v\noutput: %s", err, out)
-	}
-
-	articles, err := listArticles(scope)
-	if err != nil {
-		t.Fatalf("listArticles: %v", err)
-	}
-	if len(articles) == 0 {
-		t.Fatalf("no articles produced by build; stdout: %s", out)
-	}
-
-	var glossaryArt *WikiArticle
-	for _, a := range articles {
-		if a.Kind == "glossary" {
-			glossaryArt = a
-			break
-		}
-	}
-	if glossaryArt == nil {
-		t.Fatalf("no article with Kind=\"glossary\" produced. articles: %+v", articles)
-	}
-	if glossaryArt.Term != "Pocket" {
-		t.Errorf("Term = %q, want %q", glossaryArt.Term, "Pocket")
-	}
-	if !strings.Contains(glossaryArt.Content, marker) {
-		t.Errorf("Content missing verbatim marker %q. Got: %q", marker, glossaryArt.Content)
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 const shoeRow = "| 10 | 11.5 | 9 | 44 | 28.0 |"
@@ -30,7 +32,7 @@ func runSearchContext(t *testing.T, args ...string) string {
 
 func seedSizeGuide(t *testing.T, scope string) {
 	t.Helper()
-	body, err := os.ReadFile("testdata/size-guide-article.md")
+	body, err := os.ReadFile(kbtest.Path(t, "testdata", "size-guide-article.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

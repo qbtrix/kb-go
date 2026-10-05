@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 // --- Transcript Parsing ---
@@ -286,11 +288,7 @@ func TestGenerateConvoArticles_CreatesArticles(t *testing.T) {
 // --- Integration: full pipeline ---
 
 func TestConvoPipeline_EndToEnd(t *testing.T) {
-	dir := t.TempDir()
-	// Override the KB base dir for this test
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	defer os.Setenv("HOME", origHome)
+	dir := kbtest.IsolatedHome(t)
 
 	// Create a test transcript
 	transcript := `[

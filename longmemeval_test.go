@@ -19,6 +19,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 // --- LongMemEval data structures ---
@@ -238,7 +240,7 @@ const lmeOraclePath = "benchmarks/longmemeval/longmemeval_oracle.json"
 const lmeRankingsOutput = "benchmarks/longmemeval/go_bm25_rankings.json"
 
 func loadLME(path string) ([]LMEQuestion, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(kbtest.RootPath(path))
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +334,7 @@ func TestLongMemEval_ExportRankings(t *testing.T) {
 	}
 
 	data, _ := json.MarshalIndent(rankings, "", "  ")
-	os.WriteFile(lmeRankingsOutput, data, 0644)
+	os.WriteFile(kbtest.RootPath(lmeRankingsOutput), data, 0644)
 	t.Logf("Exported %d question rankings to %s", len(rankings), lmeRankingsOutput)
 }
 

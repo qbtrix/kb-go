@@ -4,18 +4,17 @@
 // --allow-fallback without a compiler stores the raw text verbatim
 // (CompiledWith "none (fallback)"); the loud-fail contract for a failing
 // compiler lives in compiler_test.go. The --article-json mode lets an external
-// caller supply the compiled article on stdin (raw_text + article); happy path
-// + field validation are pinned.
+// caller supply the compiled article on stdin (raw_text + article); the happy
+// path and field validation are pinned, including rawDocCount == 0 per
+// rejected payload (nothing is written before validation passes) and a hostile
+// path-traversal title driven end-to-end to prove the article lands inside the
+// scope's wiki dir under a sanitized slug.
 //
 // Tests target the extracted helpers ingestText / ingestArticleJSON rather
 // than cmdIngest itself, because cmdIngest routes errors through fatal()
-// (os.Exit) which would abort the test binary. Storage is isolated by
-// pointing HOME at t.TempDir(), same pattern as delete_test.go.
-//
-// Updated: validation cases now also pin rawDocCount == 0 per rejected
-// payload (nothing is written before validation passes), and a hostile
-// path-traversal title ("../../../etc/passwd") is driven end-to-end to prove
-// the article lands inside the scope's wiki dir under a sanitized slug.
+// (os.Exit) which would abort the test binary. Storage is isolated with
+// kbtest.SetHome, same pattern as delete_test.go.
+
 package main
 
 import (
@@ -24,12 +23,14 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 func tempHomeScope(t *testing.T, prefix string) string {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	kbtest.SetHome(t, dir)
 	scope := prefix + "-" + filepath.Base(dir)
 	ensureDirs(scope)
 	return scope

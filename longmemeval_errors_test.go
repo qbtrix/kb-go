@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 type MissedQuestion struct {
@@ -153,6 +155,6 @@ func TestLongMemEval_ErrorAnalysis(t *testing.T) {
 		"needs_dense": needsDense,
 		"misses":      misses,
 	}, "", "  ")
-	os.WriteFile(errFile, data, 0644)
+	os.WriteFile(kbtest.RootPath(errFile), data, 0644)
 	t.Logf("Full error report saved to %s", errFile)
 }

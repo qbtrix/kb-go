@@ -1,14 +1,13 @@
-// vector_cli_test.go — Tests for the vector CLI surface (vector_cli.go).
-// Covers: vector-file parsing (both JSON encodings), vector-index persistence
-// per scope, attach-vector ingest flow, pure-cosine search ranking, hybrid
-// BM25+cosine via reciprocal rank fusion, RRF math edge cases, stats vector
-// count, and the regression that BM25-only search keeps its existing JSON
-// shape.
+// vector_cli_test.go — Tests for the vector surface: vector-file parsing (both
+// JSON encodings), vector-index persistence per scope, attach-vector ingest
+// flow, pure-cosine search ranking, hybrid BM25+cosine via reciprocal rank
+// fusion, RRF math edge cases, stats vector count, and the regression that
+// BM25-only search keeps its existing JSON shape.
 //
 // Style follows kb_test.go and vsearch_test.go: no external deps, table-driven
-// where useful, t.Setenv("HOME", ...) for isolation so the per-scope vector
-// index lands inside t.TempDir() rather than the developer's real
-// ~/.knowledge-base/.
+// where useful, kbtest.SetHome for isolation so the per-scope vector index lands
+// inside t.TempDir() rather than the developer's real ~/.knowledge-base/.
+
 package main
 
 import (
@@ -20,6 +19,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 // --- Helpers ---
@@ -30,7 +31,7 @@ import (
 func vectorTestEnv(t *testing.T, name string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	kbtest.SetHome(t, dir)
 	scope := "vec-" + name + "-" + filepath.Base(dir)
 	ensureDirs(scope)
 	return dir, scope

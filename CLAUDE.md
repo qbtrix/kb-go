@@ -16,7 +16,8 @@ Headless knowledge base engine. One Go binary (`package main` split into per-con
 - `mcp.go` — `kb serve` MCP server; `convo.go` — conversation mode; `porter.go` — stemmer; `vsearch.go` — vector index
 - `glossary.go` — Domain glossary support (skip-LLM passthrough + list/show/validate)
 - `contradiction.go` — Cross-source definition contradiction detection (offline; flags terms two sources define differently)
-- `kb_test.go`, `glossary_test.go`, `convo_test.go`, `vsearch_test.go`, `vector_cli_test.go` — unit tests; `compiler_test.go` — hook + no-compiler refusals + usage + version (its TestMain re-execs the test binary as a fake compiler when `KB_FAKE_COMPILER` is set)
+- `kb_test.go`, `glossary_test.go`, `convo_test.go`, `vsearch_test.go`, `vector_cli_test.go`, … — unit tests; `compiler_test.go` — in-process hook, usage and version tests; `e2e_test.go` — tests that exec the built binary (hook through every command, exit-2 refusals, MCP-vs-CLI parity)
+- `internal/kbtest/` — shared test plumbing: `kbtest.Main` (every package's TestMain: isolates HOME and USERPROFILE for the whole run, and acts as the fake compiler when `KB_FAKE_COMPILER` is set), `SetHome`/`IsolatedHome`, repo-root fixture paths (`Path`, `RootPath`), `BuildBinary`
 - `kb_bench_test.go` — 10 performance benchmarks
 - `bench.sh` — Integration benchmark script (full pipeline; build steps need `KB_COMPILER`)
 - `SKILL.md` — skills.sh distribution
@@ -73,7 +74,7 @@ kb clear --scope <name>
 
 ## Testing
 
-Unit tests (230+) + 10 benchmarks. No external test deps. On Windows, point both `HOME` and `USERPROFILE` at a temp dir when running the suite (`os.UserHomeDir` reads `USERPROFILE`), or tests write scopes into your real `~/.knowledge-base`.
+Unit tests (230+) + 10 benchmarks. No external test deps. Every test package's `TestMain` is `kbtest.Main`, which points both `HOME` and `USERPROFILE` (`os.UserHomeDir` reads `USERPROFILE` on Windows) at a throwaway dir, so the suite never touches your real `~/.knowledge-base`; a test that needs its own home calls `kbtest.SetHome`/`kbtest.IsolatedHome` (never `t.Setenv("HOME", …)` alone). Fixture files resolve from the module root via `kbtest.Path`.
 
 ```bash
 go test -v ./...              # All unit tests
