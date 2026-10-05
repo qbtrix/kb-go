@@ -39,6 +39,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -161,7 +162,7 @@ func TestContradictionEval(t *testing.T) {
 
 	// --- BEFORE: build with detection OFF. -----------------------------------
 	beforeScope := "test-contra-eval-before-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(beforeScope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(beforeScope)) }()
 
 	beforeFindings := buildEvalJSON(t, srcDir, beforeScope, "off")
 	beforeSurfaced := len(beforeFindings) // measured: warnings emitted with detection off
@@ -170,7 +171,7 @@ func TestContradictionEval(t *testing.T) {
 	// glossary articles, then resolve each term the way a reader would
 	// (glossaryShow returns the first matching article in id order) to see which
 	// of the two conflicting definitions the lookup silently settles on.
-	beforeArticles, err := listArticles(beforeScope)
+	beforeArticles, err := store.ListArticles(beforeScope)
 	if err != nil {
 		t.Fatalf("listArticles(before) err = %v", err)
 	}
@@ -203,7 +204,7 @@ func TestContradictionEval(t *testing.T) {
 
 	// --- AFTER: rebuild the same fixture with detection ON (strict). ----------
 	afterScope := "test-contra-eval-after-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(afterScope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(afterScope)) }()
 
 	afterFindings := buildEvalJSON(t, srcDir, afterScope, "strict")
 	afterSurfaced := len(afterFindings)

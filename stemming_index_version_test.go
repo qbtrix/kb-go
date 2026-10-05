@@ -17,6 +17,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 // rawTokenize is the pre-stemming tokenizer: lowercase + split on
@@ -61,7 +62,7 @@ func writeUnstemmedV2Index(t *testing.T, scope string, articles []*model.WikiArt
 	if err != nil {
 		t.Fatalf("marshal v2 index: %v", err)
 	}
-	path := filepath.Join(scopeDir(scope), "cache", "search_index.json")
+	path := filepath.Join(store.ScopeDir(scope), "cache", "search_index.json")
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("write v2 index: %v", err)
 	}
@@ -72,17 +73,17 @@ func TestUnstemmedV2IndexIsNotTrusted(t *testing.T) {
 	dir := t.TempDir()
 	kbtest.SetHome(t, dir)
 	scope := "sidx-stem-" + filepath.Base(dir)
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 
 	for _, a := range []*model.WikiArticle{
 		{ID: "hours", Title: "Store Hours", Content: "The shop opens at 8am and closes at 6pm.", Version: 1},
 		{ID: "payments", Title: "Payments", Content: "We accept cards and cash for all purchases.", Version: 1},
 	} {
-		if err := saveArticle(scope, a); err != nil {
+		if err := store.SaveArticle(scope, a); err != nil {
 			t.Fatalf("saveArticle %s: %v", a.ID, err)
 		}
 	}
-	articles, err := listArticles(scope)
+	articles, err := store.ListArticles(scope)
 	if err != nil {
 		t.Fatalf("listArticles: %v", err)
 	}

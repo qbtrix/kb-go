@@ -19,6 +19,7 @@ import (
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/parse"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -56,7 +57,7 @@ func cmdIngest(args []string) {
 		requireCompiler(spec, "ingest", "Pipe an already compiled article to `kb ingest --article-json`, or pass\n     --allow-fallback to store the text verbatim without compiling.")
 	}
 
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 
 	var text string
 
@@ -121,7 +122,7 @@ func ingestText(scope, source string, spec compile.Spec, lang, filePath, text st
 		return fmt.Errorf("no compiler configured: set ANTHROPIC_API_KEY, or pass --compiler, --article-json or --allow-fallback")
 	}
 
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 
 	// Save raw doc
 	hash := textutil.ContentHash(text)
@@ -135,7 +136,7 @@ func ingestText(scope, source string, spec compile.Spec, lang, filePath, text st
 		WordCount:   textutil.WordCount(text),
 		IngestedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
-	if err := saveRawDoc(scope, raw); err != nil {
+	if err := store.SaveRawDoc(scope, raw); err != nil {
 		return fmt.Errorf("failed to save raw doc: %v", err)
 	}
 
@@ -176,12 +177,12 @@ func ingestText(scope, source string, spec compile.Spec, lang, filePath, text st
 	article.SourcePath = source
 	article.SourceDocs = []string{raw.ID}
 
-	ids := loadIDRegistry(scope)
-	article.ID, article.Version = ids.claim(article.ID, article.SourcePath, article.SourceDocs, true)
-	if err := saveArticle(scope, article); err != nil {
+	ids := store.LoadIDRegistry(scope)
+	article.ID, article.Version = ids.Claim(article.ID, article.SourcePath, article.SourceDocs, true)
+	if err := store.SaveArticle(scope, article); err != nil {
 		return fmt.Errorf("failed to save article %s: %v", article.ID, err)
 	}
-	ids.retire(scope)
+	ids.Retire(scope)
 	finishIngest(scope, article, jsonOut)
 	return nil
 }
@@ -221,7 +222,7 @@ func ingestArticleJSON(scope string, data []byte, jsonOut bool) error {
 		return fmt.Errorf("--article-json: article.content is required")
 	}
 
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 
 	source := payload.Article.Source
 	if source == "" {
@@ -240,7 +241,7 @@ func ingestArticleJSON(scope string, data []byte, jsonOut bool) error {
 		WordCount:   textutil.WordCount(payload.RawText),
 		IngestedAt:  now,
 	}
-	if err := saveRawDoc(scope, raw); err != nil {
+	if err := store.SaveRawDoc(scope, raw); err != nil {
 		return fmt.Errorf("failed to save raw doc: %v", err)
 	}
 
@@ -266,12 +267,12 @@ func ingestArticleJSON(scope string, data []byte, jsonOut bool) error {
 		Usage:        usage,
 	}
 
-	ids := loadIDRegistry(scope)
-	article.ID, article.Version = ids.claim(article.ID, article.SourcePath, article.SourceDocs, true)
-	if err := saveArticle(scope, article); err != nil {
+	ids := store.LoadIDRegistry(scope)
+	article.ID, article.Version = ids.Claim(article.ID, article.SourcePath, article.SourceDocs, true)
+	if err := store.SaveArticle(scope, article); err != nil {
 		return fmt.Errorf("failed to save article %s: %v", article.ID, err)
 	}
-	ids.retire(scope)
+	ids.Retire(scope)
 	finishIngest(scope, article, jsonOut)
 	return nil
 }
@@ -279,9 +280,9 @@ func ingestArticleJSON(scope string, data []byte, jsonOut bool) error {
 // finishIngest refreshes the concept index + search index after an ingest
 // write and prints the standard ingest output (shared by both ingest modes).
 func finishIngest(scope string, article *model.WikiArticle, jsonOut bool) {
-	allArticles, _ := listArticles(scope)
-	idx := rebuildIndex(scope, allArticles)
-	saveIndex(scope, idx)
+	allArticles, _ := store.ListArticles(scope)
+	idx := store.RebuildIndex(scope, allArticles)
+	store.SaveIndex(scope, idx)
 	saveSearchIndex(scope, buildSearchIndex(allArticles))
 
 	if jsonOut {
@@ -299,11 +300,11 @@ func finishIngest(scope string, article *model.WikiArticle, jsonOut bool) {
 	}
 }
 
-// runIngestVec is the CLI wrapper around attachVectorToArticle. Calls fatal()
+// runIngestVec is the CLI wrapper around store.AttachVector. Calls fatal()
 // on any failure (matching the rest of cmdIngest) and emits human/JSON output
 // on success.
 func runIngestVec(scope, articleID, vecPath string, jsonOut bool) {
-	dim, total, err := attachVectorToArticle(scope, articleID, vecPath)
+	dim, total, err := store.AttachVector(scope, articleID, vecPath)
 	if err != nil {
 		fatal("%v", err)
 	}

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 // searchIndexVersion is bumped whenever the on-disk shape OR the tokens it
@@ -83,8 +84,8 @@ func buildSearchIndex(articles []*model.WikiArticle) *SearchIndex {
 }
 
 func saveSearchIndex(scope string, si *SearchIndex) error {
-	ensureDirs(scope)
-	path := filepath.Join(scopeDir(scope), "cache", "search_index.json")
+	store.EnsureDirs(scope)
+	path := filepath.Join(store.ScopeDir(scope), "cache", "search_index.json")
 	data, err := json.Marshal(si)
 	if err != nil {
 		return err
@@ -93,7 +94,7 @@ func saveSearchIndex(scope string, si *SearchIndex) error {
 }
 
 func loadSearchIndex(scope string) *SearchIndex {
-	path := filepath.Join(scopeDir(scope), "cache", "search_index.json")
+	path := filepath.Join(store.ScopeDir(scope), "cache", "search_index.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -116,7 +117,7 @@ func loadSearchIndex(scope string) *SearchIndex {
 // search`, MCP serve) regain the fast path after a format upgrade discarded
 // their v1 file — without it, a scope that never sees another ingest/build
 // would pay the slow path forever. Callers MUST pass the scope's FULL article
-// slice in listArticles order (never a tag-filtered or multi-scope slice),
+// slice in store.ListArticles order (never a tag-filtered or multi-scope slice),
 // since the persisted index describes the whole scope.
 func loadOrHealSearchIndex(scope string, articles []*model.WikiArticle) *SearchIndex {
 	return healSearchIndex(scope, articles, loadSearchIndex(scope))

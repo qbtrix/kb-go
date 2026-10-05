@@ -25,7 +25,7 @@
 // trusted (an overwrite inside one filesystem clock tick can keep both mtime
 // and size), so it is re-read on every call until it settles. The search
 // index file is cached under the same stamp rule, and the cached article
-// slice keeps listArticles' ID order so SearchIndex docIdx stays aligned
+// slice keeps store.ListArticles' ID order so SearchIndex docIdx stays aligned
 // (healSearchIndex still rebuilds whenever ids/order drift). kb_show and
 // kb_glossary read single files and stay uncached.
 package main
@@ -44,6 +44,7 @@ import (
 	"time"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -401,7 +402,7 @@ func mcpSearch(c *articleCache, args map[string]any, defaultScope string) (any, 
 		}
 		// Agent-controlled path over a persistent connection — contain it to
 		// the kb base dir so it can't be used as a read-oracle (issue #23).
-		queryVec, err := loadVectorFromContainedFile(queryVecPath)
+		queryVec, err := store.LoadContainedVector(queryVecPath)
 		if err != nil {
 			return nil, fmt.Errorf("load query vector: %v", err)
 		}
@@ -420,7 +421,7 @@ func mcpSearch(c *articleCache, args map[string]any, defaultScope string) (any, 
 		return results, nil
 	}
 
-	scopes := resolveScopes(scope)
+	scopes := store.ResolveScopes(scope)
 
 	var allArticles []*model.WikiArticle
 	var scopeMap []string
@@ -508,7 +509,7 @@ func mcpShow(args map[string]any, defaultScope string) (any, error) {
 	}
 	scope := argStr(args, "scope", defaultScope)
 
-	a, err := loadArticle(scope, id)
+	a, err := store.LoadArticle(scope, id)
 	if err != nil || a == nil {
 		return nil, fmt.Errorf("article not found: %s", id)
 	}
@@ -527,7 +528,7 @@ func mcpShow(args map[string]any, defaultScope string) (any, error) {
 }
 
 // mcpGlossary resolves a term against the compiled concept index. Concepts are
-// keyed lowercase in index.json (see rebuildIndex); the linked articles' titles
+// keyed lowercase in index.json (see store.RebuildIndex); the linked articles' titles
 // and summaries are the canonical definition surface kb-go holds. Read-only.
 func mcpGlossary(args map[string]any, defaultScope string) (any, error) {
 	term := argStr(args, "term", "")
@@ -536,7 +537,7 @@ func mcpGlossary(args map[string]any, defaultScope string) (any, error) {
 	}
 	scope := argStr(args, "scope", defaultScope)
 
-	idx := loadIndex(scope)
+	idx := store.LoadIndex(scope)
 	key := strings.ToLower(strings.TrimSpace(term))
 	concept, ok := idx.Concepts[key]
 	if !ok || concept == nil {
@@ -549,7 +550,7 @@ func mcpGlossary(args map[string]any, defaultScope string) (any, error) {
 
 	defs := make([]map[string]any, 0, len(concept.Articles))
 	for _, aid := range concept.Articles {
-		a, err := loadArticle(scope, aid)
+		a, err := store.LoadArticle(scope, aid)
 		if err != nil || a == nil {
 			continue
 		}
@@ -575,9 +576,9 @@ func mcpStats(c *articleCache, args map[string]any, defaultScope string) (any, e
 	scope := argStr(args, "scope", defaultScope)
 
 	articles, _ := c.list(scope)
-	idx := loadIndex(scope)
+	idx := store.LoadIndex(scope)
 	rawCount := 0
-	if entries, err := os.ReadDir(filepath.Join(scopeDir(scope), "raw")); err == nil {
+	if entries, err := os.ReadDir(filepath.Join(store.ScopeDir(scope), "raw")); err == nil {
 		rawCount = len(entries)
 	}
 	totalWords := 0
@@ -591,7 +592,7 @@ func mcpStats(c *articleCache, args map[string]any, defaultScope string) (any, e
 		"words":      totalWords,
 		"concepts":   len(idx.Concepts),
 		"categories": len(idx.Categories),
-		"vectors":    vectorIndexCount(scope),
+		"vectors":    store.VectorCount(scope),
 	}, nil
 }
 
@@ -663,13 +664,13 @@ func newArticleCache() *articleCache {
 	return &articleCache{scopes: map[string]*scopeCache{}}
 }
 
-// list returns the scope's articles exactly as listArticles would read them
+// list returns the scope's articles exactly as store.ListArticles would read them
 // from disk right now. The returned slice and articles are shared: read-only.
 func (c *articleCache) list(scope string) ([]*model.WikiArticle, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	key := scopeDir(scope)
+	key := store.ScopeDir(scope)
 	dir := filepath.Join(key, "wiki")
 	// Taken before any stat: a write this call did not observe happens later.
 	now := time.Now()
@@ -709,7 +710,7 @@ func (c *articleCache) list(scope string) ([]*model.WikiArticle, error) {
 		if err != nil {
 			continue
 		}
-		a, err := parseArticle(id, string(data))
+		a, err := store.ParseArticle(id, string(data))
 		if err != nil {
 			continue // same skip rule as listArticles
 		}
@@ -742,7 +743,7 @@ func (c *articleCache) searchIndex(scope string) *SearchIndex {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	key := scopeDir(scope)
+	key := store.ScopeDir(scope)
 	now := time.Now()
 	info, err := os.Stat(filepath.Join(key, "cache", "search_index.json"))
 	sc := c.scopes[key]

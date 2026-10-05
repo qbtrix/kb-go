@@ -13,6 +13,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -38,7 +39,7 @@ func TestBuiltinNon200IsLoud(t *testing.T) {
 	if err := ingestText("bi-fail", "notes.md", spec, "", "", text, true, false); err != nil {
 		t.Fatalf("--allow-fallback: %v", err)
 	}
-	arts, _ := listArticles("bi-fail")
+	arts, _ := store.ListArticles("bi-fail")
 	if len(arts) != 1 || arts[0].CompiledWith != "none (fallback)" {
 		t.Errorf("fallback article = %+v", arts)
 	}

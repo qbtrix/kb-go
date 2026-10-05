@@ -14,6 +14,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -47,12 +48,12 @@ func seedSizeGuide(t *testing.T, scope string) {
 		SourcePath: "size-guide",
 		Version:    1,
 	}
-	if err := saveArticle(scope, a); err != nil {
+	if err := store.SaveArticle(scope, a); err != nil {
 		t.Fatal(err)
 	}
 	other := &model.WikiArticle{ID: "returns", Title: "Returns and exchanges", Summary: "60-day returns.",
 		Content: "Return unworn gear within 60 days for a full refund.", SourcePath: "returns", Version: 1}
-	if err := saveArticle(scope, other); err != nil {
+	if err := store.SaveArticle(scope, other); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -60,7 +61,7 @@ func seedSizeGuide(t *testing.T, scope string) {
 // The whole article fits a normal budget: it must come back whole, table included.
 func TestContextReturnsBodyNotSummary(t *testing.T) {
 	scope := "test-ctx-body-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 	seedSizeGuide(t, scope)
 
 	out := runSearchContext(t, "tell me guide for shoe sizes", "--scope", scope, "--limit", "1")
@@ -76,7 +77,7 @@ func TestContextReturnsBodyNotSummary(t *testing.T) {
 // spend that budget on the sections the query is about, not the article's head.
 func TestContextBudgetKeepsQueryRelevantSection(t *testing.T) {
 	scope := "test-ctx-budget-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 	seedSizeGuide(t, scope)
 
 	out := runSearchContext(t, "footwear shoe size conversion EU", "--scope", scope, "--limit", "1", "--context-chars", "1200")
@@ -98,7 +99,7 @@ func TestContextBudgetKeepsQueryRelevantSection(t *testing.T) {
 // Markdown tables must never be cut mid-row: a half table reads as data loss.
 func TestContextNeverSplitsTableRows(t *testing.T) {
 	scope := "test-ctx-rows-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 	seedSizeGuide(t, scope)
 
 	out := runSearchContext(t, "footwear EU sizes", "--scope", scope, "--limit", "1", "--context-chars", "900")

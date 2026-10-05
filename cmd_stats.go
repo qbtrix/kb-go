@@ -10,16 +10,17 @@ import (
 	"path/filepath"
 
 	"github.com/qbtrix/kb-go/internal/compile"
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 func cmdStats(args []string) {
 	scope := flagStr(args, "--scope", "default")
 	jsonOut := flagBool(args, "--json")
 
-	articles, _ := listArticles(scope)
-	idx := loadIndex(scope)
+	articles, _ := store.ListArticles(scope)
+	idx := store.LoadIndex(scope)
 	rawCount := 0
-	rawDir := filepath.Join(scopeDir(scope), "raw")
+	rawDir := filepath.Join(store.ScopeDir(scope), "raw")
 	if entries, err := os.ReadDir(rawDir); err == nil {
 		rawCount = len(entries)
 	}
@@ -27,7 +28,7 @@ func cmdStats(args []string) {
 	for _, a := range articles {
 		totalWords += a.WordCount
 	}
-	vectorCount := vectorIndexCount(scope)
+	vectorCount := store.VectorCount(scope)
 	usageN, usageIn, usageOut, usageCost := compile.UsageTotals(articles)
 
 	if jsonOut {

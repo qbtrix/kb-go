@@ -5,6 +5,8 @@ package main
 
 import (
 	"fmt"
+
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 // cmdGraph exports the concept graph in a portable format.
@@ -19,7 +21,7 @@ func cmdGraph(args []string) {
 	limit := flagInt(args, "--limit", 30)
 	minArticles := flagInt(args, "--min-articles", 2)
 
-	idx := loadIndex(scope)
+	idx := store.LoadIndex(scope)
 	if len(idx.Concepts) == 0 {
 		fatal("No concepts found in scope %s", scope)
 	}

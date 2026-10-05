@@ -10,12 +10,13 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 func exportWiki(scope, outputDir string) {
-	articles, _ := listArticles(scope)
-	idx := loadIndex(scope)
+	articles, _ := store.ListArticles(scope)
+	idx := store.LoadIndex(scope)
 
 	os.MkdirAll(outputDir, 0o755)
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -154,7 +155,7 @@ func BenchmarkRebuildIndex(b *testing.B) {
 		corpus := generateCorpus(size)
 		b.Run(fmt.Sprintf("articles_%d", size), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				rebuildIndex("bench", corpus)
+				store.RebuildIndex("bench", corpus)
 			}
 		})
 	}

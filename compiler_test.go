@@ -22,6 +22,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -79,7 +80,7 @@ func TestArticleJSONStoresUsage(t *testing.T) {
 	if err := ingestArticleJSON(scope, []byte(payload), false); err != nil {
 		t.Fatal(err)
 	}
-	a, _ := loadArticle(scope, "with-usage")
+	a, _ := store.LoadArticle(scope, "with-usage")
 	if a == nil || a.Usage == nil || a.Usage.InputTokens != 5 || a.Usage.CostUSD != 0.25 {
 		t.Fatalf("usage not stored: %+v", a)
 	}
@@ -89,7 +90,7 @@ func TestArticleJSONStoresUsage(t *testing.T) {
 	// An explicit compiled_with still wins.
 	payload = `{"raw_text":"r2","article":{"title":"Explicit","content":"c","compiled_with":"pp-backend","usage":{"model":"gpt-x"}}}`
 	ingestArticleJSON(scope, []byte(payload), false)
-	b, _ := loadArticle(scope, "explicit")
+	b, _ := store.LoadArticle(scope, "explicit")
 	if b == nil || b.CompiledWith != "pp-backend" {
 		t.Errorf("explicit compiled_with should win: %+v", b)
 	}

@@ -13,7 +13,6 @@ package main
 import (
 	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -21,13 +20,13 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
-	"github.com/qbtrix/kb-go/internal/vector"
 )
 
 // --- Helpers ---
 
-// vectorTestEnv sets HOME to a fresh temp dir so basePath() routes into it.
+// vectorTestEnv sets HOME to a fresh temp dir so store.BaseDir() routes into it.
 // Returns the temp dir and a fresh scope name. The scope name varies per test
 // so accidental cross-test pollution surfaces immediately.
 func vectorTestEnv(t *testing.T, name string) (string, string) {
@@ -35,12 +34,12 @@ func vectorTestEnv(t *testing.T, name string) (string, string) {
 	dir := t.TempDir()
 	kbtest.SetHome(t, dir)
 	scope := "vec-" + name + "-" + filepath.Base(dir)
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 	return dir, scope
 }
 
 // stubArticle plants a minimal WikiArticle with the given id so that
-// attachVectorToArticle's existence check passes and search can resolve hits.
+// store.AttachVector's existence check passes and search can resolve hits.
 func stubArticle(t *testing.T, scope, id, title, summary string, content string) {
 	t.Helper()
 	a := &model.WikiArticle{
@@ -57,7 +56,7 @@ func stubArticle(t *testing.T, scope, id, title, summary string, content string)
 		CompiledWith: "test",
 		Version:      1,
 	}
-	if err := saveArticle(scope, a); err != nil {
+	if err := store.SaveArticle(scope, a); err != nil {
 		t.Fatalf("saveArticle %s: %v", id, err)
 	}
 }
@@ -67,60 +66,9 @@ func stubArticle(t *testing.T, scope, id, title, summary string, content string)
 // does at the end of an ingest.
 func rebuildScopeIndex(t *testing.T, scope string) {
 	t.Helper()
-	all, _ := listArticles(scope)
+	all, _ := store.ListArticles(scope)
 	saveSearchIndex(scope, buildSearchIndex(all))
-	saveIndex(scope, rebuildIndex(scope, all))
-}
-
-// --- attach-vector ingest flow ---
-
-func TestCmdIngestVec_AttachesVectorToExistingArticle(t *testing.T) {
-	dir, scope := vectorTestEnv(t, "ingest")
-
-	// Plant an article so the existence check passes.
-	stubArticle(t, scope, "art-1", "First Article", "Auth flow notes.", "Body text about OAuth2.")
-
-	vec := []float32{0.1, 0.2, 0.3, 0.4}
-	vecPath := kbtest.WriteVecJSON(t, dir, "vec.json", vec, "object")
-
-	dim, total, err := attachVectorToArticle(scope, "art-1", vecPath)
-	if err != nil {
-		t.Fatalf("attach: %v", err)
-	}
-	if dim != len(vec) {
-		t.Errorf("dim: want %d, got %d", len(vec), dim)
-	}
-	if total != 1 {
-		t.Errorf("total: want 1, got %d", total)
-	}
-
-	// Re-load the index from disk and confirm the vector is there.
-	idx, err := loadOrCreateVectorIndex(scope)
-	if err != nil {
-		t.Fatalf("load index: %v", err)
-	}
-	if idx.Len() != 1 {
-		t.Fatalf("loaded index: want 1 entry, got %d", idx.Len())
-	}
-	if idx.Entries[0].ID != "art-1" {
-		t.Errorf("entry id: want art-1, got %s", idx.Entries[0].ID)
-	}
-}
-
-func TestCmdIngestVec_RejectsMissingArticle(t *testing.T) {
-	dir, scope := vectorTestEnv(t, "noart")
-	vecPath := kbtest.WriteVecJSON(t, dir, "vec.json", []float32{0.1, 0.2}, "array")
-	if _, _, err := attachVectorToArticle(scope, "missing", vecPath); err == nil {
-		t.Error("attaching to non-existent article should error")
-	}
-}
-
-func TestCmdIngestVec_RejectsEmptyID(t *testing.T) {
-	dir, scope := vectorTestEnv(t, "noid")
-	vecPath := kbtest.WriteVecJSON(t, dir, "vec.json", []float32{0.1, 0.2}, "array")
-	if _, _, err := attachVectorToArticle(scope, "", vecPath); err == nil {
-		t.Error("empty id should error")
-	}
+	store.SaveIndex(scope, store.RebuildIndex(scope, all))
 }
 
 // --- pure cosine search ---
@@ -134,14 +82,14 @@ func TestCmdSearch_QueryVecOnly_RanksByCosine(t *testing.T) {
 	stubArticle(t, scope, "near", "Near match", "Mostly aligned.", "near body")
 	stubArticle(t, scope, "distant", "Distant", "Orthogonal.", "distant body")
 
-	idx, err := loadOrCreateVectorIndex(scope)
+	idx, err := store.LoadVectors(scope)
 	if err != nil {
 		t.Fatalf("load idx: %v", err)
 	}
 	idx.Add("exact", []float32{1, 0, 0})
 	idx.Add("near", []float32{0.9, 0.1, 0})
 	idx.Add("distant", []float32{0, 0, 1})
-	if err := saveVectorIndex(scope, idx); err != nil {
+	if err := store.SaveVectors(scope, idx); err != nil {
 		t.Fatalf("save idx: %v", err)
 	}
 
@@ -189,14 +137,14 @@ func TestCmdSearch_Hybrid_RRFFuses_BothLists(t *testing.T) {
 	stubArticle(t, scope, "neither", "unrelated", "logging notes.", "log lines and rotation")
 	rebuildScopeIndex(t, scope)
 
-	idx, _ := loadOrCreateVectorIndex(scope)
+	idx, _ := store.LoadVectors(scope)
 	// Query vector aligns with x-axis. "both" and "vec-only" align with x,
 	// "text-only" and "neither" align with y/z.
 	idx.Add("both", []float32{1, 0, 0})
 	idx.Add("vec-only", []float32{0.95, 0.05, 0})
 	idx.Add("text-only", []float32{0, 1, 0})
 	idx.Add("neither", []float32{0, 0, 1})
-	if err := saveVectorIndex(scope, idx); err != nil {
+	if err := store.SaveVectors(scope, idx); err != nil {
 		t.Fatalf("save idx: %v", err)
 	}
 
@@ -296,77 +244,6 @@ func TestRRFFuse_EmptyInputs(t *testing.T) {
 	}
 }
 
-// --- stats / vector count ---
-
-func TestCmdStats_ReportsVectorCount(t *testing.T) {
-	_, scope := vectorTestEnv(t, "stats")
-
-	// Empty scope reports 0.
-	if got := vectorIndexCount(scope); got != 0 {
-		t.Errorf("empty scope: want 0 vectors, got %d", got)
-	}
-
-	// Add three articles + vectors.
-	stubArticle(t, scope, "a", "A", "summary a", "body a")
-	stubArticle(t, scope, "b", "B", "summary b", "body b")
-	stubArticle(t, scope, "c", "C", "summary c", "body c")
-
-	idx, _ := loadOrCreateVectorIndex(scope)
-	idx.Add("a", []float32{1, 0})
-	idx.Add("b", []float32{0, 1})
-	idx.Add("c", []float32{1, 1})
-	saveVectorIndex(scope, idx)
-
-	if got := vectorIndexCount(scope); got != 3 {
-		t.Errorf("want 3 vectors, got %d", got)
-	}
-}
-
-// --- persistence round-trip ---
-
-func TestVectorIndexPath_PersistsAcrossInvocations(t *testing.T) {
-	_, scope := vectorTestEnv(t, "persist")
-	stubArticle(t, scope, "doc-1", "Doc 1", "summary", "body content")
-
-	// "First invocation": attach a vector.
-	dir := t.TempDir()
-	vecPath := kbtest.WriteVecJSON(t, dir, "v.json", []float32{0.1, 0.2, 0.3}, "object")
-	if _, _, err := attachVectorToArticle(scope, "doc-1", vecPath); err != nil {
-		t.Fatalf("attach: %v", err)
-	}
-
-	// "Second invocation": load the index from disk fresh and confirm the
-	// vector survived. We never touch the in-memory idx from the first call.
-	indexPath := vectorIndexPath(scope)
-	if _, err := os.Stat(indexPath); err != nil {
-		t.Fatalf("vectors.json should exist on disk: %v", err)
-	}
-	loaded, err := vector.Load(indexPath)
-	if err != nil {
-		t.Fatalf("LoadVectorIndex: %v", err)
-	}
-	if loaded.Len() != 1 {
-		t.Fatalf("want 1 entry after reload, got %d", loaded.Len())
-	}
-	if loaded.Entries[0].ID != "doc-1" {
-		t.Errorf("id mismatch: want doc-1, got %s", loaded.Entries[0].ID)
-	}
-	if len(loaded.Entries[0].Vector) != 3 {
-		t.Errorf("vector dim: want 3, got %d", len(loaded.Entries[0].Vector))
-	}
-}
-
-func TestLoadOrCreateVectorIndex_EmptyOnFirstCall(t *testing.T) {
-	_, scope := vectorTestEnv(t, "first")
-	idx, err := loadOrCreateVectorIndex(scope)
-	if err != nil {
-		t.Fatalf("loadOrCreate: %v", err)
-	}
-	if idx.Len() != 0 {
-		t.Errorf("first call should return empty index, got len=%d", idx.Len())
-	}
-}
-
 // --- BM25-only shape regression ---
 
 // TestSearch_BM25Only_ShapeUnchanged is a regression guard. The brief
@@ -384,7 +261,7 @@ func TestSearch_BM25Only_ShapeUnchanged(t *testing.T) {
 	rebuildScopeIndex(t, scope)
 
 	// Re-create the BM25-only result-row shape that cmdSearch builds.
-	all, _ := listArticles(scope)
+	all, _ := store.ListArticles(scope)
 	si := loadSearchIndex(scope)
 	results := bm25SearchWithIndex(all, "rate limit", 5, si)
 	if len(results) == 0 {
@@ -419,7 +296,7 @@ func TestSearch_BM25Only_ShapeUnchanged(t *testing.T) {
 func TestEmitVectorResults_HybridShape(t *testing.T) {
 	_, scope := vectorTestEnv(t, "shape-hybrid")
 	stubArticle(t, scope, "a", "T", "S", "body")
-	a, _ := loadArticle(scope, "a")
+	a, _ := store.LoadArticle(scope, "a")
 	results := []vectorSearchResult{
 		{Article: a, Score: 0.0312, BM25Rank: 0, VecRank: 2, FusedRank: 0},
 	}
@@ -466,10 +343,10 @@ func TestRunVectorSearch_SkipsOrphanedVectors(t *testing.T) {
 	// article and one for a deleted/never-existed article. Search must skip
 	// the orphan without surfacing it as a result.
 	stubArticle(t, scope, "kept", "Kept", "summary", "body")
-	idx, _ := loadOrCreateVectorIndex(scope)
+	idx, _ := store.LoadVectors(scope)
 	idx.Add("kept", []float32{1, 0, 0})
 	idx.Add("orphan", []float32{0.99, 0.01, 0})
-	saveVectorIndex(scope, idx)
+	store.SaveVectors(scope, idx)
 
 	results, err := runVectorSearch(scope, []float32{1, 0, 0}, 5)
 	if err != nil {
@@ -495,12 +372,12 @@ func TestRunHybridSearch_TopKLimit(t *testing.T) {
 		stubArticle(t, scope, id, "T-"+id, "summary", fmt.Sprintf("token-%d shared", i))
 	}
 	rebuildScopeIndex(t, scope)
-	idx, _ := loadOrCreateVectorIndex(scope)
+	idx, _ := store.LoadVectors(scope)
 	for i := 0; i < 10; i++ {
 		v := []float32{float32(i), 1, 0}
 		idx.Add(fmt.Sprintf("a-%d", i), v)
 	}
-	saveVectorIndex(scope, idx)
+	store.SaveVectors(scope, idx)
 
 	results, err := runHybridSearch(scope, "shared", []float32{5, 1, 0}, 3)
 	if err != nil {
