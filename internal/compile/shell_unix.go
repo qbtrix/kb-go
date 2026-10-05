@@ -5,7 +5,7 @@
 
 //go:build !windows
 
-package main
+package compile
 
 import (
 	"context"

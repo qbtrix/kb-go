@@ -1,72 +1,25 @@
-// In-process tests for the built-in Anthropic client: the endpoint URL, a
-// compile against the Messages API, and the loud failure on a non-200 reply
-// (compile, ingest and build). Binary-level tests of the built-in path and of
-// the compile-path precedence live in e2e_test.go.
+// The built-in Anthropic client's loud failure on a non-200 reply, through
+// compile.Article, ingest and build. The client's own unit tests live in
+// internal/compile; binary-level tests of the built-in path and of the
+// compile-path precedence live in e2e_test.go.
 //
 // No test talks to the real API: each points ANTHROPIC_BASE_URL (or
-// compilerSpec.BaseURL) at kbtest.NewStubAnthropic, an httptest server that
-// speaks just enough of the Messages API: it echoes the requested model,
-// returns a fixed article built from the prompt's "Source:" line, and reports
-// fixed token usage.
+// compile.Spec.BaseURL) at kbtest.NewStubAnthropic, a local fake Messages API.
 package main
 
 import (
-	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
-func TestMessagesURL(t *testing.T) {
-	cases := map[string]string{
-		"":                           "https://api.anthropic.com/v1/messages",
-		"https://api.anthropic.com":  "https://api.anthropic.com/v1/messages",
-		"http://localhost:4000/":     "http://localhost:4000/v1/messages",
-		"https://gw.example/litellm": "https://gw.example/litellm/v1/messages",
-	}
-	for base, want := range cases {
-		if got := messagesURL(base); got != want {
-			t.Errorf("messagesURL(%q) = %q, want %q", base, got, want)
-		}
-	}
-	t.Setenv("ANTHROPIC_BASE_URL", "")
-	if got := anthropicBaseURL(); got != defaultBaseURL {
-		t.Errorf("default base = %q", got)
-	}
-	t.Setenv("ANTHROPIC_BASE_URL", " http://proxy:4000 ")
-	if got := anthropicBaseURL(); got != "http://proxy:4000" {
-		t.Errorf("ANTHROPIC_BASE_URL not honoured: %q", got)
-	}
-}
-
-func TestBuiltinCompileHappyPath(t *testing.T) {
-	s := kbtest.NewStubAnthropic(t, http.StatusOK, nil)
-	spec := compilerSpec{APIKey: "sk-dummy", Model: "claude-test", BaseURL: s.URL + "/"}
-	art, err := compileArticle(spec, "package main\nfunc main() {}\n", "cmd/app/main.go", nil, true)
-	if err != nil {
-		t.Fatalf("compileArticle: %v", err)
-	}
-	if art.Title != "Builtin cmd/app/main.go" || art.Audience != "agent" || art.TargetWords != 150 {
-		t.Errorf("article = %+v", art)
-	}
-	if art.CompiledWith != "claude-test" {
-		t.Errorf("CompiledWith = %q, want the model name", art.CompiledWith)
-	}
-	if art.Usage == nil || art.Usage.Model != "claude-test" || art.Usage.InputTokens != kbtest.StubInputTokens ||
-		art.Usage.OutputTokens != kbtest.StubOutputTokens || art.Usage.CostUSD != 0 {
-		t.Errorf("usage = %+v (want model+tokens, no invented cost)", art.Usage)
-	}
-	if s.Paths[0] != "POST /v1/messages" || s.Keys[0] != "sk-dummy" || s.Versions[0] != apiVersion || s.Models[0] != "claude-test" {
-		t.Errorf("request = %v %v %v %v", s.Paths, s.Keys, s.Versions, s.Models)
-	}
-}
-
 func TestBuiltinNon200IsLoud(t *testing.T) {
 	s := kbtest.NewStubAnthropic(t, 529, nil)
-	spec := compilerSpec{APIKey: "sk-dummy", Model: defaultModel, BaseURL: s.URL}
-	art, err := compileArticle(spec, "text", "doc.md", nil, false)
+	spec := compile.Spec{APIKey: "sk-dummy", Model: compile.DefaultModel, BaseURL: s.URL}
+	art, err := compile.Article(spec, "text", "doc.md", "", false)
 	if err == nil || art != nil || !strings.Contains(err.Error(), "API error 529") {
 		t.Fatalf("non-200 must be an error with no article: art=%v err=%v", art, err)
 	}
