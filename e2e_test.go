@@ -245,8 +245,9 @@ func TestIngestWithCompilerHook(t *testing.T) {
 func TestRecompileWithCompilerHook(t *testing.T) {
 	kbtest.IsolatedHome(t)
 	scope := "recomp"
-	if err := ingestArticleJSON(scope, []byte(`{"raw_text":"original raw","article":{"title":"Orig","content":"orig body","source":"orig.md"}}`), false); err != nil {
-		t.Fatal(err)
+	if _, stderr, code := runKB(t, nil, `{"raw_text":"original raw","article":{"title":"Orig","content":"orig body","source":"orig.md"}}`,
+		"ingest", "--article-json", "--scope", scope); code != 0 {
+		t.Fatalf("ingest --article-json failed: code=%d stderr=%s", code, stderr)
 	}
 	_, stderr, code := runKB(t, []string{"KB_FAKE_COMPILER=ok", "KB_COMPILER=" + kbtest.FakeCompilerCommand(t, "")}, "",
 		"recompile", "orig", "--scope", scope)
@@ -546,10 +547,8 @@ func TestMCPLatencyDelta(t *testing.T) {
 	}
 }
 
-// TODO: passes after glossary feature lands
 func TestGlossaryBuildPreservesBodyVerbatim(t *testing.T) {
-	// Use the binary subprocess pattern (matches TestNormalizeCategoriesCLI* in
-	// kb_test.go). With no compiler configured, a build that needed one would
+	// Binary subprocess pattern, like TestNormalizeCategoriesCLI*. With no compiler configured, a build that needed one would
 	// refuse (exit 2) — so this passes only because cmdBuild's glossary branch
 	// parses the frontmatter and populates Kind/Term/Aliases/Category/Related
 	// from the source file without compiling.
@@ -691,4 +690,38 @@ func toolText(t *testing.T, name string, result any) string {
 type serveResponse struct {
 	ID     json.RawMessage `json:"id,omitempty"`
 	Result any             `json:"result,omitempty"`
+}
+
+func wikiArticleCount(t *testing.T, scope string) int {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(store.ScopeDir(scope), "wiki"))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".md") {
+			n++
+		}
+	}
+	return n
+}
+
+func rawDocCount(t *testing.T, scope string) int {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(store.ScopeDir(scope), "raw"))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".json") {
+			n++
+		}
+	}
+	return n
+}
+
+func TestMain(m *testing.M) {
+	os.Exit(kbtest.Main(m))
 }

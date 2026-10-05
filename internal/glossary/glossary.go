@@ -314,7 +314,7 @@ func Validate(scope string) ([]string, error) {
 
 	// Cross-source semantic contradictions (issue #19): same term/alias defined
 	// with materially different definitions across two or more sources. Strict
-	// threshold by default — see contradiction.go. This is additive to the
+	// threshold by default — see internal/contradiction. This is additive to the
 	// structural checks above; a duplicate-term collision can also be a
 	// contradiction, and both findings are reported.
 	for _, c := range contradiction.Detect(contradiction.CandidatesFromArticles(entries), contradiction.Config{Mode: "strict"}) {

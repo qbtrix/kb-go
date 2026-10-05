@@ -4,27 +4,34 @@ Headless knowledge base engine. One Go binary, no frameworks: a thin root `packa
 
 ## Structure
 
-- `main.go` — entry point, command dispatch, usage text, version; `flags.go` — minimal flag parsing; `compiler_flags.go` — `--compiler`/`--compiler-timeout` resolution and the exit-2 refusals
-- `cmd_<name>.go` — one file per command (`cmd_build.go`, `cmd_search.go`, `cmd_ingest.go`, `cmd_accept.go`, `cmd_graph.go`, `cmd_convo.go`, `cmd_glossary.go`, `cmd_serve.go`, …) with the helpers only that command uses; `helpers.go` — small CLI helpers
-- `internal/` — the library, one folder package per concern, layered (a package imports only lower layers): layer 0 `textutil`, `model`, `vector`; layer 1 `parse`, `compile`, `store`, `contradiction`, `convo`; layer 2 `search`, `glossary`, `lint`, `export`; layer 3 `mcp`; the rest still lives in the root `package main` while the split lands
-  - `internal/search/` — Porter-stemmed `Tokenize`, `BM25`/`BM25WithIndex` with title/concept/glossary boosts, the persisted inverted `Index` (`BuildIndex`, `LoadOrHealIndex`, `IndexVersion`), `--context` excerpts (`FormatContext`, `ContextJSON`), `VectorSearch`/`HybridSearch` (RRF)
-  - `internal/store/` — on-disk storage under `~/.knowledge-base/{scope}/` (raw/, wiki/, cache/, index.json, vectors.json): articles + frontmatter, raw docs, `IDRegistry` (same-title articles never overwrite each other), index, build cache, vector persistence; `ValidateID` guards every id that reaches a path
+- `main.go` — the whole root package: `os.Exit(cli.Run(os.Args[1:]))`. It stays at the module root so `go install github.com/qbtrix/kb-go@vX` builds a binary named `kb-go`
+- `internal/` — everything else, one folder package per concern, strictly layered (a package imports only packages from lower layers; no cycles):
+
+  | Layer | Packages |
+  |---|---|
+  | 0 | `textutil`, `model`, `vector` |
+  | 1 | `parse`, `compile`, `store`, `contradiction`, `convo` |
+  | 2 | `search`, `glossary`, `lint`, `export` |
+  | 3 | `mcp` |
+  | 4 | `cli` (then the root `main.go`) |
+
   - `internal/textutil/` — pure text helpers (`Slugify`, `ContentHash`, `WordCount`, `Truncate`, `NilToEmpty`), stdlib only
-  - `internal/mcp/` — `kb serve`: read-only JSON-RPC MCP server on stdio (`NewServer`, `Server.Serve`; kb_search/kb_show/kb_glossary/kb_stats/kb_list) with the cross-process article cache
   - `internal/model/` — shared data types (`WikiArticle`, `RawDoc`, `KnowledgeIndex`, `Concept`, `Cache`, `ArticleUsage`, `LintIssue`, …)
-  - `internal/compile/` — the `--compiler` hook: `Prompt`, `Run`, `Article` (one JSON article from the caller's command), `ParseUsage`, `UsageTotals`; `shell_{unix,windows}.go` — platform shell + process-tree kill
+  - `internal/vector/` — flat cosine vector index (`Index`, `New`, `Load`, `Cosine`) and `LoadFile` for vector JSON files
+  - `internal/parse/` — source structure extraction (`Code`, `Module`, `FormatContext`, `PromptBlock` for the compile prompt): Go via go/ast, Python and TypeScript/JS via regex
+  - `internal/compile/` — the `--compiler` hook: `Prompt`, `Run`, `Article` (one JSON article from the caller's command), `ParseUsage`, `UsageTotals`; `shell_{unix,windows}.go` — platform shell + process-tree kill (build-tagged)
+  - `internal/store/` — on-disk storage under `~/.knowledge-base/{scope}/` (raw/, wiki/, cache/, index.json, vectors.json): articles + frontmatter, raw docs, `IDRegistry` (same-title articles never overwrite each other), index, build cache, vector persistence; `ValidateID` guards every id that reaches a path
   - `internal/contradiction/` — offline cross-source definition contradiction detection (`Detect`, `CandidatesFromArticles`, `Finding`, `Config`, `FormatIssue`)
   - `internal/convo/` — conversation mode library: `ParseTranscript` (JSON, JSONL, plain text), `ExtractEntities`/`ExtractDecisions` (deterministic, no LLM), `ClusterTopics`, `GenerateArticles`
-  - `internal/export/` — `Wiki` (markdown wiki export) and the concept graph behind `kb graph` (`ConceptGraph`, `ConceptSubgraph`, `ArticleSubgraph`, `Mermaid`, `Dot`)
+  - `internal/search/` — Porter-stemmed `Tokenize`, `BM25`/`BM25WithIndex` with title/concept/glossary boosts, the persisted inverted `Index` (`BuildIndex`, `LoadOrHealIndex`, `IndexVersion`), `--context` excerpts (`FormatContext`, `ContextJSON`), `VectorSearch`/`HybridSearch` (RRF); also home of the LongMemEval harness
   - `internal/glossary/` — domain glossary: `IsSource`/`ParseSource` (skip-LLM verbatim passthrough) and `List`/`Show`/`Validate` behind `kb glossary`
   - `internal/lint/` — `Structural` (offline) and `LLM` (review through the compiler hook) lint, plus category normalisation (`ClusterCategories`, `ApplyCanonical`)
-  - `internal/parse/` — source structure extraction (`Code`, `Module`, `FormatContext`, `PromptBlock` for the compile prompt): Go via go/ast, Python and TypeScript/JS via regex
-  - `internal/vector/` — flat cosine vector index (`Index`, `New`, `Load`, `Cosine`) and `LoadFile` for vector JSON files
-- `watch.go`, `scan.go` — watch mode and the build file scanner
+  - `internal/export/` — `Wiki` (markdown wiki export) and the concept graph behind `kb graph` (`ConceptGraph`, `ConceptSubgraph`, `ArticleSubgraph`, `Mermaid`, `Dot`)
+  - `internal/mcp/` — `kb serve`: read-only JSON-RPC MCP server on stdio (`NewServer`, `Server.Serve`; kb_search/kb_show/kb_glossary/kb_stats/kb_list) with the cross-process article cache
+  - `internal/cli/` — the command layer: `Run` (dispatch, usage text, version), `cmd_<name>.go` per command, `flags.go` (minimal flag parsing, `fatal`), `compiler_flags.go` (`--compiler`/`--compiler-timeout`, the exit-2 refusals), `scan.go` (build file discovery, `--since`), `watch.go`, `helpers.go`. Every exit code lives here; the library only returns errors
+  - `internal/kbtest/` — shared test plumbing (stdlib only, imports nothing internal): `kbtest.Main` (every package's TestMain: isolates HOME and USERPROFILE for the whole run, and acts as the fake compiler when `KB_FAKE_COMPILER` is set), `SetHome`/`IsolatedHome`, repo-root fixture paths (`Path`, `RootPath`), `BuildBinary`, `WriteVecJSON`
+- Tests live with their package (white-box, same package name). `e2e_test.go` at the root holds the tests that exec the built binary (hook through every command, exit-2 refusals, MCP-vs-CLI parity and latency)
 - `examples/compilers/` — ready-made compilers: `claude_code.py` (headless Claude Code, user's login), `openai_compatible.py` (LiteLLM proxy / LM Studio / Ollama)
-- root `*_test.go` — tests for the code still in package main (`kb_test.go`, `delete_test.go`, `ingest_test.go`, …); each internal package keeps its own tests; `compiler_test.go` — `--compiler` flag resolution, usage and version tests; `e2e_test.go` — tests that exec the built binary (hook through every command, exit-2 refusals, MCP-vs-CLI parity)
-- `internal/kbtest/` — shared test plumbing: `kbtest.Main` (every package's TestMain: isolates HOME and USERPROFILE for the whole run, and acts as the fake compiler when `KB_FAKE_COMPILER` is set), `SetHome`/`IsolatedHome`, repo-root fixture paths (`Path`, `RootPath`), `BuildBinary`
-- `kb_bench_test.go` — 10 performance benchmarks
 - `bench.sh` — Integration benchmark script (full pipeline; build steps need `KB_COMPILER`)
 - `SKILL.md` — skills.sh distribution
 - `go.mod` — Module: `github.com/qbtrix/kb-go`, one dep: fsnotify
@@ -34,7 +41,7 @@ Headless knowledge base engine. One Go binary, no frameworks: a thin root `packa
 ```bash
 go build -o kb .
 go test -v ./...
-go test -bench=. -benchmem
+go test -bench=. -benchmem ./...
 
 # Usage (kb has no LLM client: compile via --compiler "<cmd>" / KB_COMPILER, or prepare/accept)
 kb build <path> --scope <name> --pattern "*.go,*.py,*.ts" --compiler "<cmd>"  # exit 2 without a compiler if anything needs compiling; exit 1 if a file failed
@@ -62,7 +69,7 @@ kb clear --scope <name>
 
 ## Patterns
 
-- One `package main`, one file per concern; new commands go in their own `cmd_<name>.go`, shared code in the concern file it belongs to
+- Folder packages under `internal/`, layered as in Structure; a new command goes in `internal/cli/cmd_<name>.go`, its library code in the package that owns the concern (or a new one in the right layer). Only `cli` prints usage errors or exits; library packages return errors
 - Manual CLI arg parsing (no cobra/urfave)
 - No LLM client: kb never calls a model API and never reads an API key. The caller owns the model so spend stays on its metered path. `--compiler "<cmd>"` (env `KB_COMPILER`, flag wins) runs once per item through the platform shell (`sh -c`; `cmd /S /C` via raw `SysProcAttr.CmdLine` on Windows), prompt on stdin, ONE JSON article on stdout; stderr relayed with a `[compiler <source>]` prefix; `--compiler-timeout` (default 300s) kills the whole process tree. A failed item (exit != 0, timeout, no title/content) gets no article and no cache entry, and the command exits 1 after saving the rest. The removed `--model` flag is rejected with exit 2
 - Optional `usage` {model, input_tokens, output_tokens, cost_usd} from the hook, `accept` and `ingest --article-json` is parsed leniently (bad types dropped), stored in frontmatter (`usage`, omitted when absent), replaced on recompile/re-accept, summed by `kb stats`. `compiled_with` = explicit value, else usage.model, else `compiler:<first word>` / `agent` / `external`
@@ -80,11 +87,11 @@ kb clear --scope <name>
 
 ## Testing
 
-Unit tests (230+) + 10 benchmarks. No external test deps. Every test package's `TestMain` is `kbtest.Main`, which points both `HOME` and `USERPROFILE` (`os.UserHomeDir` reads `USERPROFILE` on Windows) at a throwaway dir, so the suite never touches your real `~/.knowledge-base`; a test that needs its own home calls `kbtest.SetHome`/`kbtest.IsolatedHome` (never `t.Setenv("HOME", …)` alone). Fixture files resolve from the module root via `kbtest.Path`.
+Unit tests (230+) + benchmarks, each with its package. No external test deps. Every test package's `TestMain` is `kbtest.Main`, which points both `HOME` and `USERPROFILE` (`os.UserHomeDir` reads `USERPROFILE` on Windows) at a throwaway dir, so the suite never touches your real `~/.knowledge-base`; a test that needs its own home calls `kbtest.SetHome`/`kbtest.IsolatedHome` (never `t.Setenv("HOME", …)` alone). Fixture files resolve from the module root via `kbtest.Path`.
 
 ```bash
 go test -v ./...              # All unit tests
-go test -bench=. -benchmem    # Performance benchmarks
+go test -bench=. -benchmem ./...  # Performance benchmarks
 ./bench.sh small              # Integration benchmarks (needs KB_COMPILER)
 ```
 
