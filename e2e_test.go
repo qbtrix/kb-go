@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/textutil"
@@ -314,7 +315,7 @@ func TestUsageFrontmatterBackwardCompatible(t *testing.T) {
 	if a.Usage != nil {
 		t.Errorf("legacy article should load with nil usage")
 	}
-	n, _, _, _ := usageTotals([]*model.WikiArticle{a})
+	n, _, _, _ := compile.UsageTotals([]*model.WikiArticle{a})
 	if n != 0 {
 		t.Errorf("no usage → zero articles counted")
 	}
@@ -629,11 +630,11 @@ func TestBuildWithBuiltinClient(t *testing.T) {
 	if res["changed"].(float64) != 2 || res["input_tokens"].(float64) != 2*kbtest.StubInputTokens || res["output_tokens"].(float64) != 2*kbtest.StubOutputTokens {
 		t.Errorf("build json = %v", res)
 	}
-	if s.Hits() != 2 || s.Models[0] != defaultModel {
+	if s.Hits() != 2 || s.Models[0] != compile.DefaultModel {
 		t.Errorf("stub saw %d requests, models %v", s.Hits(), s.Models)
 	}
 	a, _ := loadArticle("bi", textutil.Slugify("Builtin a.md"))
-	if a == nil || a.CompiledWith != defaultModel || a.Usage == nil || a.Usage.InputTokens != kbtest.StubInputTokens {
+	if a == nil || a.CompiledWith != compile.DefaultModel || a.Usage == nil || a.Usage.InputTokens != kbtest.StubInputTokens {
 		t.Fatalf("article = %+v", a)
 	}
 
@@ -660,7 +661,7 @@ func TestIngestAndLintWithBuiltinClient(t *testing.T) {
 	kbtest.IsolatedHome(t)
 	s := kbtest.NewStubAnthropic(t, http.StatusOK, nil)
 	out, stderr, code := runKB(t, s.Env(), "meeting notes", "ingest", "--scope", "bi-ing", "--source", "notes.md", "--json")
-	if code != 0 || !strings.Contains(out, `"compiled_with": "`+defaultModel+`"`) {
+	if code != 0 || !strings.Contains(out, `"compiled_with": "`+compile.DefaultModel+`"`) {
 		t.Fatalf("ingest via built-in: code=%d out=%s stderr=%s", code, out, stderr)
 	}
 
@@ -685,7 +686,7 @@ func TestCompilePathPrecedence(t *testing.T) {
 		wantStub  bool
 		wantModel string
 	}{
-		{"key only: built-in", nil, nil, true, defaultModel},
+		{"key only: built-in", nil, nil, true, compile.DefaultModel},
 		{"KB_COMPILER beats key", []string{"KB_COMPILER=" + kbtest.FakeCompilerCommand(t, "")}, nil, false, "fake-model"},
 		{"--compiler beats key", nil, []string{"--compiler", kbtest.FakeCompilerCommand(t, "")}, false, "fake-model"},
 		{"--compiler beats KB_COMPILER and key", []string{"KB_COMPILER=exit 7"}, []string{"--compiler", kbtest.FakeCompilerCommand(t, "")}, false, "fake-model"},

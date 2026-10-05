@@ -1,17 +1,19 @@
 // Built-in Anthropic Messages API client: kb's default compile path. A
 // standalone user sets ANTHROPIC_API_KEY and runs `kb build`; the LLM writes
-// the wiki at write time. It is used when no --compiler / KB_COMPILER is
-// configured (those win, see compilerFromArgs in compile.go).
+// the wiki at write time. Article uses it when the Spec has no hook command
+// (--compiler / KB_COMPILER win); CallAnthropic is also the built-in path of
+// `kb lint --llm`.
 //
 // ANTHROPIC_BASE_URL (the Anthropic SDK convention) overrides the endpoint
-// root, default https://api.anthropic.com; requests go to <base>/v1/messages,
-// so the client can run through a LiteLLM or other gateway that meters it.
+// root (BaseURLFromEnv), default https://api.anthropic.com; requests go to
+// <base>/v1/messages, so the client can run through a LiteLLM or other
+// gateway that meters it.
 //
 // Token usage from each response is recorded on the article (usage.model,
 // input_tokens, output_tokens). No cost is computed: kb carries no price
 // table, and a stale one would report wrong numbers.
 
-package main
+package compile
 
 import (
 	"bytes"
@@ -24,18 +26,17 @@ import (
 	"time"
 
 	"github.com/qbtrix/kb-go/internal/model"
-	"github.com/qbtrix/kb-go/internal/parse"
 )
 
 const (
-	defaultModel   = "claude-haiku-4-5-20251001"
+	DefaultModel   = "claude-haiku-4-5-20251001"
 	defaultBaseURL = "https://api.anthropic.com"
 	apiVersion     = "2023-06-01"
 	apiTimeout     = 120 * time.Second
 )
 
-// anthropicBaseURL reads ANTHROPIC_BASE_URL, falling back to the public API.
-func anthropicBaseURL() string {
+// BaseURLFromEnv reads ANTHROPIC_BASE_URL, falling back to the public API.
+func BaseURLFromEnv() string {
 	if b := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")); b != "" {
 		return b
 	}
@@ -50,13 +51,13 @@ func messagesURL(base string) string {
 	return strings.TrimRight(base, "/") + "/v1/messages"
 }
 
-// callAnthropic sends one user prompt and returns the first text block plus
+// CallAnthropic sends one user prompt and returns the first text block plus
 // the token usage. Any transport error, non-200 status or empty response is
 // an error.
-func callAnthropic(spec compilerSpec, system, prompt string) (string, *model.ArticleUsage, error) {
+func CallAnthropic(spec Spec, system, prompt string) (string, *model.ArticleUsage, error) {
 	modelName := spec.Model
 	if modelName == "" {
-		modelName = defaultModel
+		modelName = DefaultModel
 	}
 	body, _ := json.Marshal(map[string]any{
 		"model":      modelName,
@@ -118,14 +119,14 @@ func callAnthropic(spec compilerSpec, system, prompt string) (string, *model.Art
 	return "", usage, fmt.Errorf("empty API response")
 }
 
-// compileLLM compiles one source with the built-in client. compiled_with is
+// builtinArticle compiles one source with the built-in client. compiled_with is
 // the requested model (as in v0.3.0); usage carries the response's tokens.
-func compileLLM(spec compilerSpec, rawText, source string, codeMod *parse.Module, terse bool) (*model.WikiArticle, error) {
+func builtinArticle(spec Spec, rawText, source, contextBlock string, terse bool) (*model.WikiArticle, error) {
 	if strings.TrimSpace(spec.APIKey) == "" {
 		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set")
 	}
-	prompt := buildCompilePrompt(source, codeContextBlock(codeMod), rawText, terse)
-	text, usage, err := callAnthropic(spec, "You are a knowledge compiler. Output only valid JSON. No markdown fences.", prompt)
+	prompt := Prompt(source, contextBlock, rawText, terse)
+	text, usage, err := CallAnthropic(spec, "You are a knowledge compiler. Output only valid JSON. No markdown fences.", prompt)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +136,7 @@ func compileLLM(spec compilerSpec, rawText, source string, codeMod *parse.Module
 	}
 	modelName := spec.Model
 	if modelName == "" {
-		modelName = defaultModel
+		modelName = DefaultModel
 	}
-	return newCompiledArticle(res, terse, modelName, usage), nil
+	return newArticle(res, terse, modelName, usage), nil
 }

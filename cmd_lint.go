@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
 )
 
@@ -28,7 +29,7 @@ func cmdLint(args []string) {
 
 	// --llm needs a compile path (built-in client or hook); refuse before
 	// doing any work.
-	var spec compilerSpec
+	var spec compile.Spec
 	if llmMode {
 		spec = mustCompilerFromArgs(args)
 		requireCompiler(spec, "lint --llm", "Structural `kb lint` (without --llm) needs no compiler.")

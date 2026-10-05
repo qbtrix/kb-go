@@ -10,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
@@ -116,7 +117,7 @@ func cmdAccept(args []string) {
 			}
 		}
 
-		usage := parseUsage(a.Usage)
+		usage := compile.ParseUsage(a.Usage)
 		article := &model.WikiArticle{
 			ID:           slug,
 			Title:        a.Title,
@@ -128,7 +129,7 @@ func cmdAccept(args []string) {
 			SourceDocs:   []string{a.RawID},
 			WordCount:    textutil.WordCount(a.Content),
 			CompiledAt:   now,
-			CompiledWith: compiledWithFor(a.CompiledWith, usage, "agent"),
+			CompiledWith: compile.CompiledWith(a.CompiledWith, usage, "agent"),
 			Version:      1,
 			Audience:     audience,
 			Depth:        depth,

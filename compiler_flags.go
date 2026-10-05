@@ -11,6 +11,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/qbtrix/kb-go/internal/compile"
 )
 
 // compilerFromArgs resolves the compile path: --compiler wins over
@@ -18,13 +20,13 @@ import (
 // --model, ANTHROPIC_BASE_URL). --compiler-timeout takes a Go duration
 // ("90s", "2m") or whole seconds. --model together with a compiler is an
 // error: the compiler picks its own model.
-func compilerFromArgs(args []string) (compilerSpec, error) {
-	spec := compilerSpec{
+func compilerFromArgs(args []string) (compile.Spec, error) {
+	spec := compile.Spec{
 		Command: flagStr(args, "--compiler", os.Getenv("KB_COMPILER")),
-		Timeout: defaultCompilerTimeout,
+		Timeout: compile.DefaultTimeout,
 		APIKey:  os.Getenv("ANTHROPIC_API_KEY"),
-		Model:   flagStr(args, "--model", defaultModel),
-		BaseURL: anthropicBaseURL(),
+		Model:   flagStr(args, "--model", compile.DefaultModel),
+		BaseURL: compile.BaseURLFromEnv(),
 	}
 	if raw := flagStr(args, "--compiler-timeout", ""); raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -40,7 +42,7 @@ func compilerFromArgs(args []string) (compilerSpec, error) {
 		}
 		spec.Timeout = d
 	}
-	if flagBool(args, "--model") && spec.hook() {
+	if flagBool(args, "--model") && spec.Hook() {
 		from := "KB_COMPILER is set"
 		if flagBool(args, "--compiler") {
 			from = "--compiler is given"
@@ -54,7 +56,7 @@ func compilerFromArgs(args []string) (compilerSpec, error) {
 
 // mustCompilerFromArgs is compilerFromArgs for commands: a bad flag or flag
 // combination is a usage error (exit 2).
-func mustCompilerFromArgs(args []string) compilerSpec {
+func mustCompilerFromArgs(args []string) compile.Spec {
 	spec, err := compilerFromArgs(args)
 	if err != nil {
 		usageExit(err.Error())
@@ -65,8 +67,8 @@ func mustCompilerFromArgs(args []string) compilerSpec {
 // requireCompiler exits 2 with guidance listing every way to compile when no
 // compile path is configured. alternative replaces the default third option
 // (agent mode) where another escape hatch fits the command better.
-func requireCompiler(spec compilerSpec, command, alternative string) {
-	if spec.enabled() {
+func requireCompiler(spec compile.Spec, command, alternative string) {
+	if spec.Enabled() {
 		return
 	}
 	if alternative == "" {

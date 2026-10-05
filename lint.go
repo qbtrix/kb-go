@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
 )
 
@@ -154,7 +155,7 @@ Knowledge base:
 
 // lintLLM runs the LLM review through the configured compile path and parses
 // the JSON array of issues the model returns. Unparseable output is an error.
-func lintLLM(scope string, spec compilerSpec) ([]model.LintIssue, error) {
+func lintLLM(scope string, spec compile.Spec) ([]model.LintIssue, error) {
 	articles, _ := listArticles(scope)
 	if len(articles) == 0 {
 		return []model.LintIssue{{
@@ -166,14 +167,14 @@ func lintLLM(scope string, spec compilerSpec) ([]model.LintIssue, error) {
 	prompt := buildLintPrompt(articles)
 	var out string
 	switch {
-	case spec.hook():
-		b, err := runCompiler(spec, prompt, "lint")
+	case spec.Hook():
+		b, err := compile.Run(spec, prompt, "lint")
 		if err != nil {
 			return nil, err
 		}
 		out = string(b)
-	case spec.builtin():
-		text, _, err := callAnthropic(spec, "You are a knowledge base auditor. Output only valid JSON arrays.", prompt)
+	case spec.Builtin():
+		text, _, err := compile.CallAnthropic(spec, "You are a knowledge base auditor. Output only valid JSON arrays.", prompt)
 		if err != nil {
 			return nil, err
 		}
@@ -181,7 +182,7 @@ func lintLLM(scope string, spec compilerSpec) ([]model.LintIssue, error) {
 	default:
 		return nil, fmt.Errorf("no compiler configured")
 	}
-	text := stripFences(out)
+	text := compile.StripFences(out)
 	var issues []model.LintIssue
 	if err := json.Unmarshal([]byte(text), &issues); err != nil {
 		i, j := strings.Index(text, "["), strings.LastIndex(text, "]")
