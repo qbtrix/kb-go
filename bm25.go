@@ -1,0 +1,230 @@
+// Tokenization and BM25 ranking over wiki articles, with title, concept and
+// glossary boosts.
+
+package main
+
+import (
+	"math"
+	"sort"
+	"strings"
+	"unicode"
+)
+
+// tokenize lowercases, splits on non-alphanumeric runes, and Porter-stems each
+// token. Stemming is the SINGLE shared step that makes BM25 match morphological
+// variants: because both the index (buildSearchIndex) and the query
+// (bm25SearchWithIndex) tokenize through here, "opens" in a doc and the query
+// "open" both reduce to "open" and match. See porter.go.
+//
+// The persisted index stores these stemmed tokens, which is why its format is
+// v3 (searchIndexVersion): pre-stemming v2 files are ignored and healed.
+// porterStem leaves digits and <=2-letter tokens untouched.
+func tokenize(text string) []string {
+	lower := strings.ToLower(text)
+	splitter := func(c rune) bool {
+		return !unicode.IsLetter(c) && !unicode.IsDigit(c)
+	}
+	fields := strings.FieldsFunc(lower, splitter)
+	tokens := make([]string, len(fields))
+	for i, f := range fields {
+		tokens[i] = porterStem(f)
+	}
+	return tokens
+}
+
+func bm25Search(articles []*WikiArticle, query string, limit int) []*WikiArticle {
+	return bm25SearchWithIndex(articles, query, limit, nil)
+}
+
+// glossaryExactBoost multiplies (and baselines) the score of a glossary
+// article whose Term or an Alias exactly matches a query term — see issue #15.
+const glossaryExactBoost = 10.0
+
+func bm25SearchWithIndex(articles []*WikiArticle, query string, limit int, si *SearchIndex) []*WikiArticle {
+	if len(articles) == 0 || query == "" {
+		return nil
+	}
+
+	queryTerms := tokenize(query)
+	if len(queryTerms) == 0 {
+		return nil
+	}
+
+	var scores []float64
+	if indexMatches(si, articles) {
+		scores = bm25ScoresFromPostings(queryTerms, si)
+	} else {
+		scores = bm25ScoresSlow(articles, queryTerms)
+	}
+
+	applyGlossaryBoost(articles, queryTerms, scores)
+	return rankByScore(articles, scores, limit)
+}
+
+// bm25ScoresFromPostings computes BM25 + title/concept-boost scores reading
+// ONLY the query terms' postings lists: df is the postings length, tf comes
+// from the postings entries. Documents that contain none of the query terms
+// are never touched, so cost scales with matching docs, not corpus size.
+// Semantics match bm25ScoresSlow exactly — a term absent from a doc
+// contributes base = 0 there (tf = 0), and a term present in a doc's title or
+// concepts is by construction in that doc's postings (the "all" token stream
+// includes title and concepts), so boosts apply to the same docs.
+func bm25ScoresFromPostings(queryTerms []string, si *SearchIndex) []float64 {
+	nDocs := float64(len(si.DocIDs))
+
+	idfs := map[string]float64{}
+	for _, term := range queryTerms {
+		df := float64(len(si.Postings[term]))
+		idfs[term] = math.Log((nDocs-df+0.5)/(df+0.5) + 1)
+	}
+
+	scores := make([]float64, len(si.DocIDs))
+	for _, term := range queryTerms {
+		idf := idfs[term]
+		for _, p := range si.Postings[term] {
+			docIdx, tf := p[0], float64(p[1])
+			dl := float64(si.DocLens[docIdx])
+			num := tf * (bm25K1 + 1)
+			den := tf + bm25K1*(1-bm25B+bm25B*dl/si.AvgDL)
+			base := idf * num / den
+			s := base
+			// Title boost: 3x for terms appearing in the title
+			if containsStr(si.TitleTokens[docIdx], term) {
+				s += base * 2.0
+			}
+			// Concept boost: 2x for terms matching concepts
+			if containsStr(si.ConceptTokens[docIdx], term) {
+				s += base * 1.0
+			}
+			scores[docIdx] += s
+		}
+	}
+	return scores
+}
+
+// bm25ScoresSlow tokenizes every article on the fly and scores it. Used when
+// no (matching, current-format) search index is available.
+func bm25ScoresSlow(articles []*WikiArticle, queryTerms []string) []float64 {
+	docs := make([][]string, len(articles))
+	titleTokens := make([][]string, len(articles))
+	conceptTokens := make([][]string, len(articles))
+	totalLen := 0
+	for i, a := range articles {
+		docs[i] = tokenize(a.Title + " " + a.Summary + " " + a.Content +
+			" " + strings.Join(a.Concepts, " ") + " " + strings.Join(a.Categories, " "))
+		titleTokens[i] = tokenize(a.Title)
+		conceptTokens[i] = tokenize(strings.Join(a.Concepts, " "))
+		totalLen += len(docs[i])
+	}
+	avgDL := float64(totalLen) / float64(len(docs))
+
+	// IDF per query term
+	idfs := map[string]float64{}
+	for _, term := range queryTerms {
+		df := 0
+		for _, doc := range docs {
+			if containsStr(doc, term) {
+				df++
+			}
+		}
+		idfs[term] = math.Log((float64(len(docs))-float64(df)+0.5)/(float64(df)+0.5) + 1)
+	}
+
+	// Score each doc with title (3x) and concept (2x) boosting.
+	scores := make([]float64, len(articles))
+	for i, doc := range docs {
+		s := 0.0
+		dl := float64(len(doc))
+		for _, term := range queryTerms {
+			tf := float64(countStr(doc, term))
+			num := tf * (bm25K1 + 1)
+			den := tf + bm25K1*(1-bm25B+bm25B*dl/avgDL)
+			base := idfs[term] * num / den
+			s += base
+
+			// Title boost: 3x for terms appearing in the title
+			if containsStr(titleTokens[i], term) {
+				s += base * 2.0
+			}
+			// Concept boost: 2x for terms matching concepts
+			if containsStr(conceptTokens[i], term) {
+				s += base * 1.0
+			}
+		}
+		scores[i] = s
+	}
+	return scores
+}
+
+// applyGlossaryBoost applies the glossary exact-Term / Alias boost
+// (case-insensitive), at most once per document. It both adds a baseline (so
+// alias-only matches with zero organic BM25 still rank) and multiplies the
+// result, so a glossary hit consistently outranks mention-heavy module
+// articles. Runs over the articles slice — glossary metadata lives on the
+// articles, not in the search index — and is shared by both scoring paths.
+func applyGlossaryBoost(articles []*WikiArticle, queryTerms []string, scores []float64) {
+	for i := range articles {
+		if articles[i].Kind != "glossary" {
+			continue
+		}
+		matched := false
+		// queryTerms are Porter-stemmed (via tokenize), so the Term/Alias sides
+		// are stemmed too or a stemmed query token could never equal a raw term.
+		// Identical raw inputs stem identically, so every exact hit survives,
+		// and variants like alias "opens" vs query "open" also match. porterStem
+		// leaves multi-word terms (containing a space) untouched.
+		termLower := porterStem(strings.ToLower(articles[i].Term))
+		aliasesLower := make([]string, len(articles[i].Aliases))
+		for k, al := range articles[i].Aliases {
+			aliasesLower[k] = porterStem(strings.ToLower(al))
+		}
+		for _, qt := range queryTerms {
+			qLower := strings.ToLower(qt)
+			if termLower != "" && termLower == qLower {
+				matched = true
+				break
+			}
+			for _, al := range aliasesLower {
+				if al == qLower {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				break
+			}
+		}
+		if matched {
+			// Add a baseline so alias-only matches (TF=0 in docs) still rank
+			// positive, then multiply so we dominate any module article that
+			// merely mentions the term in body text.
+			scores[i] = (scores[i] + 1.0) * glossaryExactBoost
+		}
+	}
+}
+
+// rankByScore sorts descending and returns up to limit articles with a
+// strictly positive score.
+func rankByScore(articles []*WikiArticle, scores []float64, limit int) []*WikiArticle {
+	type scored struct {
+		idx   int
+		score float64
+	}
+	ranked := make([]scored, len(articles))
+	for i, s := range scores {
+		ranked[i] = scored{i, s}
+	}
+	sort.Slice(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
+
+	var result []*WikiArticle
+	for _, sc := range ranked {
+		if sc.score <= 0 {
+			break
+		}
+		result = append(result, articles[sc.idx])
+		if len(result) >= limit {
+			break
+		}
+	}
+	return result
+}
