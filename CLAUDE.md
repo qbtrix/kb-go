@@ -4,15 +4,17 @@ Headless knowledge base engine. One Go binary (`package main` split into per-con
 
 ## Structure
 
-- `main.go` — entry point and command dispatch; `flags.go` — minimal flag parsing
-- `cmd_<name>.go` — one file per command (`cmd_build.go`, `cmd_search.go`, `cmd_ingest.go`, `cmd_accept.go`, …) with the helpers only that command uses
-- `models.go` — data models; `storage.go` — raw docs, articles, frontmatter, article identity, index, cache
-- `search_index.go` — persisted inverted index; `bm25.go` — scoring; `context.go` — `search --context` excerpts
-- `compile.go` — compile prompt, compile-path precedence, and the `--compiler` hook (runs the caller's command, parses one JSON article, `usage`); `anthropic.go` — built-in Anthropic Messages client (default path; `ANTHROPIC_BASE_URL`, token usage); `compiler_shell_{unix,windows}.go` — platform shell + process-tree kill; `lint.go` — structural + LLM lint (same compile path); `export.go`, `watch.go`, `scan.go`, `helpers.go`
+- `main.go` — entry point, command dispatch, usage text, version; `flags.go` — minimal flag parsing; `compiler_flags.go` — compile-path resolution (`--compiler`/`KB_COMPILER`, `--compiler-timeout`, `--model`, `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`) and the exit-2 refusals
+- `cmd_<name>.go` — one file per command (`cmd_build.go`, `cmd_search.go`, `cmd_ingest.go`, `cmd_accept.go`, `cmd_graph.go`, `cmd_convo.go`, `cmd_glossary.go`, `cmd_serve.go`, …) with the helpers only that command uses; `helpers.go` — small CLI helpers
+- `textutil.go` — pure text helpers (slugify, contentHash, wordCount, truncate, nilToEmpty)
+- `models.go` — data models; `storage.go` — scope paths, raw docs, articles, frontmatter, article identity, index, cache; `storage_vectors.go` — per-scope vector index persistence
+- `search_index.go` — persisted inverted index; `bm25.go` — scoring; `context.go` — `search --context` excerpts; `search_vector.go` — vector + hybrid (RRF) search
+- `compile.go` — compile prompt, compile-path dispatch, and the `--compiler` hook (runs the caller's command, parses one JSON article, `usage`); `anthropic.go` — built-in Anthropic Messages client (default path; `ANTHROPIC_BASE_URL`, token usage); `compiler_shell_{unix,windows}.go` — platform shell + process-tree kill
+- `lint.go` — structural + LLM lint (same compile path as build); `lint_categories.go` — category normalisation; `export.go` — wiki export; `graph.go` — concept graph build + mermaid/dot render; `watch.go`, `scan.go`
 - `examples/compilers/` — ready-made compilers: `claude_code.py` (headless Claude Code, user's login), `openai_compatible.py` (LiteLLM proxy / LM Studio / Ollama)
 - `astparse.go`, `parse_go.go`, `parse_python.go`, `parse_ts.go` — source parsers that feed compilation
-- `mcp.go` — `kb serve` MCP server; `convo.go` — conversation mode; `porter.go` — stemmer; `vsearch.go`, `vector_cli.go` — vectors
-- `glossary.go` — Domain glossary support (skip-LLM passthrough + list/show/validate commands)
+- `mcp.go` — `kb serve` MCP server; `convo.go` — conversation mode; `porter.go` — stemmer; `vsearch.go` — vector index
+- `glossary.go` — Domain glossary support (skip-LLM passthrough + list/show/validate)
 - `contradiction.go` — Cross-source definition contradiction detection (offline; flags terms two sources define differently)
 - `kb_test.go`, `glossary_test.go`, `convo_test.go`, `vsearch_test.go`, `vector_cli_test.go` — unit tests; `compiler_test.go` — hook + no-compiler refusals + usage + version (its TestMain re-execs the test binary as a fake compiler when `KB_FAKE_COMPILER` is set, and clears `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` / `KB_COMPILER` so the suite never hits a real API); `anthropic_test.go` — built-in client against an httptest Messages stub + precedence
 - `kb_bench_test.go` — 10 performance benchmarks

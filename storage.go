@@ -1,17 +1,17 @@
-// On-disk storage under the scope directory: base paths, raw docs, wiki
-// articles (markdown + JSON frontmatter), the article-ID registry that keeps
-// same-title articles from overwriting each other, the knowledge index, and
-// the content-hash build cache.
+// On-disk storage under the scope directory: base paths and scope resolution
+// ("*", "a,b", single), raw docs, wiki articles (markdown + JSON frontmatter),
+// the article-ID registry that keeps same-title articles from overwriting each
+// other, the knowledge index, and the content-hash build cache.
 
 package main
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -28,9 +28,10 @@ func scopeDir(scope string) string {
 	return filepath.Join(basePath(), safe)
 }
 
+var sanitizeRe = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+
 func sanitize(s string) string {
-	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
-	return re.ReplaceAllString(s, "_")
+	return sanitizeRe.ReplaceAllString(s, "_")
 }
 
 func ensureDirs(scope string) {
@@ -241,7 +242,7 @@ func (r *idRegistry) claimFixed(id, source string, rawDocs []string) int {
 func (r *idRegistry) retireTwins(source, keep string, ids []string) {
 	kept := r.bySource[source][:0]
 	for _, e := range r.bySource[source] {
-		if e.id == keep || !contains(ids, e.id) {
+		if e.id == keep || !slices.Contains(ids, e.id) {
 			kept = append(kept, e)
 		} else {
 			r.retired = append(r.retired, e.id)
@@ -292,7 +293,7 @@ func disambiguatedID(slug, source string, n int) string {
 
 func sharesRaw(a, b []string) bool {
 	for _, x := range a {
-		if x != "" && contains(b, x) {
+		if x != "" && slices.Contains(b, x) {
 			return true
 		}
 	}
@@ -505,7 +506,7 @@ func rebuildIndex(scope string, articles []*WikiArticle) *KnowledgeIndex {
 				concept = &Concept{Name: c}
 				idx.Concepts[key] = concept
 			}
-			if !contains(concept.Articles, a.ID) {
+			if !slices.Contains(concept.Articles, a.ID) {
 				concept.Articles = append(concept.Articles, a.ID)
 			}
 		}
@@ -551,7 +552,36 @@ func saveCache(scope string, c *Cache) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-func contentHash(text string) string {
-	h := sha256.Sum256([]byte(text))
-	return fmt.Sprintf("%x", h)
+// resolveScopes handles "*" (all scopes), "a,b,c" (multi), or single scope.
+func resolveScopes(scope string) []string {
+	if scope == "*" {
+		// List all scope directories under basePath
+		entries, err := os.ReadDir(basePath())
+		if err != nil {
+			return nil
+		}
+		var scopes []string
+		for _, e := range entries {
+			if e.IsDir() {
+				// Check it has a wiki/ dir (is a real scope)
+				wikiDir := filepath.Join(basePath(), e.Name(), "wiki")
+				if info, err := os.Stat(wikiDir); err == nil && info.IsDir() {
+					scopes = append(scopes, e.Name())
+				}
+			}
+		}
+		return scopes
+	}
+	if strings.Contains(scope, ",") {
+		parts := strings.Split(scope, ",")
+		for i := range parts {
+			parts[i] = strings.TrimSpace(parts[i])
+		}
+		return parts
+	}
+	return []string{scope}
 }
+
+const (
+	defaultBaseDir = ".knowledge-base"
+)

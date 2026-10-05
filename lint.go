@@ -8,6 +8,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -100,7 +101,7 @@ func lintStructural(scope string) []LintIssue {
 				if other.ID == a.ID {
 					continue
 				}
-				if contains(other.Backlinks, a.ID) {
+				if slices.Contains(other.Backlinks, a.ID) {
 					linkedTo = true
 					break
 				}

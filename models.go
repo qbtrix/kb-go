@@ -1,6 +1,6 @@
-// Data models shared across the CLI (raw docs, wiki articles, the knowledge
-// index, cache entries, lint issues). Field names mirror the Python models.py
-// so both implementations read the same files.
+// Data models shared across the CLI (raw docs, wiki articles and their optional
+// compile usage, the knowledge index, cache entries, lint issues). Field names
+// mirror the Python models.py so both implementations read the same files.
 
 package main
 
@@ -111,4 +111,15 @@ type LintIssue struct {
 	Message    string `json:"message"`
 	ArticleID  string `json:"article_id,omitempty"`
 	Suggestion string `json:"suggestion,omitempty"`
+}
+
+// ArticleUsage is the optional spend record a compiler (or an accept /
+// --article-json caller) reports for one article. Stored in the article
+// frontmatter as "usage"; replaced, never summed, when the article is
+// recompiled or re-accepted.
+type ArticleUsage struct {
+	Model        string  `json:"model,omitempty"`
+	InputTokens  int     `json:"input_tokens,omitempty"`
+	OutputTokens int     `json:"output_tokens,omitempty"`
+	CostUSD      float64 `json:"cost_usd,omitempty"`
 }

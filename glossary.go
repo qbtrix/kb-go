@@ -1,30 +1,20 @@
-// glossary.go — Domain glossary support for kb-go (issue #15).
-// Created: 2026-05-23
+// Domain glossary support (issue #15). Glossary articles are detected by source
+// path (parent directory named "glossary"), skip compilation, and round-trip
+// through the wiki verbatim: parseGlossarySource builds the WikiArticle straight
+// from the file's JSON frontmatter. Kind="glossary" distinguishes them from
+// module articles at search time (10x exact-Term/Alias boost in
+// bm25SearchWithIndex).
 //
-// Provides:
-//   - isGlossarySource: path classifier (parent dir == "glossary")
-//   - parseGlossarySource: reads a hand-curated glossary .md and builds a
-//     WikiArticle without calling the LLM
-//   - cmdGlossary + sub-handlers: kb glossary {list,show,validate}
-//   - glossaryList / glossaryShow / glossaryValidate: programmatic API used by
-//     the test suite and the CLI handlers
-//
-// Glossary articles are detected by source path (parent dir == "glossary") and
-// round-trip through the wiki without LLM rewriting. The Kind="glossary" flag
-// on WikiArticle distinguishes them from module articles at search time
-// (10x exact-Term/Alias boost in bm25SearchWithIndex).
-//
-// Changes (issue #19): glossaryValidate now also surfaces cross-source semantic
-// contradictions (two sources defining the same term differently) by delegating
-// to detectContradictions in contradiction.go and appending CONTRADICTION
-// findings to its issue list.
+// glossaryList / glossaryShow / glossaryValidate are the programmatic API behind
+// `kb glossary`. Validate also reports cross-source contradictions (two sources
+// defining the same term differently) through detectContradictions.
+
 package main
 
 import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -133,85 +123,6 @@ func parseGlossarySource(raw []byte, relPath string) (*WikiArticle, error) {
 }
 
 // --- CLI ---
-
-func glossaryUsage() {
-	fmt.Fprintln(os.Stderr, `Usage: kb glossary <sub> [options]
-
-Sub-commands:
-  list                    List all glossary entries in the scope
-  show <term>             Print a glossary entry's body
-  validate                Check duplicates, alias collisions, dangling refs, contradictions
-
-Flags:
-  --scope NAME            Knowledge scope (default: "default")`)
-}
-
-// cmdGlossary is the top-level CLI dispatcher for `kb glossary ...`.
-func cmdGlossary(args []string) {
-	if len(args) < 1 {
-		glossaryUsage()
-		os.Exit(1)
-	}
-	sub := args[0]
-	rest := args[1:]
-	scope := flagStr(rest, "--scope", "default")
-
-	switch sub {
-	case "list":
-		if err := glossaryList(scope, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "glossary list:", err)
-			os.Exit(1)
-		}
-	case "show":
-		// First positional arg is the term. Skip flags and the value
-		// that follows a value-taking flag, so `--scope <name>` can
-		// appear before or after the term without being read as the term.
-		term := ""
-		skipNext := false
-		for _, a := range rest {
-			if skipNext {
-				skipNext = false
-				continue
-			}
-			if a == "--scope" {
-				skipNext = true
-				continue
-			}
-			if strings.HasPrefix(a, "--") {
-				continue
-			}
-			term = a
-			break
-		}
-		if term == "" {
-			fmt.Fprintln(os.Stderr, "usage: kb glossary show <term> [--scope <scope>]")
-			os.Exit(1)
-		}
-		if err := glossaryShow(scope, term, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "glossary show:", err)
-			os.Exit(1)
-		}
-	case "validate":
-		issues, err := glossaryValidate(scope)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "glossary validate:", err)
-			os.Exit(1)
-		}
-		if len(issues) == 0 {
-			fmt.Fprintln(os.Stdout, "OK — glossary is clean.")
-			return
-		}
-		for _, iss := range issues {
-			fmt.Fprintln(os.Stdout, iss)
-		}
-		os.Exit(2)
-	case "help", "--help", "-h":
-		glossaryUsage()
-	default:
-		glossaryUsage()
-		os.Exit(1)
-	}
-}
 
 // glossaryList writes a tab-aligned table of glossary entries to out. Returns
 // nil with a "no entries" line if the scope contains no glossary articles.

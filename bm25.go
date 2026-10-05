@@ -1,10 +1,11 @@
-// Tokenization and BM25 ranking over wiki articles, with title, concept and
-// glossary boosts.
+// Tokenization and BM25 ranking over wiki articles (k1=1.2, b=0.75), with
+// title, concept and glossary boosts.
 
 package main
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -89,11 +90,11 @@ func bm25ScoresFromPostings(queryTerms []string, si *SearchIndex) []float64 {
 			base := idf * num / den
 			s := base
 			// Title boost: 3x for terms appearing in the title
-			if containsStr(si.TitleTokens[docIdx], term) {
+			if slices.Contains(si.TitleTokens[docIdx], term) {
 				s += base * 2.0
 			}
 			// Concept boost: 2x for terms matching concepts
-			if containsStr(si.ConceptTokens[docIdx], term) {
+			if slices.Contains(si.ConceptTokens[docIdx], term) {
 				s += base * 1.0
 			}
 			scores[docIdx] += s
@@ -123,7 +124,7 @@ func bm25ScoresSlow(articles []*WikiArticle, queryTerms []string) []float64 {
 	for _, term := range queryTerms {
 		df := 0
 		for _, doc := range docs {
-			if containsStr(doc, term) {
+			if slices.Contains(doc, term) {
 				df++
 			}
 		}
@@ -143,11 +144,11 @@ func bm25ScoresSlow(articles []*WikiArticle, queryTerms []string) []float64 {
 			s += base
 
 			// Title boost: 3x for terms appearing in the title
-			if containsStr(titleTokens[i], term) {
+			if slices.Contains(titleTokens[i], term) {
 				s += base * 2.0
 			}
 			// Concept boost: 2x for terms matching concepts
-			if containsStr(conceptTokens[i], term) {
+			if slices.Contains(conceptTokens[i], term) {
 				s += base * 1.0
 			}
 		}
@@ -228,3 +229,18 @@ func rankByScore(articles []*WikiArticle, scores []float64, limit int) []*WikiAr
 	}
 	return result
 }
+
+func countStr(tokens []string, term string) int {
+	n := 0
+	for _, t := range tokens {
+		if t == term {
+			n++
+		}
+	}
+	return n
+}
+
+const (
+	bm25K1 = 1.2
+	bm25B  = 0.75
+)
