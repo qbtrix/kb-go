@@ -21,6 +21,7 @@ import (
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/parse"
+	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
@@ -283,7 +284,7 @@ func runBuild(args []string) int {
 	allArticles, _ := store.ListArticles(scope)
 	idx := store.RebuildIndex(scope, allArticles)
 	store.SaveIndex(scope, idx)
-	saveSearchIndex(scope, buildSearchIndex(allArticles))
+	search.SaveIndex(scope, search.BuildIndex(allArticles))
 
 	// Cross-source contradiction scan (issue #19). We feed the detector this
 	// run's compiled glossary results plus the on-disk set (allArticles). The

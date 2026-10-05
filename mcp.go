@@ -25,8 +25,8 @@
 // trusted (an overwrite inside one filesystem clock tick can keep both mtime
 // and size), so it is re-read on every call until it settles. The search
 // index file is cached under the same stamp rule, and the cached article
-// slice keeps store.ListArticles' ID order so SearchIndex docIdx stays aligned
-// (healSearchIndex still rebuilds whenever ids/order drift). kb_show and
+// slice keeps store.ListArticles' ID order so search.Index docIdx stays aligned
+// (search.HealIndex still rebuilds whenever ids/order drift). kb_show and
 // kb_glossary read single files and stay uncached.
 package main
 
@@ -44,6 +44,7 @@ import (
 	"time"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
@@ -406,14 +407,14 @@ func mcpSearch(c *articleCache, args map[string]any, defaultScope string) (any, 
 		if err != nil {
 			return nil, fmt.Errorf("load query vector: %v", err)
 		}
-		var results []vectorSearchResult
+		var results []search.Hit
 		if hybridMode {
 			if query == "" {
 				return nil, fmt.Errorf("hybrid requires a text query alongside query_vec_path")
 			}
-			results, err = runHybridSearch(scope, query, queryVec, topK)
+			results, err = search.HybridSearch(scope, query, queryVec, topK)
 		} else {
-			results, err = runVectorSearch(scope, queryVec, topK)
+			results, err = search.VectorSearch(scope, queryVec, topK)
 		}
 		if err != nil {
 			return nil, err
@@ -460,19 +461,19 @@ func mcpSearch(c *articleCache, args map[string]any, defaultScope string) (any, 
 
 	var results []*model.WikiArticle
 	if len(scopes) == 1 {
-		var si *SearchIndex
+		var si *search.Index
 		if excludeTags == "" {
 			// Full-scope search: self-heal a missing/stale/old-format index
 			// (best-effort cache write; failure never fails the search) so
 			// long-lived read-only servers regain the fast path.
-			si = healSearchIndex(scopes[0], allArticles, c.searchIndex(scopes[0]))
+			si = search.HealIndex(scopes[0], allArticles, c.searchIndex(scopes[0]))
 		} else {
 			// Tag-filtered slice — full-scope index can't match; slow path.
 			si = c.searchIndex(scopes[0])
 		}
-		results = bm25SearchWithIndex(allArticles, query, limit, si)
+		results = search.BM25WithIndex(allArticles, query, limit, si)
 	} else {
-		results = bm25Search(allArticles, query, limit)
+		results = search.BM25(allArticles, query, limit)
 	}
 
 	resultScope := func(a *model.WikiArticle) string {
@@ -647,7 +648,7 @@ type scopeCache struct {
 	articles []*model.WikiArticle     // assembled slice, listArticles (ID) order
 	built    bool
 
-	si        *SearchIndex
+	si        *search.Index
 	siStamp   fileStamp
 	siTrusted bool
 }
@@ -737,9 +738,9 @@ func (c *articleCache) list(scope string) ([]*model.WikiArticle, error) {
 	return sc.articles, nil
 }
 
-// searchIndex returns what loadSearchIndex would return right now, reusing the
+// searchIndex returns what search.LoadIndex would return right now, reusing the
 // decoded index while cache/search_index.json keeps a trusted stamp.
-func (c *articleCache) searchIndex(scope string) *SearchIndex {
+func (c *articleCache) searchIndex(scope string) *search.Index {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -757,7 +758,7 @@ func (c *articleCache) searchIndex(scope string) *SearchIndex {
 	if sc != nil && sc.siTrusted && sc.siStamp.same(st) {
 		return sc.si
 	}
-	si := loadSearchIndex(scope)
+	si := search.LoadIndex(scope)
 	if sc != nil {
 		sc.si, sc.siStamp, sc.siTrusted = si, st, now.Sub(st.mod) >= racyWindow
 	}

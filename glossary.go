@@ -3,7 +3,7 @@
 // through the wiki verbatim: parseGlossarySource builds the WikiArticle straight
 // from the file's JSON frontmatter. Kind="glossary" distinguishes them from
 // module articles at search time (10x exact-Term/Alias boost in
-// bm25SearchWithIndex).
+// search.BM25WithIndex).
 //
 // glossaryList / glossaryShow / glossaryValidate are the programmatic API behind
 // `kb glossary`. Validate also reports cross-source contradictions (two sources

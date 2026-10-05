@@ -1,14 +1,9 @@
-// vector_cli_test.go — Tests for the vector surface: vector-file parsing (both
-// JSON encodings), vector-index persistence per scope, attach-vector ingest
-// flow, pure-cosine search ranking, hybrid BM25+cosine via reciprocal rank
-// fusion, RRF math edge cases, stats vector count, and the regression that
-// BM25-only search keeps its existing JSON shape.
-//
-// Style follows kb_test.go and vsearch_test.go: no external deps, table-driven
-// where useful, kbtest.SetHome for isolation so the per-scope vector index lands
-// inside t.TempDir() rather than the developer's real ~/.knowledge-base/.
+// Tests for vector and hybrid search: reciprocal rank fusion math (both lists,
+// one list, empty), cosine-only ranking, hybrid fusing both lists, top-k
+// limits, orphaned vectors skipped, and the JSON shape contract (BM25-only rows
+// keep {id, title, summary, concepts}; hybrid and vector rows add their ranks).
 
-package main
+package search
 
 import (
 	"fmt"
@@ -23,8 +18,6 @@ import (
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
-
-// --- Helpers ---
 
 // vectorTestEnv sets HOME to a fresh temp dir so store.BaseDir() routes into it.
 // Returns the temp dir and a fresh scope name. The scope name varies per test
@@ -62,16 +55,14 @@ func stubArticle(t *testing.T, scope, id, title, summary string, content string)
 }
 
 // rebuildScopeIndex flushes the BM25 search index after a batch of
-// stubArticle calls so bm25SearchWithIndex sees them. Mirrors what cmdIngest
+// stubArticle calls so BM25WithIndex sees them. Mirrors what cmdIngest
 // does at the end of an ingest.
 func rebuildScopeIndex(t *testing.T, scope string) {
 	t.Helper()
 	all, _ := store.ListArticles(scope)
-	saveSearchIndex(scope, buildSearchIndex(all))
+	SaveIndex(scope, BuildIndex(all))
 	store.SaveIndex(scope, store.RebuildIndex(scope, all))
 }
-
-// --- pure cosine search ---
 
 func TestCmdSearch_QueryVecOnly_RanksByCosine(t *testing.T) {
 	_, scope := vectorTestEnv(t, "cosine")
@@ -93,7 +84,7 @@ func TestCmdSearch_QueryVecOnly_RanksByCosine(t *testing.T) {
 		t.Fatalf("save idx: %v", err)
 	}
 
-	results, err := runVectorSearch(scope, []float32{1, 0, 0}, 3)
+	results, err := VectorSearch(scope, []float32{1, 0, 0}, 3)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -123,8 +114,6 @@ func TestCmdSearch_QueryVecOnly_RanksByCosine(t *testing.T) {
 	}
 }
 
-// --- hybrid retrieval / RRF ---
-
 func TestCmdSearch_Hybrid_RRFFuses_BothLists(t *testing.T) {
 	_, scope := vectorTestEnv(t, "hybrid")
 
@@ -148,7 +137,7 @@ func TestCmdSearch_Hybrid_RRFFuses_BothLists(t *testing.T) {
 		t.Fatalf("save idx: %v", err)
 	}
 
-	results, err := runHybridSearch(scope, "rate limit", []float32{1, 0, 0}, 4)
+	results, err := HybridSearch(scope, "rate limit", []float32{1, 0, 0}, 4)
 	if err != nil {
 		t.Fatalf("hybrid: %v", err)
 	}
@@ -244,8 +233,6 @@ func TestRRFFuse_EmptyInputs(t *testing.T) {
 	}
 }
 
-// --- BM25-only shape regression ---
-
 // TestSearch_BM25Only_ShapeUnchanged is a regression guard. The brief
 // requires BM25-only consumers (no --query-vec, no --hybrid) to see the
 // existing JSON shape: id / title / summary / concepts. No new keys.
@@ -262,8 +249,8 @@ func TestSearch_BM25Only_ShapeUnchanged(t *testing.T) {
 
 	// Re-create the BM25-only result-row shape that cmdSearch builds.
 	all, _ := store.ListArticles(scope)
-	si := loadSearchIndex(scope)
-	results := bm25SearchWithIndex(all, "rate limit", 5, si)
+	si := LoadIndex(scope)
+	results := BM25WithIndex(all, "rate limit", 5, si)
 	if len(results) == 0 {
 		t.Fatal("expected at least one result")
 	}
@@ -297,7 +284,7 @@ func TestEmitVectorResults_HybridShape(t *testing.T) {
 	_, scope := vectorTestEnv(t, "shape-hybrid")
 	stubArticle(t, scope, "a", "T", "S", "body")
 	a, _ := store.LoadArticle(scope, "a")
-	results := []vectorSearchResult{
+	results := []Hit{
 		{Article: a, Score: 0.0312, BM25Rank: 0, VecRank: 2, FusedRank: 0},
 	}
 
@@ -335,8 +322,6 @@ func TestEmitVectorResults_HybridShape(t *testing.T) {
 	}
 }
 
-// --- orphan handling ---
-
 func TestRunVectorSearch_SkipsOrphanedVectors(t *testing.T) {
 	_, scope := vectorTestEnv(t, "orphan")
 	// One article exists; the vector index has TWO entries — one for the
@@ -348,7 +333,7 @@ func TestRunVectorSearch_SkipsOrphanedVectors(t *testing.T) {
 	idx.Add("orphan", []float32{0.99, 0.01, 0})
 	store.SaveVectors(scope, idx)
 
-	results, err := runVectorSearch(scope, []float32{1, 0, 0}, 5)
+	results, err := VectorSearch(scope, []float32{1, 0, 0}, 5)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -359,8 +344,6 @@ func TestRunVectorSearch_SkipsOrphanedVectors(t *testing.T) {
 		t.Errorf("want 'kept', got %s", results[0].Article.ID)
 	}
 }
-
-// --- end-to-end CLI smoke (via the runVectorSearch helper) ---
 
 // TestRunHybridSearch_TopKLimit confirms the topK truncation behaviour.
 // Without it, hybrid would always return |bm25 ∪ vec| results, which can
@@ -379,7 +362,7 @@ func TestRunHybridSearch_TopKLimit(t *testing.T) {
 	}
 	store.SaveVectors(scope, idx)
 
-	results, err := runHybridSearch(scope, "shared", []float32{5, 1, 0}, 3)
+	results, err := HybridSearch(scope, "shared", []float32{5, 1, 0}, 3)
 	if err != nil {
 		t.Fatalf("hybrid: %v", err)
 	}

@@ -1,11 +1,10 @@
 // porter.go — Vendored, dependency-free Porter (1980) English stemmer.
-// Created: 2026-07-15 (feat/bm25-stemming).
 //
 // Why: kb-go's BM25 search is lexical and non-stemming, so "opens" in a doc
 // was never retrieved by the query "open" (a real recall gap found in a live
 // concierge smoke). This is a faithful Go port of Martin Porter's reference
 // implementation (https://tartarus.org/martin/PorterStemmer/), applied inside
-// tokenize() so index-time and query-time tokens are stemmed by the SAME
+// Tokenize() so index-time and query-time tokens are stemmed by the SAME
 // function — "opens"->"open" then matches query "open"->"open".
 //
 // Conservative choices (both are in Porter's own reference, marked DEPARTURE):
@@ -18,7 +17,7 @@
 // No external module dependency (stdlib only) — keeps the supply-chain surface
 // at zero for this load-bearing retriever.
 
-package main
+package search
 
 // porterStemmer holds the mutable word buffer and the two cursors the classic
 // algorithm threads through every step: k is the index of the final letter of
@@ -359,7 +358,7 @@ func (s *porterStemmer) step5() {
 
 // porterStem returns the Porter stem of a single lowercase English word.
 // Non-lowercase-ASCII tokens and words of length <= 2 are returned unchanged.
-// tokenize() lowercases before calling, so callers there always pass a-z words.
+// Tokenize() lowercases before calling, so callers there always pass a-z words.
 func porterStem(word string) string {
 	for i := 0; i < len(word); i++ {
 		if word[i] < 'a' || word[i] > 'z' {

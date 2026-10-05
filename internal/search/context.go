@@ -1,7 +1,7 @@
 // `kb search --context` text assembly: whole articles when they fit the
 // budget, query-focused section excerpts when they don't.
 
-package main
+package search
 
 import (
 	"math"
@@ -17,8 +17,8 @@ import (
 // compiled article (roughly 1.5k-3.5k chars) whole while still leaving room for
 // a second article inside the 8000 total.
 const (
-	defaultContextChars = 4000
-	defaultContextTotal = 8000
+	DefaultContextChars = 4000
+	DefaultContextTotal = 8000
 	// A lower-ranked article gets an excerpt only if at least this much of the
 	// total budget is left; below it, only articles that fit whole are added.
 	minContextExcerpt = 400
@@ -38,9 +38,9 @@ type contextBlock struct {
 	Truncated bool
 }
 
-// formatSearchContext renders ranked results as prompt-ready text: the
+// FormatContext renders ranked results as prompt-ready text: the
 // searchContextBlocks joined by contextSeparator.
-func formatSearchContext(results []*model.WikiArticle, query string, perArticle, totalCap int) string {
+func FormatContext(results []*model.WikiArticle, query string, perArticle, totalCap int) string {
 	var parts []string
 	for _, b := range searchContextBlocks(results, query, perArticle, totalCap) {
 		parts = append(parts, b.Block)
@@ -48,10 +48,10 @@ func formatSearchContext(results []*model.WikiArticle, query string, perArticle,
 	return strings.Join(parts, contextSeparator)
 }
 
-// searchContextJSON is the --context --json shape: one entry per article with
+// ContextJSON is the --context --json shape: one entry per article with
 // the excerpt body (no "## Title" line). No in-band separator, so bodies that
 // contain "---" rules survive intact.
-func searchContextJSON(results []*model.WikiArticle, query string, perArticle, totalCap int) []map[string]any {
+func ContextJSON(results []*model.WikiArticle, query string, perArticle, totalCap int) []map[string]any {
 	out := []map[string]any{}
 	for _, b := range searchContextBlocks(results, query, perArticle, totalCap) {
 		text := ""
@@ -361,16 +361,16 @@ func splitContextBlocks(lines []string) []string {
 func contextScorer(secs []contextSection, query string) func(sec int, block string) float64 {
 	seen := map[string]bool{}
 	var terms []string
-	for _, t := range tokenize(query) {
+	for _, t := range Tokenize(query) {
 		if !seen[t] {
 			seen[t] = true
 			terms = append(terms, t)
 		}
 	}
 	docTokens := func(heading, body string) []string {
-		h := tokenize(heading)
+		h := Tokenize(heading)
 		toks := append(append(append([]string{}, h...), h...), h...)
-		return append(toks, tokenize(body)...)
+		return append(toks, Tokenize(body)...)
 	}
 	secToks := make([][]string, len(secs))
 	df := map[string]int{}

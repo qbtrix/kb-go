@@ -1,5 +1,5 @@
 // stemming_index_version_test.go — Pins the search-index version hazard that
-// stemming introduces. A v2 search_index.json (written before tokenize()
+// stemming introduces. A v2 search_index.json (written before search.Tokenize()
 // Porter-stemmed) stores RAW terms in its postings; a stemmed query token like
 // "open" would silently miss a doc stored as "opens" if that index were trusted.
 // The index format is therefore v3 (stemmed postings): a v2 file must be
@@ -17,6 +17,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
 )
 
@@ -32,11 +33,11 @@ func rawTokenize(text string) []string {
 // {"v":2, ...} with raw, unstemmed postings.
 func writeUnstemmedV2Index(t *testing.T, scope string, articles []*model.WikiArticle) string {
 	t.Helper()
-	si := &SearchIndex{
+	si := &search.Index{
 		V:             2,
 		DocIDs:        make([]string, len(articles)),
 		DocLens:       make([]int, len(articles)),
-		Postings:      map[string][]Posting{},
+		Postings:      map[string][]search.Posting{},
 		TitleTokens:   make([][]string, len(articles)),
 		ConceptTokens: make([][]string, len(articles)),
 	}
@@ -54,7 +55,7 @@ func writeUnstemmedV2Index(t *testing.T, scope string, articles []*model.WikiArt
 			tfs[tok]++
 		}
 		for term, tf := range tfs {
-			si.Postings[term] = append(si.Postings[term], Posting{i, tf})
+			si.Postings[term] = append(si.Postings[term], search.Posting{i, tf})
 		}
 	}
 	si.AvgDL = float64(total) / float64(len(articles))
@@ -91,31 +92,41 @@ func TestUnstemmedV2IndexIsNotTrusted(t *testing.T) {
 
 	// The pre-stemming v2 file must not load: its raw postings can't serve
 	// stemmed query tokens.
-	if si := loadSearchIndex(scope); si != nil {
+	if si := search.LoadIndex(scope); si != nil {
 		t.Errorf("loadSearchIndex trusted a pre-stemming v2 index (v=%d)", si.V)
 	}
 
 	// Search through the same load the CLI uses: "open" must find "opens".
-	if hits := bm25SearchWithIndex(articles, "open", 5, loadSearchIndex(scope)); !resultHasID(hits, "hours") {
+	if hits := search.BM25WithIndex(articles, "open", 5, search.LoadIndex(scope)); !resultHasID(hits, "hours") {
 		t.Errorf("query 'open' missed the 'opens' doc against a v2 index on disk; got %v", idsOf(hits))
 	}
 
 	// MCP / CLI heal path: returns a usable stemmed index and rewrites the file.
-	si := loadOrHealSearchIndex(scope, articles)
-	if si == nil || si.V != searchIndexVersion {
+	si := search.LoadOrHealIndex(scope, articles)
+	if si == nil || si.V != search.IndexVersion {
 		t.Fatalf("loadOrHealSearchIndex did not rebuild the stale index: %+v", si)
 	}
-	if hits := bm25SearchWithIndex(articles, "open", 5, si); !resultHasID(hits, "hours") {
+	if hits := search.BM25WithIndex(articles, "open", 5, si); !resultHasID(hits, "hours") {
 		t.Errorf("healed index: query 'open' missed the 'opens' doc; got %v", idsOf(hits))
 	}
-	if disk := loadSearchIndex(scope); disk == nil || !indexMatches(disk, articles) {
+	if disk := search.LoadIndex(scope); disk == nil || !search.IndexMatches(disk, articles) {
 		t.Fatalf("heal did not persist a current-version index")
 	}
 
 	// Full CLI path also heals a freshly re-planted v2 file.
 	writeUnstemmedV2Index(t, scope, articles)
 	cmdSearch([]string{"open", "--scope", scope, "--json"})
-	if disk := loadSearchIndex(scope); disk == nil || disk.V != searchIndexVersion {
-		t.Fatalf("cmdSearch did not heal the v2 index to v%d", searchIndexVersion)
+	if disk := search.LoadIndex(scope); disk == nil || disk.V != search.IndexVersion {
+		t.Fatalf("cmdSearch did not heal the v2 index to v%d", search.IndexVersion)
 	}
+}
+
+// resultHasID reports whether an article with the given ID is in the results.
+func resultHasID(results []*model.WikiArticle, id string) bool {
+	for _, a := range results {
+		if a.ID == id {
+			return true
+		}
+	}
+	return false
 }

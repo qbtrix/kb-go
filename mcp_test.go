@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
@@ -69,7 +70,7 @@ func seedSampleKB(t *testing.T) string {
 	if err := store.SaveIndex(scope, store.RebuildIndex(scope, articles)); err != nil {
 		t.Fatalf("saveIndex: %v", err)
 	}
-	if err := saveSearchIndex(scope, buildSearchIndex(articles)); err != nil {
+	if err := search.SaveIndex(scope, search.BuildIndex(articles)); err != nil {
 		t.Fatalf("saveSearchIndex: %v", err)
 	}
 	return scope

@@ -12,6 +12,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
 )
 
@@ -80,7 +81,7 @@ func cmdRecompile(args []string) {
 	allArticles, _ := store.ListArticles(scope)
 	idx := store.RebuildIndex(scope, allArticles)
 	store.SaveIndex(scope, idx)
-	saveSearchIndex(scope, buildSearchIndex(allArticles))
+	search.SaveIndex(scope, search.BuildIndex(allArticles))
 
 	if jsonOut {
 		printJSON(map[string]any{"recompiled": recompiled, "failed": failed, "total": len(targets)})
