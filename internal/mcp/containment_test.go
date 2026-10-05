@@ -1,10 +1,10 @@
-// path_containment_test.go — Traversal containment for the MCP read path
+// containment_test.go — Traversal containment for the MCP read path
 // (issue #23): kb_search's agent-controlled query_vec_path must be refused
 // outside the knowledge base and accepted inside it. LoadArticle's id guard
 // and vector.LoadFile's no-leak parse errors are tested in internal/store and
 // internal/vector.
 
-package main
+package mcp
 
 import (
 	"os"

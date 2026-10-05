@@ -1,4 +1,4 @@
-// mcp_test.go — Tests for the read-only MCP stdio server (mcp.go).
+// mcp_test.go — Tests for the read-only MCP stdio server.
 //
 // Covers:
 //   - JSON-RPC handshake: initialize, tools/list (shape + tool set).
@@ -8,7 +8,7 @@
 // MCP-vs-CLI parity and the latency comparison exec the binary and live in
 // e2e_test.go.
 
-package main
+package mcp
 
 import (
 	"bufio"
@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
@@ -82,8 +83,8 @@ func roundtrip(t *testing.T, scope string, requests ...string) []rpcResponse {
 	t.Helper()
 	in := strings.NewReader(strings.Join(requests, "\n") + "\n")
 	var out bytes.Buffer
-	srv := newMCPServer(in, &out, scope)
-	if err := srv.serve(); err != nil && err != io.EOF {
+	srv := NewServer(in, &out, scope)
+	if err := srv.Serve(); err != nil && err != io.EOF {
 		t.Fatalf("serve: %v", err)
 	}
 	var resps []rpcResponse
@@ -275,4 +276,8 @@ func TestMCPToolList(t *testing.T) {
 	if len(got) != 3 {
 		t.Errorf("list returned %d articles, want 3", len(got))
 	}
+}
+
+func TestMain(m *testing.M) {
+	os.Exit(kbtest.Main(m))
 }

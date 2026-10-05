@@ -1,4 +1,4 @@
-// mcp.go — Read-only MCP (Model Context Protocol) server for kb-go.
+// Package mcp is kb's read-only MCP (Model Context Protocol) server.
 //
 // Exposes the existing knowledge-base read paths over a hand-rolled JSON-RPC
 // 2.0 server on stdio, so an in-loop agent can query the index without
@@ -28,7 +28,7 @@
 // slice keeps store.ListArticles' ID order so search.Index docIdx stays aligned
 // (search.HealIndex still rebuilds whenever ids/order drift). kb_show and
 // kb_glossary read single files and stay uncached.
-package main
+package mcp
 
 import (
 	"bufio"
@@ -95,8 +95,8 @@ type mcpTool struct {
 // error — the agent sees the message instead of the connection dropping.
 type toolHandler func(args map[string]any) (any, error)
 
-// mcpServer holds the registered tools and the stdio transport.
-type mcpServer struct {
+// Server holds the registered tools and the stdio transport.
+type Server struct {
 	in    io.Reader
 	out   io.Writer
 	tools []mcpTool
@@ -105,21 +105,21 @@ type mcpServer struct {
 
 // --- Entry point (wired into main's dispatch as `case "serve"`) ---
 
-func newMCPServer(in io.Reader, out io.Writer, defaultScope string) *mcpServer {
-	s := &mcpServer{in: in, out: out, funcs: map[string]toolHandler{}}
+func NewServer(in io.Reader, out io.Writer, defaultScope string) *Server {
+	s := &Server{in: in, out: out, funcs: map[string]toolHandler{}}
 	registerKBTools(s, defaultScope)
 	return s
 }
 
 // register adds a tool and its handler to the server.
-func (s *mcpServer) register(t mcpTool, h toolHandler) {
+func (s *Server) register(t mcpTool, h toolHandler) {
 	s.tools = append(s.tools, t)
 	s.funcs[t.Name] = h
 }
 
 // --- Transport loop: one JSON-RPC message per line over stdio ---
 
-func (s *mcpServer) serve() error {
+func (s *Server) Serve() error {
 	scanner := bufio.NewScanner(s.in)
 	// Articles can be large; allow long lines for tools/call payloads.
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
@@ -133,7 +133,7 @@ func (s *mcpServer) serve() error {
 	return scanner.Err()
 }
 
-func (s *mcpServer) handleLine(line []byte) {
+func (s *Server) handleLine(line []byte) {
 	var req rpcRequest
 	if err := json.Unmarshal(line, &req); err != nil {
 		s.writeError(nil, errParse, "parse error", err.Error())
@@ -183,7 +183,7 @@ func (s *mcpServer) handleLine(line []byte) {
 	}
 }
 
-func (s *mcpServer) handleToolCall(req rpcRequest) {
+func (s *Server) handleToolCall(req rpcRequest) {
 	var params struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
@@ -239,15 +239,15 @@ func toolError(msg string) map[string]any {
 
 // --- Response writers ---
 
-func (s *mcpServer) writeResult(id json.RawMessage, result any) {
+func (s *Server) writeResult(id json.RawMessage, result any) {
 	s.write(rpcResponse{JSONRPC: "2.0", ID: id, Result: result})
 }
 
-func (s *mcpServer) writeError(id json.RawMessage, code int, msg string, data any) {
+func (s *Server) writeError(id json.RawMessage, code int, msg string, data any) {
 	s.write(rpcResponse{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: code, Message: msg, Data: data}})
 }
 
-func (s *mcpServer) write(resp rpcResponse) {
+func (s *Server) write(resp rpcResponse) {
 	data, err := json.Marshal(resp)
 	if err != nil {
 		// Last-ditch: can't even marshal the error. Emit a static parse-fail.
@@ -296,7 +296,7 @@ func argBool(args map[string]any, key string, def bool) bool {
 
 // --- Tool registration: wraps the existing read paths ---
 
-func registerKBTools(s *mcpServer, defaultScope string) {
+func registerKBTools(s *Server, defaultScope string) {
 	cache := newArticleCache()
 	scopeProp := map[string]any{
 		"type":        "string",

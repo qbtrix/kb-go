@@ -30,6 +30,7 @@ import (
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/lint"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
@@ -454,7 +455,7 @@ func TestMCPSearchParityWithCLI(t *testing.T) {
 	sc := bufio.NewScanner(&stdout)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for sc.Scan() {
-		var r rpcResponse
+		var r serveResponse
 		if json.Unmarshal(sc.Bytes(), &r) != nil {
 			continue
 		}
@@ -617,4 +618,77 @@ A Pocket is a workspace container. ` + marker + ` lives in this body.`
 	if !strings.Contains(glossaryArt.Content, marker) {
 		t.Errorf("Content missing verbatim marker %q. Got: %q", marker, glossaryArt.Content)
 	}
+}
+
+// seedSampleKB writes a small set of articles + a rebuilt index + search index
+// into a fresh real scope (under ~/.knowledge-base), the same way the CLI
+// tests do. Returns the scope name and a cleanup func.
+func seedSampleKB(t *testing.T) string {
+	t.Helper()
+	scope := "test-mcp-" + textutil.ContentHash(t.Name())[:8]
+	t.Cleanup(func() { os.RemoveAll(store.ScopeDir(scope)) })
+
+	articles := []*model.WikiArticle{
+		{
+			ID: "auth-middleware", Title: "Auth Middleware",
+			Summary:    "Request authentication and token validation layer.",
+			Content:    "# Auth Middleware\n\nValidates bearer tokens on every request.",
+			Concepts:   []string{"authentication", "middleware", "tokens"},
+			Categories: []string{"security"},
+			WordCount:  42, CompiledWith: "test", Version: 1,
+		},
+		{
+			ID: "rate-limiter", Title: "Rate Limiter",
+			Summary:    "Sliding-window rate limiting for the API gateway.",
+			Content:    "# Rate Limiter\n\nThrottles requests per client using a sliding window.",
+			Concepts:   []string{"rate limiting", "middleware"},
+			Categories: []string{"gateway"},
+			WordCount:  37, CompiledWith: "test", Version: 1,
+		},
+		{
+			ID: "search-index", Title: "Search Index",
+			Summary:    "BM25 index construction and query path.",
+			Content:    "# Search Index\n\nBuilds the inverted index used for BM25 ranking.",
+			Concepts:   []string{"search", "bm25", "indexing"},
+			Categories: []string{"retrieval"},
+			WordCount:  55, CompiledWith: "test", Version: 1,
+		},
+	}
+	for _, a := range articles {
+		if err := store.SaveArticle(scope, a); err != nil {
+			t.Fatalf("saveArticle %s: %v", a.ID, err)
+		}
+	}
+	if err := store.SaveIndex(scope, store.RebuildIndex(scope, articles)); err != nil {
+		t.Fatalf("saveIndex: %v", err)
+	}
+	if err := search.SaveIndex(scope, search.BuildIndex(articles)); err != nil {
+		t.Fatalf("saveSearchIndex: %v", err)
+	}
+	return scope
+}
+
+// toolText extracts the single text-content block from a tools/call result and
+// asserts isError is false.
+func toolText(t *testing.T, name string, result any) string {
+	t.Helper()
+	m, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("%s: result not an object: %T", name, result)
+	}
+	if isErr, _ := m["isError"].(bool); isErr {
+		t.Fatalf("%s: tool reported error: %v", name, m["content"])
+	}
+	content, ok := m["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("%s: no content in result", name)
+	}
+	block := content[0].(map[string]any)
+	return block["text"].(string)
+}
+
+// serveResponse is the part of a `kb serve` JSON-RPC response these tests read.
+type serveResponse struct {
+	ID     json.RawMessage `json:"id,omitempty"`
+	Result any             `json:"result,omitempty"`
 }
