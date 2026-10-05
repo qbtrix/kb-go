@@ -126,7 +126,7 @@ func TestMCPSearch_QueryVecPath_RejectsTraversal(t *testing.T) {
 		"scope":          scope,
 		"query_vec_path": outside,
 	}
-	_, err := mcpSearch(args, scope)
+	_, err := mcpSearch(newArticleCache(), args, scope)
 	if err == nil {
 		t.Fatalf("mcpSearch accepted an out-of-base query_vec_path; traversal not contained")
 	}
@@ -159,7 +159,7 @@ func TestMCPSearch_QueryVecPath_AllowsInBase(t *testing.T) {
 		"scope":          scope,
 		"query_vec_path": inBase,
 	}
-	if _, err := mcpSearch(args, scope); err != nil {
+	if _, err := mcpSearch(newArticleCache(), args, scope); err != nil {
 		t.Fatalf("mcpSearch rejected an in-base query_vec_path: %v", err)
 	}
 }
