@@ -834,6 +834,35 @@ func loadArticle(scope, id string) (*WikiArticle, error) {
 	return parseArticle(id, string(data))
 }
 
+// splitFrontmatter splits "---\n<json>\n---\n<body>" into the JSON and the
+// body. The closing delimiter is the first line after the opening one that is
+// exactly "---" (a trailing \r is tolerated). It must not be a substring
+// search: JSON string values can hold "---" (a markdown rule or "|---|" table
+// divider in a summary) but never a raw newline, so a line that is only "---"
+// cannot occur inside the JSON. ok is false if text does not start with "---"
+// or the frontmatter is never closed.
+func splitFrontmatter(text string) (fm, body string, ok bool) {
+	if !strings.HasPrefix(text, "---") {
+		return "", "", false
+	}
+	rest := text[3:]
+	nl := strings.IndexByte(rest, '\n')
+	if nl < 0 {
+		return "", "", false
+	}
+	for pos := nl + 1; pos < len(rest); {
+		next := len(rest)
+		if end := strings.IndexByte(rest[pos:], '\n'); end >= 0 {
+			next = pos + end + 1
+		}
+		if strings.TrimRight(rest[pos:next], "\r\n") == "---" {
+			return rest[:pos], rest[next:], true
+		}
+		pos = next
+	}
+	return "", "", false
+}
+
 func parseArticle(id, text string) (*WikiArticle, error) {
 	if !strings.HasPrefix(text, "---") {
 		return &WikiArticle{
@@ -845,8 +874,8 @@ func parseArticle(id, text string) (*WikiArticle, error) {
 		}, nil
 	}
 
-	parts := strings.SplitN(text, "---", 3)
-	if len(parts) < 3 {
+	fmText, body, ok := splitFrontmatter(text)
+	if !ok {
 		return &WikiArticle{
 			ID:        id,
 			Title:     id,
@@ -857,7 +886,7 @@ func parseArticle(id, text string) (*WikiArticle, error) {
 	}
 
 	var fm Frontmatter
-	if err := json.Unmarshal([]byte(parts[1]), &fm); err != nil {
+	if err := json.Unmarshal([]byte(fmText), &fm); err != nil {
 		return nil, fmt.Errorf("bad frontmatter in %s: %w", id, err)
 	}
 
@@ -875,7 +904,7 @@ func parseArticle(id, text string) (*WikiArticle, error) {
 		targetWords = 500
 	}
 
-	content := strings.TrimSpace(parts[2])
+	content := strings.TrimSpace(body)
 	return &WikiArticle{
 		ID:           id,
 		Title:        fm.Title,
@@ -923,6 +952,8 @@ func listArticles(scope string) ([]*WikiArticle, error) {
 		}
 		a, err := parseArticle(id, string(data))
 		if err != nil {
+			// stderr only: stdout carries JSON / MCP output.
+			fmt.Fprintf(os.Stderr, "warning: skipping article %s: %v\n", id, err)
 			continue
 		}
 		articles = append(articles, a)

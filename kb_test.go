@@ -230,6 +230,51 @@ func TestSaveLoadArticle(t *testing.T) {
 	os.RemoveAll(scopeDir(scope))
 }
 
+// A "---" inside a frontmatter string value (a markdown rule or table divider
+// in the summary, a title like "A --- B") must not be read as the closing
+// delimiter. Before the fix, parseArticle split on the first "---" anywhere,
+// the JSON parse failed, and listArticles silently dropped the article from
+// every index and search.
+func TestSaveLoadArticleDashesInFrontmatter(t *testing.T) {
+	scope := "test-dashes-" + contentHash(t.Name())[:8]
+	defer func() { os.RemoveAll(scopeDir(scope)) }()
+
+	cases := []*WikiArticle{
+		{ID: "rule-in-summary", Title: "Rule In Summary", Summary: "# Doc\n\nIntro.\n\n---\n\n## Next", Content: "body one"},
+		{ID: "table-in-summary", Title: "Table In Summary", Summary: "| a | b |\n|---|---|\n| 1 | 2 |", Content: "body two"},
+		{ID: "dashes-in-title", Title: "Before --- After", Summary: "plain", Content: "body three\n\n---\n\nmore"},
+		{ID: "plain", Title: "Plain", Summary: "no dashes", Content: "body four"},
+	}
+	for _, a := range cases {
+		if err := saveArticle(scope, a); err != nil {
+			t.Fatalf("saveArticle(%s): %v", a.ID, err)
+		}
+	}
+
+	for _, want := range cases {
+		got, err := loadArticle(scope, want.ID)
+		if err != nil {
+			t.Errorf("loadArticle(%s): %v", want.ID, err)
+			continue
+		}
+		if got.Title != want.Title || got.Summary != want.Summary || got.Content != want.Content {
+			t.Errorf("%s round-trip mismatch: title=%q summary=%q content=%q", want.ID, got.Title, got.Summary, got.Content)
+		}
+	}
+
+	all, err := listArticles(scope)
+	if err != nil {
+		t.Fatalf("listArticles: %v", err)
+	}
+	if len(all) != len(cases) {
+		ids := make([]string, 0, len(all))
+		for _, a := range all {
+			ids = append(ids, a.ID)
+		}
+		t.Errorf("listArticles returned %d articles %v, want %d", len(all), ids, len(cases))
+	}
+}
+
 // --- RawDoc Storage Round-Trip ---
 
 func TestSaveLoadRawDoc(t *testing.T) {
