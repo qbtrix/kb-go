@@ -1,10 +1,16 @@
 # kb-go
 
-Headless knowledge base engine. Single-file Go CLI, no frameworks.
+Headless knowledge base engine. One Go binary (`package main` split into per-concern files), no frameworks.
 
 ## Structure
 
-- `kb.go` — Core logic (build, search, ingest, show, list, stats, lint, recompile, watch, clear)
+- `main.go` — entry point and command dispatch; `flags.go` — minimal flag parsing
+- `cmd_<name>.go` — one file per command (`cmd_build.go`, `cmd_search.go`, `cmd_ingest.go`, `cmd_accept.go`, …) with the helpers only that command uses
+- `models.go` — data models; `storage.go` — raw docs, articles, frontmatter, article identity, index, cache
+- `search_index.go` — persisted inverted index; `bm25.go` — scoring; `context.go` — `search --context` excerpts
+- `compile.go` — LLM compilation; `lint.go` — structural + LLM lint; `export.go`, `watch.go`, `scan.go`, `helpers.go`
+- `astparse.go`, `parse_go.go`, `parse_python.go`, `parse_ts.go` — source parsers that feed compilation
+- `mcp.go` — `kb serve` MCP server; `convo.go` — conversation mode; `porter.go` — stemmer; `vsearch.go`, `vector_cli.go` — vectors
 - `glossary.go` — Domain glossary support (skip-LLM passthrough + list/show/validate commands)
 - `contradiction.go` — Cross-source definition contradiction detection (offline; flags terms two sources define differently)
 - `kb_test.go`, `glossary_test.go`, `convo_test.go`, `vsearch_test.go`, `vector_cli_test.go` — unit tests
@@ -45,7 +51,7 @@ kb clear --scope <name>
 
 ## Patterns
 
-- Single-file CLI, same style as c4-gen
+- One `package main`, one file per concern; new commands go in their own `cmd_<name>.go`, shared code in the concern file it belongs to
 - Manual CLI arg parsing (no cobra/urfave)
 - Direct HTTP to Anthropic API (no SDK)
 - Storage: `~/.knowledge-base/{scope}/` (raw/, wiki/, cache/, index.json)

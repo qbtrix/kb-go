@@ -607,7 +607,7 @@ Articles are plain markdown with JSON frontmatter. `cat` them, `grep` them, comm
 
 ## Architecture
 
-Three files: [`kb.go`](kb.go) (core, ~2,900 lines), [`convo.go`](convo.go) (conversation mode, ~530 lines), [`vsearch.go`](vsearch.go) (vector search primitives, ~140 lines). One dependency: `fsnotify` for watch mode.
+One `package main`, split by concern: [`main.go`](main.go) (dispatch), one `cmd_<name>.go` per command, and files for storage, search index, BM25, context excerpts, compilation, lint and parsers. [`convo.go`](convo.go) is conversation mode, [`mcp.go`](mcp.go) the MCP server. One dependency: `fsnotify` for watch mode.
 
 | Component | ~Lines | What it does |
 |-----------|--------|-------------|
