@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -32,7 +33,7 @@ import (
 func seedSampleKB(t *testing.T) string {
 	t.Helper()
 	scope := "test-mcp-" + textutil.ContentHash(t.Name())[:8]
-	t.Cleanup(func() { os.RemoveAll(scopeDir(scope)) })
+	t.Cleanup(func() { os.RemoveAll(store.ScopeDir(scope)) })
 
 	articles := []*model.WikiArticle{
 		{
@@ -61,11 +62,11 @@ func seedSampleKB(t *testing.T) string {
 		},
 	}
 	for _, a := range articles {
-		if err := saveArticle(scope, a); err != nil {
+		if err := store.SaveArticle(scope, a); err != nil {
 			t.Fatalf("saveArticle %s: %v", a.ID, err)
 		}
 	}
-	if err := saveIndex(scope, rebuildIndex(scope, articles)); err != nil {
+	if err := store.SaveIndex(scope, store.RebuildIndex(scope, articles)); err != nil {
 		t.Fatalf("saveIndex: %v", err)
 	}
 	if err := saveSearchIndex(scope, buildSearchIndex(articles)); err != nil {

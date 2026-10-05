@@ -21,6 +21,7 @@ import (
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/parse"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -55,8 +56,8 @@ func runBuild(args []string) int {
 		fatal("Invalid path: %s", path)
 	}
 
-	ensureDirs(scope)
-	cache := loadCache(scope)
+	store.EnsureDirs(scope)
+	cache := store.LoadCache(scope)
 
 	files := scanDir(absPath, pattern)
 	if exclude != "" {
@@ -171,7 +172,7 @@ func runBuild(args []string) int {
 				WordCount:   textutil.WordCount(j.text),
 				IngestedAt:  time.Now().UTC().Format(time.RFC3339),
 			}
-			saveRawDoc(scope, raw)
+			store.SaveRawDoc(scope, raw)
 
 			var article *model.WikiArticle
 			fixedID := false
@@ -250,7 +251,7 @@ func runBuild(args []string) int {
 		}
 		return results[i].job.relPath < results[j].job.relPath
 	})
-	ids := loadIDRegistry(scope)
+	ids := store.LoadIDRegistry(scope)
 	changed := len(results)
 	var totalInput, totalOutput int
 	for _, r := range results {
@@ -260,14 +261,14 @@ func runBuild(args []string) int {
 		}
 		if r.fixedID {
 			// Keep the frontmatter version on a first write, as before.
-			_, existed := ids.version[r.article.ID]
-			if v := ids.claimFixed(r.article.ID, r.article.SourcePath, r.article.SourceDocs); existed {
+			existed := ids.Has(r.article.ID)
+			if v := ids.ClaimFixed(r.article.ID, r.article.SourcePath, r.article.SourceDocs); existed {
 				r.article.Version = v
 			}
 		} else {
-			r.article.ID, r.article.Version = ids.claim(r.article.ID, r.article.SourcePath, r.article.SourceDocs, false)
+			r.article.ID, r.article.Version = ids.Claim(r.article.ID, r.article.SourcePath, r.article.SourceDocs, false)
 		}
-		saveArticle(scope, r.article)
+		store.SaveArticle(scope, r.article)
 		cache.Files[r.job.relPath] = model.CacheEntry{
 			Hash:       r.job.hash,
 			ArticleID:  r.article.ID,
@@ -275,13 +276,13 @@ func runBuild(args []string) int {
 		}
 	}
 
-	ids.retire(scope)
-	saveCache(scope, cache)
+	ids.Retire(scope)
+	store.SaveCache(scope, cache)
 
 	// Rebuild index
-	allArticles, _ := listArticles(scope)
-	idx := rebuildIndex(scope, allArticles)
-	saveIndex(scope, idx)
+	allArticles, _ := store.ListArticles(scope)
+	idx := store.RebuildIndex(scope, allArticles)
+	store.SaveIndex(scope, idx)
 	saveSearchIndex(scope, buildSearchIndex(allArticles))
 
 	// Cross-source contradiction scan (issue #19). We feed the detector this

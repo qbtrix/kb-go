@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 type graphNode struct {
@@ -182,7 +183,7 @@ func buildConceptSubgraph(idx *model.KnowledgeIndex, focus string) ([]graphNode,
 // buildArticleSubgraph returns nodes for an article and its concepts.
 // Errors when the article cannot be loaded.
 func buildArticleSubgraph(idx *model.KnowledgeIndex, articleID string) ([]graphNode, []graphEdge, error) {
-	article, err := loadArticle(idx.Scope, articleID)
+	article, err := store.LoadArticle(idx.Scope, articleID)
 	if err != nil || article == nil {
 		return nil, nil, fmt.Errorf("Article not found: %s", articleID)
 	}

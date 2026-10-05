@@ -12,6 +12,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -36,7 +37,7 @@ func runAccept(t *testing.T, scope string, payload any) {
 
 func sourcePaths(t *testing.T, scope string) []string {
 	t.Helper()
-	arts, err := listArticles(scope)
+	arts, err := store.ListArticles(scope)
 	if err != nil {
 		t.Fatalf("listArticles: %v", err)
 	}
@@ -57,7 +58,7 @@ func acceptItem(source, title string) map[string]any {
 
 func TestAcceptSameTitleDifferentSourcesKeepsBoth(t *testing.T) {
 	scope := "test-accept-collide-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	runAccept(t, scope, map[string]any{"articles": []any{
 		acceptItem("api/README.md", "Overview"),
@@ -72,7 +73,7 @@ func TestAcceptSameTitleDifferentSourcesKeepsBoth(t *testing.T) {
 
 func TestAcceptSameTitleAcrossBatchesKeepsBoth(t *testing.T) {
 	scope := "test-accept-collide-batch-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	runAccept(t, scope, []any{acceptItem("api/README.md", "Overview")})
 	runAccept(t, scope, []any{acceptItem("web/README.md", "Overview")})
@@ -84,12 +85,12 @@ func TestAcceptSameTitleAcrossBatchesKeepsBoth(t *testing.T) {
 
 func TestAcceptResubmitSameSourceReplaces(t *testing.T) {
 	scope := "test-accept-resubmit-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	runAccept(t, scope, []any{acceptItem("docs/auth.md", "Auth Flow")})
 	runAccept(t, scope, []any{acceptItem("docs/auth.md", "Authentication Overview")})
 
-	arts, err := listArticles(scope)
+	arts, err := store.ListArticles(scope)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +108,7 @@ func TestAcceptResubmitSameSourceReplaces(t *testing.T) {
 
 func TestIngestArticleJSONSameTitleDifferentSourcesKeepsBoth(t *testing.T) {
 	scope := "test-artjson-collide-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	for _, src := range []string{"a/notes.md", "b/notes.md"} {
 		payload, _ := json.Marshal(map[string]any{
@@ -119,7 +120,7 @@ func TestIngestArticleJSONSameTitleDifferentSourcesKeepsBoth(t *testing.T) {
 		}
 	}
 
-	arts, err := listArticles(scope)
+	arts, err := store.ListArticles(scope)
 	if err != nil {
 		t.Fatal(err)
 	}

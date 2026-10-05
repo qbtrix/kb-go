@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -100,7 +101,7 @@ func TestDetectContradictionsStrictKeyedOnFirstSentence(t *testing.T) {
 
 func TestGlossaryValidateSurfacesContradiction(t *testing.T) {
 	scope := "test-contra-validate-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "soul-religious", Title: "Soul (religious)", Content: "The Soul is the immaterial spiritual essence of a being.",
@@ -127,7 +128,7 @@ func TestGlossaryValidateSurfacesContradiction(t *testing.T) {
 
 func TestGlossaryValidateNoContradictionWhenAgreeing(t *testing.T) {
 	scope := "test-contra-agree-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "pocket", Title: "Pocket", Content: "Pocket is a PocketPaw workspace container.",

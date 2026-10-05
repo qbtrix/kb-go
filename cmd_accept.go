@@ -12,6 +12,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -81,9 +82,9 @@ func cmdAccept(args []string) {
 		scope = "default"
 	}
 
-	ensureDirs(scope)
-	cache := loadCache(scope)
-	ids := loadIDRegistry(scope)
+	store.EnsureDirs(scope)
+	cache := store.LoadCache(scope)
+	ids := store.LoadIDRegistry(scope)
 	saved := 0
 
 	for _, a := range articles {
@@ -142,8 +143,8 @@ func cmdAccept(args []string) {
 			article.Categories = append(article.Categories, "test")
 		}
 
-		article.ID, article.Version = ids.claim(article.ID, article.SourcePath, article.SourceDocs, false)
-		saveArticle(scope, article)
+		article.ID, article.Version = ids.Claim(article.ID, article.SourcePath, article.SourceDocs, false)
+		store.SaveArticle(scope, article)
 
 		// Update cache
 		if a.Hash != "" && a.Source != "" {
@@ -156,13 +157,13 @@ func cmdAccept(args []string) {
 		saved++
 	}
 
-	ids.retire(scope)
-	saveCache(scope, cache)
+	ids.Retire(scope)
+	store.SaveCache(scope, cache)
 
 	// Rebuild index
-	allArticles, _ := listArticles(scope)
-	idx := rebuildIndex(scope, allArticles)
-	saveIndex(scope, idx)
+	allArticles, _ := store.ListArticles(scope)
+	idx := store.RebuildIndex(scope, allArticles)
+	store.SaveIndex(scope, idx)
 	saveSearchIndex(scope, buildSearchIndex(allArticles))
 
 	output := map[string]any{

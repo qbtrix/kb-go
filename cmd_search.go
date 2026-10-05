@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 	"github.com/qbtrix/kb-go/internal/vector"
 )
@@ -72,7 +73,7 @@ func cmdSearch(args []string) {
 	}
 
 	// Resolve scopes: "*" = all, "a,b,c" = specific, else single
-	scopes := resolveScopes(scope)
+	scopes := store.ResolveScopes(scope)
 
 	// Collect articles from all scopes
 	type scopedArticle struct {
@@ -82,7 +83,7 @@ func cmdSearch(args []string) {
 	var allArticles []*model.WikiArticle
 	var scopeMap []string // parallel array: scope per article
 	for _, s := range scopes {
-		articles, err := listArticles(s)
+		articles, err := store.ListArticles(s)
 		if err != nil {
 			continue
 		}

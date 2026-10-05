@@ -11,6 +11,7 @@ import (
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/parse"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -34,8 +35,8 @@ func cmdPrepare(args []string) {
 		fatal("Invalid path: %s", path)
 	}
 
-	ensureDirs(scope)
-	cache := loadCache(scope)
+	store.EnsureDirs(scope)
+	cache := store.LoadCache(scope)
 
 	files := scanDir(absPath, pattern)
 	if exclude != "" {
@@ -105,7 +106,7 @@ func cmdPrepare(args []string) {
 			WordCount:   textutil.WordCount(string(text)),
 			IngestedAt:  time.Now().UTC().Format(time.RFC3339),
 		}
-		saveRawDoc(scope, raw)
+		store.SaveRawDoc(scope, raw)
 
 		// Build the same prompt `kb build` sends — shared helpers keep them in sync.
 		prompt := compile.Prompt(relPath, parse.PromptBlock(parse.Code(f, string(text))), string(text), terse)

@@ -4,7 +4,7 @@
 // the contained-path vector loader the MCP server uses (agent-supplied paths
 // must stay inside the knowledge base, issue #23).
 
-package main
+package store
 
 import (
 	"fmt"
@@ -15,18 +15,18 @@ import (
 	"github.com/qbtrix/kb-go/internal/vector"
 )
 
-// vectorIndexPath returns the on-disk location for a scope's vector index.
+// VectorIndexPath returns the on-disk location for a scope's vector index.
 // Mirrors the storage layout used by raw/ and wiki/ — both are subdirs under
 // ~/.knowledge-base/{scope}/, the vector index is a flat sibling file.
-func vectorIndexPath(scope string) string {
-	return filepath.Join(scopeDir(scope), "vectors.json")
+func VectorIndexPath(scope string) string {
+	return filepath.Join(ScopeDir(scope), "vectors.json")
 }
 
-// loadOrCreateVectorIndex returns the on-disk index for the scope, or a fresh
+// LoadVectors returns the on-disk index for the scope, or a fresh
 // empty one if the file doesn't exist yet. Errors only on actual I/O / parse
 // failures — a missing file is the expected first-write case.
-func loadOrCreateVectorIndex(scope string) (*vector.Index, error) {
-	path := vectorIndexPath(scope)
+func LoadVectors(scope string) (*vector.Index, error) {
+	path := VectorIndexPath(scope)
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return vector.New(), nil
@@ -36,27 +36,27 @@ func loadOrCreateVectorIndex(scope string) (*vector.Index, error) {
 	return vector.Load(path)
 }
 
-// saveVectorIndex persists the vector index to ~/.knowledge-base/{scope}/vectors.json.
-// Creates the parent directory if missing (matches ensureDirs idiom for raw/, wiki/).
-func saveVectorIndex(scope string, idx *vector.Index) error {
-	path := vectorIndexPath(scope)
+// SaveVectors persists the vector index to ~/.knowledge-base/{scope}/vectors.json.
+// Creates the parent directory if missing (matches EnsureDirs idiom for raw/, wiki/).
+func SaveVectors(scope string, idx *vector.Index) error {
+	path := VectorIndexPath(scope)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	return idx.Save(path)
 }
 
-// loadVectorFromContainedFile is the agent-reachable variant of
+// LoadContainedVector is the agent-reachable variant of
 // vector.LoadFile (issue #23). The MCP `kb_search` query_vec_path arg is
 // agent-controlled over a persistent connection, so unlike the human-typed CLI
 // `--query-vec`/`--vec` flags it must not read arbitrary disk paths. The query
 // vector must resolve inside the kb base dir (~/.knowledge-base). On rejection
 // the error names only the offending path, never the contained dir's contents.
-func loadVectorFromContainedFile(path string) ([]float32, error) {
+func LoadContainedVector(path string) ([]float32, error) {
 	if path == "" {
 		return nil, fmt.Errorf("query vector path is empty")
 	}
-	base, err := filepath.Abs(basePath())
+	base, err := filepath.Abs(BaseDir())
 	if err != nil {
 		return nil, fmt.Errorf("resolve base dir: %w", err)
 	}
@@ -72,7 +72,7 @@ func loadVectorFromContainedFile(path string) ([]float32, error) {
 	return vector.LoadFile(abs)
 }
 
-// attachVectorToArticle is the non-fatal core of `kb ingest --vec`. Validates
+// AttachVector is the non-fatal core of `kb ingest --vec`. Validates
 // inputs, loads the vector file, upserts into the per-scope vector index, and
 // persists. Returns the resulting (dim, total-vectors-after) on success so
 // the CLI wrapper can print a confirmation; tests call this directly to
@@ -82,7 +82,7 @@ func loadVectorFromContainedFile(path string) ([]float32, error) {
 // we want a hard error rather than a silent vector orphan. (Vectors keyed off
 // non-existent ids would never be retrieved anyway, since search returns
 // articles by id-lookup.)
-func attachVectorToArticle(scope, articleID, vecPath string) (dim, total int, err error) {
+func AttachVector(scope, articleID, vecPath string) (dim, total int, err error) {
 	if articleID == "" {
 		return 0, 0, fmt.Errorf("ingest --vec requires --id <article_id>")
 	}
@@ -91,29 +91,29 @@ func attachVectorToArticle(scope, articleID, vecPath string) (dim, total int, er
 	}
 	// Confirm the article exists. Otherwise the vector would orphan and
 	// hybrid search would skip it on rrfFuse's articlesByID lookup.
-	if a, e := loadArticle(scope, articleID); e != nil || a == nil {
+	if a, e := LoadArticle(scope, articleID); e != nil || a == nil {
 		return 0, 0, fmt.Errorf("article %q not found in scope %q (run `kb ingest` to create it first)", articleID, scope)
 	}
 	vec, err := vector.LoadFile(vecPath)
 	if err != nil {
 		return 0, 0, fmt.Errorf("load vector: %w", err)
 	}
-	idx, err := loadOrCreateVectorIndex(scope)
+	idx, err := LoadVectors(scope)
 	if err != nil {
 		return 0, 0, fmt.Errorf("load vector index: %w", err)
 	}
 	idx.Add(articleID, vec)
-	if err := saveVectorIndex(scope, idx); err != nil {
+	if err := SaveVectors(scope, idx); err != nil {
 		return 0, 0, fmt.Errorf("save vector index: %w", err)
 	}
 	return len(vec), idx.Len(), nil
 }
 
-// vectorIndexCount returns how many entries the per-scope vector index holds.
+// VectorCount returns how many entries the per-scope vector index holds.
 // 0 when the index file doesn't exist yet. Used by cmdStats to populate the
 // "vectors" field. Errors are swallowed and treated as 0 — stats is best-effort.
-func vectorIndexCount(scope string) int {
-	idx, err := loadOrCreateVectorIndex(scope)
+func VectorCount(scope string) int {
+	idx, err := LoadVectors(scope)
 	if err != nil {
 		return 0
 	}

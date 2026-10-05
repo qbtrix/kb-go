@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -12,7 +13,7 @@ func cmdList(args []string) {
 	scope := flagStr(args, "--scope", "default")
 	jsonOut := flagBool(args, "--json")
 
-	articles, _ := listArticles(scope)
+	articles, _ := store.ListArticles(scope)
 	if len(articles) == 0 {
 		if jsonOut {
 			fmt.Println("[]")

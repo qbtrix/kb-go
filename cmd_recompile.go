@@ -12,6 +12,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 func cmdRecompile(args []string) {
@@ -28,10 +29,10 @@ func cmdRecompile(args []string) {
 
 	var targets []*model.WikiArticle
 	if recompileAll {
-		all, _ := listArticles(scope)
+		all, _ := store.ListArticles(scope)
 		targets = all
 	} else {
-		a, err := loadArticle(scope, args[0])
+		a, err := store.LoadArticle(scope, args[0])
 		if err != nil || a == nil {
 			fatal("Article not found: %s", args[0])
 		}
@@ -43,7 +44,7 @@ func cmdRecompile(args []string) {
 		// Load raw source docs
 		var texts []string
 		for _, docID := range a.SourceDocs {
-			raw, err := loadRawDoc(scope, docID)
+			raw, err := store.LoadRawDoc(scope, docID)
 			if err == nil && raw != nil {
 				texts = append(texts, raw.RawText)
 			}
@@ -71,14 +72,14 @@ func cmdRecompile(args []string) {
 		newArticle.Version = a.Version + 1
 		newArticle.SourcePath = a.SourcePath
 		newArticle.SourceDocs = a.SourceDocs
-		saveArticle(scope, newArticle)
+		store.SaveArticle(scope, newArticle)
 		recompiled++
 	}
 
 	// Rebuild index
-	allArticles, _ := listArticles(scope)
-	idx := rebuildIndex(scope, allArticles)
-	saveIndex(scope, idx)
+	allArticles, _ := store.ListArticles(scope)
+	idx := store.RebuildIndex(scope, allArticles)
+	store.SaveIndex(scope, idx)
 	saveSearchIndex(scope, buildSearchIndex(allArticles))
 
 	if jsonOut {

@@ -17,6 +17,7 @@ import (
 	"sort"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 // rrfK is the standard reciprocal-rank-fusion constant from Cormack et al.
@@ -84,14 +85,14 @@ type vectorSearchResult struct {
 // runVectorSearch performs pure cosine search over the per-scope vector index.
 // Used when --query-vec is set without --hybrid.
 func runVectorSearch(scope string, queryVec []float32, topK int) ([]vectorSearchResult, error) {
-	idx, err := loadOrCreateVectorIndex(scope)
+	idx, err := store.LoadVectors(scope)
 	if err != nil {
 		return nil, fmt.Errorf("load vector index: %w", err)
 	}
 	hits := idx.Search(queryVec, topK)
 	out := make([]vectorSearchResult, 0, len(hits))
 	for rank, h := range hits {
-		a, err := loadArticle(scope, h.ID)
+		a, err := store.LoadArticle(scope, h.ID)
 		if err != nil || a == nil {
 			// Vector orphan (vector exists for an article that's been deleted).
 			// Skip silently — orphans are a maintenance issue, not a query-time error.
@@ -119,7 +120,7 @@ func runVectorSearch(scope string, queryVec []float32, topK int) ([]vectorSearch
 // listing are skipped (orphan vectors, mid-query deletions).
 func runHybridSearch(scope string, queryText string, queryVec []float32, topK int) ([]vectorSearchResult, error) {
 	// BM25 side — same code path as the existing search.
-	allArticles, err := listArticles(scope)
+	allArticles, err := store.ListArticles(scope)
 	if err != nil {
 		return nil, fmt.Errorf("list articles: %w", err)
 	}
@@ -138,7 +139,7 @@ func runHybridSearch(scope string, queryText string, queryVec []float32, topK in
 	}
 
 	// Vector side.
-	idx, err := loadOrCreateVectorIndex(scope)
+	idx, err := store.LoadVectors(scope)
 	if err != nil {
 		return nil, fmt.Errorf("load vector index: %w", err)
 	}

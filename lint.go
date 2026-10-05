@@ -13,13 +13,14 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 // --- Structural Lint (no LLM) ---
 
 func lintStructural(scope string) []model.LintIssue {
-	articles, _ := listArticles(scope)
-	idx := loadIndex(scope)
+	articles, _ := store.ListArticles(scope)
+	idx := store.LoadIndex(scope)
 	var issues []model.LintIssue
 
 	if len(articles) == 0 {
@@ -156,7 +157,7 @@ Knowledge base:
 // lintLLM runs the LLM review through the configured compile path and parses
 // the JSON array of issues the model returns. Unparseable output is an error.
 func lintLLM(scope string, spec compile.Spec) ([]model.LintIssue, error) {
-	articles, _ := listArticles(scope)
+	articles, _ := store.ListArticles(scope)
 	if len(articles) == 0 {
 		return []model.LintIssue{{
 			Type: "gap", Severity: "warning",

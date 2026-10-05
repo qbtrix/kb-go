@@ -18,6 +18,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 )
 
 func searchTestCorpus() []*model.WikiArticle {
@@ -95,7 +96,7 @@ func TestSearchIndexRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	kbtest.SetHome(t, dir)
 	scope := "sidx-" + filepath.Base(dir)
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 
 	articles := searchTestCorpus()
 	if err := saveSearchIndex(scope, buildSearchIndex(articles)); err != nil {
@@ -119,11 +120,11 @@ func TestLoadSearchIndexIgnoresOldFormat(t *testing.T) {
 	dir := t.TempDir()
 	kbtest.SetHome(t, dir)
 	scope := "sidx-old-" + filepath.Base(dir)
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 
 	// v1 token-dump shape: {"articles": [{"id", "all", "title", "concepts"}], "avg_dl"}
 	old := `{"articles":[{"id":"a","all":["alpha","beta"],"title":["alpha"],"concepts":[]}],"avg_dl":2}`
-	path := filepath.Join(scopeDir(scope), "cache", "search_index.json")
+	path := filepath.Join(store.ScopeDir(scope), "cache", "search_index.json")
 	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
 		t.Fatalf("write old index: %v", err)
 	}
@@ -141,11 +142,11 @@ func TestLoadSearchIndexIgnoresOldFormat(t *testing.T) {
 }
 
 // seedSearchCorpus persists searchTestCorpus into a scope so cmdSearch's real
-// disk path (listArticles + index load) can run against it.
+// disk path (store.ListArticles + index load) can run against it.
 func seedSearchCorpus(t *testing.T, scope string) {
 	t.Helper()
 	for _, a := range searchTestCorpus() {
-		if err := saveArticle(scope, a); err != nil {
+		if err := store.SaveArticle(scope, a); err != nil {
 			t.Fatalf("saveArticle %s: %v", a.ID, err)
 		}
 	}
@@ -155,13 +156,13 @@ func TestSearchSelfHealsIndex(t *testing.T) {
 	dir := t.TempDir()
 	kbtest.SetHome(t, dir)
 	scope := "sidx-heal-" + filepath.Base(dir)
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 	seedSearchCorpus(t, scope)
 
 	// Plant an old-format (v1) index — the shape a scope has right after
 	// upgrading kb without re-ingesting anything.
 	old := `{"articles":[{"id":"a","all":["alpha"],"title":["alpha"],"concepts":[]}],"avg_dl":1}`
-	idxPath := filepath.Join(scopeDir(scope), "cache", "search_index.json")
+	idxPath := filepath.Join(store.ScopeDir(scope), "cache", "search_index.json")
 	if err := os.WriteFile(idxPath, []byte(old), 0o644); err != nil {
 		t.Fatalf("write v1 index: %v", err)
 	}
@@ -180,7 +181,7 @@ func TestSearchSelfHealsIndex(t *testing.T) {
 	if si.V != searchIndexVersion {
 		t.Fatalf("healed index version = %d, want %d", si.V, searchIndexVersion)
 	}
-	all, _ := listArticles(scope)
+	all, _ := store.ListArticles(scope)
 	if !indexMatches(si, all) {
 		t.Fatalf("healed index does not match the scope's articles")
 	}
@@ -199,13 +200,13 @@ func TestSearchTagFilteredDoesNotClobberIndex(t *testing.T) {
 	dir := t.TempDir()
 	kbtest.SetHome(t, dir)
 	scope := "sidx-noclobber-" + filepath.Base(dir)
-	ensureDirs(scope)
+	store.EnsureDirs(scope)
 	seedSearchCorpus(t, scope)
 
 	// No index on disk. A tag-filtered search scores a SLICE of the scope —
 	// it must not persist an index describing that slice as the full scope.
 	cmdSearch([]string{"auth", "--scope", scope, "--exclude-tags", "Backend", "--json"})
-	idxPath := filepath.Join(scopeDir(scope), "cache", "search_index.json")
+	idxPath := filepath.Join(store.ScopeDir(scope), "cache", "search_index.json")
 	if _, err := os.Stat(idxPath); err == nil {
 		t.Fatalf("tag-filtered search wrote a search index; it must not")
 	}
@@ -215,7 +216,7 @@ func TestSearchTagFilteredDoesNotClobberIndex(t *testing.T) {
 	if si := loadOrHealSearchIndex("no-such-scope-xyz", nil); si != nil {
 		t.Errorf("loadOrHealSearchIndex(empty) = %+v, want nil", si)
 	}
-	if _, err := os.Stat(filepath.Join(basePath(), "no-such-scope-xyz")); err == nil {
+	if _, err := os.Stat(filepath.Join(store.BaseDir(), "no-such-scope-xyz")); err == nil {
 		t.Errorf("healing an empty scope created its directory")
 	}
 }

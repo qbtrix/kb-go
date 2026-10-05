@@ -12,6 +12,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -156,9 +157,9 @@ func TestContextBudgetsEveryBlockAndKeepsFirstHit(t *testing.T) {
 // consumer that splits the text output on the separator; --json keeps it whole.
 func TestContextJSONKeepsHorizontalRules(t *testing.T) {
 	scope := "test-ctx-json-" + textutil.ContentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 	content := "Intro about the warranty.\n\n---\n\nTail: lifetime repair guarantee on all packs."
-	if err := saveArticle(scope, &model.WikiArticle{ID: "warranty", Title: "Warranty", Summary: "Repairs.",
+	if err := store.SaveArticle(scope, &model.WikiArticle{ID: "warranty", Title: "Warranty", Summary: "Repairs.",
 		Content: content, SourcePath: "warranty", Version: 1}); err != nil {
 		t.Fatal(err)
 	}
