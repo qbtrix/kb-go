@@ -16,8 +16,10 @@ Test corpora for benchmarking kb-go across languages and scales.
 # Build the kb binary
 cd .. && go build -o kb .
 
-# Pick a compiler (see the main README, "Compiling articles")
-export KB_COMPILER="python examples/compilers/claude_code.py"
+# Pick an LLM (see the main README, "Compiling articles"): the built-in client...
+export ANTHROPIC_API_KEY="sk-..."
+# ...or your own compiler, e.g. your Claude Code login
+# export KB_COMPILER="python examples/compilers/claude_code.py"
 
 # Run on small corpus (bundled, no download needed)
 ./kb build examples/small/go --scope small-go --pattern "*.go"
@@ -48,9 +50,9 @@ go test -bench=. -benchmem
 
 Measures: tokenize, content hash, AST parsing (Go/Python/TS), BM25 search, index rebuild, file scanning.
 
-### Full Pipeline (needs KB_COMPILER)
+### Full Pipeline (needs ANTHROPIC_API_KEY or KB_COMPILER)
 
-Set `KB_COMPILER` to a compiler command first (see the main README, "Compiling articles"), e.g. `export KB_COMPILER="python examples/compilers/claude_code.py"`.
+Set `ANTHROPIC_API_KEY` for the built-in client, or `KB_COMPILER` to a compiler command (see the main README, "Compiling articles"), e.g. `export KB_COMPILER="python examples/compilers/claude_code.py"`. `KB_COMPILER` wins when both are set.
 
 ```bash
 ./bench.sh small       # Quick — 10 files, ~1 min
