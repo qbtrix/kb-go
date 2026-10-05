@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 var (
@@ -145,7 +147,7 @@ func formatCodeContext(mod *CodeModule) string {
 			}
 			fmt.Fprintf(&sb, "  %s %s%s%s\n", t.Kind, t.Name, bases, exported)
 			if t.Docstring != "" {
-				fmt.Fprintf(&sb, "    doc: %s\n", truncate(t.Docstring, 100))
+				fmt.Fprintf(&sb, "    doc: %s\n", textutil.Truncate(t.Docstring, 100))
 			}
 			for _, f := range t.Fields {
 				fmt.Fprintf(&sb, "    field: %s\n", f)
@@ -181,7 +183,7 @@ func formatCodeContext(mod *CodeModule) string {
 			}
 			fmt.Fprintf(&sb, "%s\n", exported)
 			if fn.Docstring != "" {
-				fmt.Fprintf(&sb, "    doc: %s\n", truncate(fn.Docstring, 100))
+				fmt.Fprintf(&sb, "    doc: %s\n", textutil.Truncate(fn.Docstring, 100))
 			}
 		}
 	}

@@ -38,6 +38,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // conflictPair is one high-conflict term with its wrong prior and canonical
@@ -158,7 +160,7 @@ func TestContradictionEval(t *testing.T) {
 	}
 
 	// --- BEFORE: build with detection OFF. -----------------------------------
-	beforeScope := "test-contra-eval-before-" + contentHash(t.Name())[:8]
+	beforeScope := "test-contra-eval-before-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(beforeScope)) }()
 
 	beforeFindings := buildEvalJSON(t, srcDir, beforeScope, "off")
@@ -200,7 +202,7 @@ func TestContradictionEval(t *testing.T) {
 	}
 
 	// --- AFTER: rebuild the same fixture with detection ON (strict). ----------
-	afterScope := "test-contra-eval-after-" + contentHash(t.Name())[:8]
+	afterScope := "test-contra-eval-after-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(afterScope)) }()
 
 	afterFindings := buildEvalJSON(t, srcDir, afterScope, "strict")

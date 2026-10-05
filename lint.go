@@ -10,17 +10,19 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 // --- Structural Lint (no LLM) ---
 
-func lintStructural(scope string) []LintIssue {
+func lintStructural(scope string) []model.LintIssue {
 	articles, _ := listArticles(scope)
 	idx := loadIndex(scope)
-	var issues []LintIssue
+	var issues []model.LintIssue
 
 	if len(articles) == 0 {
-		issues = append(issues, LintIssue{
+		issues = append(issues, model.LintIssue{
 			Type: "gap", Severity: "warning",
 			Message: "Knowledge base is empty — no articles found.",
 		})
@@ -35,7 +37,7 @@ func lintStructural(scope string) []LintIssue {
 	for _, a := range articles {
 		// Check for empty content
 		if strings.TrimSpace(a.Content) == "" {
-			issues = append(issues, LintIssue{
+			issues = append(issues, model.LintIssue{
 				Type: "gap", Severity: "error",
 				Message:   fmt.Sprintf("Article '%s' has empty content", a.Title),
 				ArticleID: a.ID,
@@ -44,7 +46,7 @@ func lintStructural(scope string) []LintIssue {
 
 		// Check for missing concepts
 		if len(a.Concepts) == 0 {
-			issues = append(issues, LintIssue{
+			issues = append(issues, model.LintIssue{
 				Type: "gap", Severity: "warning",
 				Message:    fmt.Sprintf("Article '%s' has no concepts", a.Title),
 				ArticleID:  a.ID,
@@ -55,7 +57,7 @@ func lintStructural(scope string) []LintIssue {
 		// Check for broken backlinks
 		for _, link := range a.Backlinks {
 			if !articleIDs[link] {
-				issues = append(issues, LintIssue{
+				issues = append(issues, model.LintIssue{
 					Type: "connection", Severity: "warning",
 					Message:    fmt.Sprintf("Article '%s' has broken backlink to '%s'", a.Title, link),
 					ArticleID:  a.ID,
@@ -66,7 +68,7 @@ func lintStructural(scope string) []LintIssue {
 
 		// Check for missing summary
 		if strings.TrimSpace(a.Summary) == "" {
-			issues = append(issues, LintIssue{
+			issues = append(issues, model.LintIssue{
 				Type: "gap", Severity: "info",
 				Message:    fmt.Sprintf("Article '%s' has no summary", a.Title),
 				ArticleID:  a.ID,
@@ -85,7 +87,7 @@ func lintStructural(scope string) []LintIssue {
 			}
 		}
 		if !alive {
-			issues = append(issues, LintIssue{
+			issues = append(issues, model.LintIssue{
 				Type: "stale", Severity: "info",
 				Message:    fmt.Sprintf("Concept '%s' (%s) has no live articles", c.Name, key),
 				Suggestion: "Rebuild index to clean up",
@@ -107,7 +109,7 @@ func lintStructural(scope string) []LintIssue {
 				}
 			}
 			if !linkedTo && len(articles) > 1 {
-				issues = append(issues, LintIssue{
+				issues = append(issues, model.LintIssue{
 					Type: "connection", Severity: "info",
 					Message:    fmt.Sprintf("Article '%s' is isolated (no backlinks)", a.Title),
 					ArticleID:  a.ID,
@@ -123,7 +125,7 @@ func lintStructural(scope string) []LintIssue {
 // --- LLM Lint ---
 
 // buildLintPrompt renders the audit prompt over every article's metadata.
-func buildLintPrompt(articles []*WikiArticle) string {
+func buildLintPrompt(articles []*model.WikiArticle) string {
 	var sb strings.Builder
 	for _, a := range articles {
 		fmt.Fprintf(&sb, "## %s (id: %s)\nSummary: %s\nConcepts: %s\nCategories: %s\nBacklinks: %s\n\n",
@@ -152,10 +154,10 @@ Knowledge base:
 
 // lintWithHook runs the LLM review through the compiler hook and parses the
 // JSON array of issues it prints. Unparseable output is an error.
-func lintWithHook(scope string, spec compilerSpec) ([]LintIssue, error) {
+func lintWithHook(scope string, spec compilerSpec) ([]model.LintIssue, error) {
 	articles, _ := listArticles(scope)
 	if len(articles) == 0 {
-		return []LintIssue{{
+		return []model.LintIssue{{
 			Type: "gap", Severity: "warning",
 			Message: "Knowledge base is empty.",
 		}}, nil
@@ -166,7 +168,7 @@ func lintWithHook(scope string, spec compilerSpec) ([]LintIssue, error) {
 		return nil, err
 	}
 	text := stripFences(string(out))
-	var issues []LintIssue
+	var issues []model.LintIssue
 	if err := json.Unmarshal([]byte(text), &issues); err != nil {
 		i, j := strings.Index(text, "["), strings.LastIndex(text, "]")
 		if i < 0 || j <= i || json.Unmarshal([]byte(text[i:j+1]), &issues) != nil {

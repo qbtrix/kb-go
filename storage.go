@@ -14,6 +14,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // --- Storage ---
@@ -43,7 +46,7 @@ func ensureDirs(scope string) {
 
 // --- Raw Doc Storage ---
 
-func saveRawDoc(scope string, doc *RawDoc) error {
+func saveRawDoc(scope string, doc *model.RawDoc) error {
 	ensureDirs(scope)
 	path := filepath.Join(scopeDir(scope), "raw", doc.ID+".json")
 	data, err := json.MarshalIndent(doc, "", "  ")
@@ -53,13 +56,13 @@ func saveRawDoc(scope string, doc *RawDoc) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-func loadRawDoc(scope, id string) (*RawDoc, error) {
+func loadRawDoc(scope, id string) (*model.RawDoc, error) {
 	path := filepath.Join(scopeDir(scope), "raw", id+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var doc RawDoc
+	var doc model.RawDoc
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, err
 	}
@@ -68,11 +71,11 @@ func loadRawDoc(scope, id string) (*RawDoc, error) {
 
 // --- Article Storage ---
 
-func saveArticle(scope string, a *WikiArticle) error {
+func saveArticle(scope string, a *model.WikiArticle) error {
 	ensureDirs(scope)
 	path := filepath.Join(scopeDir(scope), "wiki", a.ID+".md")
 
-	fm := Frontmatter{
+	fm := model.Frontmatter{
 		Title:        a.Title,
 		Summary:      a.Summary,
 		Concepts:     a.Concepts,
@@ -288,7 +291,7 @@ func disambiguatedID(slug, source string, n int) string {
 	if max := 80 - 1 - n; len(slug) > max {
 		slug = strings.TrimRight(slug[:max], "-")
 	}
-	return slug + "-" + contentHash(source)[:n]
+	return slug + "-" + textutil.ContentHash(source)[:n]
 }
 
 func sharesRaw(a, b []string) bool {
@@ -302,7 +305,7 @@ func sharesRaw(a, b []string) bool {
 
 // --- Article Storage ---
 
-func loadArticle(scope, id string) (*WikiArticle, error) {
+func loadArticle(scope, id string) (*model.WikiArticle, error) {
 	if err := containedID(id); err != nil {
 		return nil, err
 	}
@@ -343,29 +346,29 @@ func splitFrontmatter(text string) (fm, body string, ok bool) {
 	return "", "", false
 }
 
-func parseArticle(id, text string) (*WikiArticle, error) {
+func parseArticle(id, text string) (*model.WikiArticle, error) {
 	if !strings.HasPrefix(text, "---") {
-		return &WikiArticle{
+		return &model.WikiArticle{
 			ID:        id,
 			Title:     id,
 			Content:   text,
-			WordCount: wordCount(text),
+			WordCount: textutil.WordCount(text),
 			Version:   1,
 		}, nil
 	}
 
 	fmText, body, ok := splitFrontmatter(text)
 	if !ok {
-		return &WikiArticle{
+		return &model.WikiArticle{
 			ID:        id,
 			Title:     id,
 			Content:   text,
-			WordCount: wordCount(text),
+			WordCount: textutil.WordCount(text),
 			Version:   1,
 		}, nil
 	}
 
-	var fm Frontmatter
+	var fm model.Frontmatter
 	if err := json.Unmarshal([]byte(fmText), &fm); err != nil {
 		return nil, fmt.Errorf("bad frontmatter in %s: %w", id, err)
 	}
@@ -385,16 +388,16 @@ func parseArticle(id, text string) (*WikiArticle, error) {
 	}
 
 	content := strings.TrimSpace(body)
-	return &WikiArticle{
+	return &model.WikiArticle{
 		ID:           id,
 		Title:        fm.Title,
 		Summary:      fm.Summary,
 		Content:      content,
-		Concepts:     nilToEmpty(fm.Concepts),
-		Categories:   nilToEmpty(fm.Categories),
+		Concepts:     textutil.NilToEmpty(fm.Concepts),
+		Categories:   textutil.NilToEmpty(fm.Categories),
 		SourcePath:   fm.SourcePath,
-		SourceDocs:   nilToEmpty(fm.SourceDocs),
-		Backlinks:    nilToEmpty(fm.Backlinks),
+		SourceDocs:   textutil.NilToEmpty(fm.SourceDocs),
+		Backlinks:    textutil.NilToEmpty(fm.Backlinks),
 		WordCount:    fm.WordCount,
 		CompiledAt:   fm.CompiledAt,
 		CompiledWith: fm.CompiledWith,
@@ -411,7 +414,7 @@ func parseArticle(id, text string) (*WikiArticle, error) {
 	}, nil
 }
 
-func listArticles(scope string) ([]*WikiArticle, error) {
+func listArticles(scope string) ([]*model.WikiArticle, error) {
 	dir := filepath.Join(scopeDir(scope), "wiki")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -421,7 +424,7 @@ func listArticles(scope string) ([]*WikiArticle, error) {
 		return nil, err
 	}
 
-	var articles []*WikiArticle
+	var articles []*model.WikiArticle
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".md") {
 			continue
@@ -445,34 +448,34 @@ func listArticles(scope string) ([]*WikiArticle, error) {
 
 // --- Index Storage ---
 
-func loadIndex(scope string) *KnowledgeIndex {
+func loadIndex(scope string) *model.KnowledgeIndex {
 	path := filepath.Join(scopeDir(scope), "index.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return &KnowledgeIndex{
+		return &model.KnowledgeIndex{
 			Scope:    scope,
 			Articles: map[string]any{},
-			Concepts: map[string]*Concept{},
+			Concepts: map[string]*model.Concept{},
 		}
 	}
-	var idx KnowledgeIndex
+	var idx model.KnowledgeIndex
 	if err := json.Unmarshal(data, &idx); err != nil {
-		return &KnowledgeIndex{
+		return &model.KnowledgeIndex{
 			Scope:    scope,
 			Articles: map[string]any{},
-			Concepts: map[string]*Concept{},
+			Concepts: map[string]*model.Concept{},
 		}
 	}
 	if idx.Articles == nil {
 		idx.Articles = map[string]any{}
 	}
 	if idx.Concepts == nil {
-		idx.Concepts = map[string]*Concept{}
+		idx.Concepts = map[string]*model.Concept{}
 	}
 	return &idx
 }
 
-func saveIndex(scope string, idx *KnowledgeIndex) error {
+func saveIndex(scope string, idx *model.KnowledgeIndex) error {
 	ensureDirs(scope)
 	path := filepath.Join(scopeDir(scope), "index.json")
 	data, err := json.MarshalIndent(idx, "", "  ")
@@ -482,11 +485,11 @@ func saveIndex(scope string, idx *KnowledgeIndex) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-func rebuildIndex(scope string, articles []*WikiArticle) *KnowledgeIndex {
-	idx := &KnowledgeIndex{
+func rebuildIndex(scope string, articles []*model.WikiArticle) *model.KnowledgeIndex {
+	idx := &model.KnowledgeIndex{
 		Scope:    scope,
 		Articles: map[string]any{},
-		Concepts: map[string]*Concept{},
+		Concepts: map[string]*model.Concept{},
 	}
 	catSet := map[string]bool{}
 
@@ -503,7 +506,7 @@ func rebuildIndex(scope string, articles []*WikiArticle) *KnowledgeIndex {
 			}
 			concept, ok := idx.Concepts[key]
 			if !ok {
-				concept = &Concept{Name: c}
+				concept = &model.Concept{Name: c}
 				idx.Concepts[key] = concept
 			}
 			if !slices.Contains(concept.Articles, a.ID) {
@@ -526,23 +529,23 @@ func rebuildIndex(scope string, articles []*WikiArticle) *KnowledgeIndex {
 
 // --- Cache ---
 
-func loadCache(scope string) *Cache {
+func loadCache(scope string) *model.Cache {
 	path := filepath.Join(scopeDir(scope), "cache", "hashes.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return &Cache{Version: 1, Files: map[string]CacheEntry{}}
+		return &model.Cache{Version: 1, Files: map[string]model.CacheEntry{}}
 	}
-	var c Cache
+	var c model.Cache
 	if err := json.Unmarshal(data, &c); err != nil {
-		return &Cache{Version: 1, Files: map[string]CacheEntry{}}
+		return &model.Cache{Version: 1, Files: map[string]model.CacheEntry{}}
 	}
 	if c.Files == nil {
-		c.Files = map[string]CacheEntry{}
+		c.Files = map[string]model.CacheEntry{}
 	}
 	return &c
 }
 
-func saveCache(scope string, c *Cache) error {
+func saveCache(scope string, c *model.Cache) error {
 	ensureDirs(scope)
 	path := filepath.Join(scopeDir(scope), "cache", "hashes.json")
 	data, err := json.MarshalIndent(c, "", "  ")

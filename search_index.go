@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 // searchIndexVersion is bumped whenever the on-disk shape OR the tokens it
@@ -40,7 +42,7 @@ type SearchIndex struct {
 	ConceptTokens [][]string           `json:"concept_tokens"`
 }
 
-func buildSearchIndex(articles []*WikiArticle) *SearchIndex {
+func buildSearchIndex(articles []*model.WikiArticle) *SearchIndex {
 	n := len(articles)
 	si := &SearchIndex{
 		V:             searchIndexVersion,
@@ -116,13 +118,13 @@ func loadSearchIndex(scope string) *SearchIndex {
 // would pay the slow path forever. Callers MUST pass the scope's FULL article
 // slice in listArticles order (never a tag-filtered or multi-scope slice),
 // since the persisted index describes the whole scope.
-func loadOrHealSearchIndex(scope string, articles []*WikiArticle) *SearchIndex {
+func loadOrHealSearchIndex(scope string, articles []*model.WikiArticle) *SearchIndex {
 	return healSearchIndex(scope, articles, loadSearchIndex(scope))
 }
 
 // healSearchIndex is loadOrHealSearchIndex with the on-disk index already
 // loaded (si may be nil); the MCP server passes its cached copy here.
-func healSearchIndex(scope string, articles []*WikiArticle, si *SearchIndex) *SearchIndex {
+func healSearchIndex(scope string, articles []*model.WikiArticle, si *SearchIndex) *SearchIndex {
 	if indexMatches(si, articles) {
 		return si
 	}
@@ -142,7 +144,7 @@ func healSearchIndex(scope string, articles []*WikiArticle, si *SearchIndex) *Se
 // indexMatches reports whether si describes exactly the given article slice
 // (same length, same ids, same order). A stale index — e.g. articles were
 // added or removed without a rebuild — must not be trusted for scoring.
-func indexMatches(si *SearchIndex, articles []*WikiArticle) bool {
+func indexMatches(si *SearchIndex, articles []*model.WikiArticle) bool {
 	if si == nil || si.V != searchIndexVersion || len(si.DocIDs) != len(articles) {
 		return false
 	}

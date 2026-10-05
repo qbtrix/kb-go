@@ -1,13 +1,15 @@
 # kb-go
 
-Headless knowledge base engine. One Go binary (`package main` split into per-concern files), no frameworks.
+Headless knowledge base engine. One Go binary, no frameworks: a thin root `package main` plus folder packages under `internal/`.
 
 ## Structure
 
 - `main.go` — entry point, command dispatch, usage text, version; `flags.go` — minimal flag parsing; `compiler_flags.go` — `--compiler`/`--compiler-timeout` resolution and the exit-2 refusals
 - `cmd_<name>.go` — one file per command (`cmd_build.go`, `cmd_search.go`, `cmd_ingest.go`, `cmd_accept.go`, `cmd_graph.go`, `cmd_convo.go`, `cmd_glossary.go`, `cmd_serve.go`, …) with the helpers only that command uses; `helpers.go` — small CLI helpers
-- `textutil.go` — pure text helpers (slugify, contentHash, wordCount, truncate, nilToEmpty)
-- `models.go` — data models; `storage.go` — scope paths, raw docs, articles, frontmatter, article identity, index, cache; `storage_vectors.go` — per-scope vector index persistence
+- `internal/` — the library, one folder package per concern, layered (a package imports only lower layers): layer 0 `textutil`, `model`; the rest still lives in the root `package main` while the split lands
+  - `internal/textutil/` — pure text helpers (`Slugify`, `ContentHash`, `WordCount`, `Truncate`, `NilToEmpty`), stdlib only
+  - `internal/model/` — shared data types (`WikiArticle`, `RawDoc`, `KnowledgeIndex`, `Concept`, `Cache`, `ArticleUsage`, `LintIssue`, …)
+- `storage.go` — scope paths, raw docs, articles, frontmatter, article identity, index, cache; `storage_vectors.go` — per-scope vector index persistence
 - `search_index.go` — persisted inverted index; `bm25.go` — scoring; `context.go` — `search --context` excerpts; `search_vector.go` — vector + hybrid (RRF) search
 - `compile.go` — compile prompt + the `--compiler` hook (runs the caller's command, parses one JSON article, `usage`); `compiler_shell_{unix,windows}.go` — platform shell + process-tree kill
 - `lint.go` — structural + LLM lint (via the hook); `lint_categories.go` — category normalisation; `export.go` — wiki export; `graph.go` — concept graph build + mermaid/dot render; `watch.go`, `scan.go`

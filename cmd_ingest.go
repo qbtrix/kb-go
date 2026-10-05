@@ -15,6 +15,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 func cmdIngest(args []string) {
@@ -119,15 +122,15 @@ func ingestText(scope, source string, spec compilerSpec, lang, filePath, text st
 	ensureDirs(scope)
 
 	// Save raw doc
-	hash := contentHash(text)
-	raw := &RawDoc{
+	hash := textutil.ContentHash(text)
+	raw := &model.RawDoc{
 		ID:          hash[:16],
 		SourceType:  "text",
 		Source:      source,
 		Filename:    filepath.Base(source),
 		ContentType: "text",
 		RawText:     text,
-		WordCount:   wordCount(text),
+		WordCount:   textutil.WordCount(text),
 		IngestedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := saveRawDoc(scope, raw); err != nil {
@@ -145,7 +148,7 @@ func ingestText(scope, source string, spec compilerSpec, lang, filePath, text st
 	}
 
 	// Compile — ingest always uses non-terse mode (full documentation).
-	var article *WikiArticle
+	var article *model.WikiArticle
 	err := fmt.Errorf("no compiler configured")
 	if spec.enabled() {
 		article, err = compileWithHook(spec, text, source, codeMod, false)
@@ -157,12 +160,12 @@ func ingestText(scope, source string, spec compilerSpec, lang, filePath, text st
 			// doc, write no article, tell the caller how to proceed.
 			return fmt.Errorf("compile failed: %v\nRaw doc %s is saved in scope %q — no article was written.\nRe-run with --allow-fallback to store the raw text verbatim as an article, or use --article-json to supply an externally compiled article.", err, raw.ID, scope)
 		}
-		article = &WikiArticle{
-			ID:           slugify(filepath.Base(source)),
+		article = &model.WikiArticle{
+			ID:           textutil.Slugify(filepath.Base(source)),
 			Title:        filepath.Base(source),
-			Summary:      truncate(text, 200),
+			Summary:      textutil.Truncate(text, 200),
 			Content:      text,
-			WordCount:    wordCount(text),
+			WordCount:    textutil.WordCount(text),
 			CompiledAt:   time.Now().UTC().Format(time.RFC3339),
 			CompiledWith: "none (fallback)",
 			Version:      1,
@@ -224,15 +227,15 @@ func ingestArticleJSON(scope string, data []byte, jsonOut bool) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	hash := contentHash(payload.RawText)
-	raw := &RawDoc{
+	hash := textutil.ContentHash(payload.RawText)
+	raw := &model.RawDoc{
 		ID:          hash[:16],
 		SourceType:  "text",
 		Source:      source,
 		Filename:    filepath.Base(source),
 		ContentType: "text",
 		RawText:     payload.RawText,
-		WordCount:   wordCount(payload.RawText),
+		WordCount:   textutil.WordCount(payload.RawText),
 		IngestedAt:  now,
 	}
 	if err := saveRawDoc(scope, raw); err != nil {
@@ -242,16 +245,16 @@ func ingestArticleJSON(scope string, data []byte, jsonOut bool) error {
 	usage := parseUsage(payload.Article.Usage)
 	compiledWith := compiledWithFor(payload.Article.CompiledWith, usage, "external")
 
-	article := &WikiArticle{
-		ID:           slugify(payload.Article.Title),
+	article := &model.WikiArticle{
+		ID:           textutil.Slugify(payload.Article.Title),
 		Title:        payload.Article.Title,
 		Summary:      payload.Article.Summary,
 		Content:      payload.Article.Content,
-		Concepts:     nilToEmpty(payload.Article.Concepts),
-		Categories:   nilToEmpty(payload.Article.Categories),
+		Concepts:     textutil.NilToEmpty(payload.Article.Concepts),
+		Categories:   textutil.NilToEmpty(payload.Article.Categories),
 		SourcePath:   payload.Article.Source,
 		SourceDocs:   []string{raw.ID},
-		WordCount:    wordCount(payload.Article.Content),
+		WordCount:    textutil.WordCount(payload.Article.Content),
 		CompiledAt:   now,
 		CompiledWith: compiledWith,
 		Version:      1,
@@ -273,7 +276,7 @@ func ingestArticleJSON(scope string, data []byte, jsonOut bool) error {
 
 // finishIngest refreshes the concept index + search index after an ingest
 // write and prints the standard ingest output (shared by both ingest modes).
-func finishIngest(scope string, article *WikiArticle, jsonOut bool) {
+func finishIngest(scope string, article *model.WikiArticle, jsonOut bool) {
 	allArticles, _ := listArticles(scope)
 	idx := rebuildIndex(scope, allArticles)
 	saveIndex(scope, idx)

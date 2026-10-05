@@ -13,13 +13,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // --- Helpers (local to this file, no collision with kb_test.go) ---
 
 // seedGlossaryArticle writes a glossary WikiArticle to scope and fails the
 // test on error. Returns the article pointer for further inspection.
-func seedGlossaryArticle(t *testing.T, scope string, a *WikiArticle) *WikiArticle {
+func seedGlossaryArticle(t *testing.T, scope string, a *model.WikiArticle) *model.WikiArticle {
 	t.Helper()
 	if err := saveArticle(scope, a); err != nil {
 		t.Fatalf("seedGlossaryArticle saveArticle(%q): %v", a.ID, err)
@@ -31,10 +34,10 @@ func seedGlossaryArticle(t *testing.T, scope string, a *WikiArticle) *WikiArticl
 
 // TODO: passes after glossary feature lands
 func TestGlossaryFrontmatterRoundTrip(t *testing.T) {
-	scope := "test-gloss-rt-" + contentHash(t.Name())[:8]
+	scope := "test-gloss-rt-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	original := &WikiArticle{
+	original := &model.WikiArticle{
 		ID:       "pocket",
 		Title:    "Pocket",
 		Content:  "A Pocket is a workspace container that holds agents.",
@@ -78,7 +81,7 @@ func TestGlossaryFrontmatterRoundTrip(t *testing.T) {
 
 // TODO: passes after glossary feature lands
 func TestGlossaryParseArticleFromFile(t *testing.T) {
-	scope := "test-gloss-parse-" + contentHash(t.Name())[:8]
+	scope := "test-gloss-parse-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	ensureDirs(scope)
@@ -159,8 +162,8 @@ func TestIsGlossarySource(t *testing.T) {
 // tests: a module article that mentions "pocket" multiple times in its body
 // vs a glossary article whose Term == "Pocket" and Aliases include "pkt".
 // Without the glossary boost the module article wins (more occurrences).
-func makeSearchCorpus() []*WikiArticle {
-	return []*WikiArticle{
+func makeSearchCorpus() []*model.WikiArticle {
+	return []*model.WikiArticle{
 		{
 			ID:      "pocket-service",
 			Title:   "Pocket Service",
@@ -228,7 +231,7 @@ func TestGlossarySearchCaseInsensitive(t *testing.T) {
 }
 
 // articleIDs is a tiny diagnostic helper for the search-boost tests.
-func articleIDs(arts []*WikiArticle) []string {
+func articleIDs(arts []*model.WikiArticle) []string {
 	out := make([]string, len(arts))
 	for i, a := range arts {
 		out[i] = a.ID
@@ -240,7 +243,7 @@ func articleIDs(arts []*WikiArticle) []string {
 
 // TODO: passes after glossary feature lands
 func TestGlossaryListEmpty(t *testing.T) {
-	scope := "test-gloss-list-empty-" + contentHash(t.Name())[:8]
+	scope := "test-gloss-list-empty-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	var buf bytes.Buffer
@@ -253,23 +256,23 @@ func TestGlossaryListEmpty(t *testing.T) {
 
 // TODO: passes after glossary feature lands
 func TestGlossaryListMultiple(t *testing.T) {
-	scope := "test-gloss-list-multi-" + contentHash(t.Name())[:8]
+	scope := "test-gloss-list-multi-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	// 3 glossary articles + 1 module article (Kind="" — default).
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "pocket", Title: "Pocket", Content: "A Pocket is a container.",
 		Kind: "glossary", Term: "Pocket", Aliases: []string{"pkt"}, Version: 1,
 	})
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "soul", Title: "Soul", Content: "A Soul is a persistent identity.",
 		Kind: "glossary", Term: "Soul", Aliases: []string{"spirit"}, Version: 1,
 	})
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "fabric", Title: "Fabric", Content: "Fabric is the connective layer.",
 		Kind: "glossary", Term: "Fabric", Version: 1,
 	})
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "router-module", Title: "RouterModule", Content: "Routes things.", Version: 1,
 	})
 
@@ -300,10 +303,10 @@ func TestGlossaryListMultiple(t *testing.T) {
 
 // TODO: passes after glossary feature lands
 func TestGlossaryShowByTerm(t *testing.T) {
-	scope := "test-gloss-show-term-" + contentHash(t.Name())[:8]
+	scope := "test-gloss-show-term-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "pocket", Title: "Pocket", Content: "A Pocket is a workspace container.",
 		Kind: "glossary", Term: "Pocket", Aliases: []string{"pkt", "pocket"}, Version: 1,
 	})
@@ -323,10 +326,10 @@ func TestGlossaryShowByTerm(t *testing.T) {
 
 // TODO: passes after glossary feature lands
 func TestGlossaryShowByAlias(t *testing.T) {
-	scope := "test-gloss-show-alias-" + contentHash(t.Name())[:8]
+	scope := "test-gloss-show-alias-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "pocket", Title: "Pocket", Content: "A Pocket is a workspace container.",
 		Kind: "glossary", Term: "Pocket", Aliases: []string{"pkt", "pocket"}, Version: 1,
 	})
@@ -342,7 +345,7 @@ func TestGlossaryShowByAlias(t *testing.T) {
 
 // TODO: passes after glossary feature lands
 func TestGlossaryShowMissing(t *testing.T) {
-	scope := "test-gloss-show-miss-" + contentHash(t.Name())[:8]
+	scope := "test-gloss-show-miss-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	// Empty scope: ensure scope dir exists so the call exercises the lookup
@@ -363,14 +366,14 @@ func TestGlossaryShowMissing(t *testing.T) {
 
 // TODO: passes after glossary feature lands
 func TestGlossaryValidateClean(t *testing.T) {
-	scope := "test-gloss-val-clean-" + contentHash(t.Name())[:8]
+	scope := "test-gloss-val-clean-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "pocket", Title: "Pocket", Content: "Pocket body.",
 		Kind: "glossary", Term: "Pocket", Aliases: []string{"pkt"}, Version: 1,
 	})
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "soul", Title: "Soul", Content: "Soul body.",
 		Kind: "glossary", Term: "Soul", Aliases: []string{"spirit"}, Related: []string{"Pocket"}, Version: 1,
 	})
@@ -386,14 +389,14 @@ func TestGlossaryValidateClean(t *testing.T) {
 
 // TODO: passes after glossary feature lands
 func TestGlossaryValidateDuplicateTerm(t *testing.T) {
-	scope := "test-gloss-val-duptm-" + contentHash(t.Name())[:8]
+	scope := "test-gloss-val-duptm-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "pocket-a", Title: "Pocket A", Content: "first",
 		Kind: "glossary", Term: "Pocket", Version: 1,
 	})
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "pocket-b", Title: "Pocket B", Content: "second",
 		Kind: "glossary", Term: "Pocket", Version: 1,
 	})
@@ -412,14 +415,14 @@ func TestGlossaryValidateDuplicateTerm(t *testing.T) {
 
 // TODO: passes after glossary feature lands
 func TestGlossaryValidateDuplicateAlias(t *testing.T) {
-	scope := "test-gloss-val-dupal-" + contentHash(t.Name())[:8]
+	scope := "test-gloss-val-dupal-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "pocket", Title: "Pocket", Content: "p",
 		Kind: "glossary", Term: "Pocket", Aliases: []string{"pkt"}, Version: 1,
 	})
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "packet", Title: "Packet", Content: "k",
 		Kind: "glossary", Term: "Packet", Aliases: []string{"pkt"}, Version: 1,
 	})
@@ -438,15 +441,15 @@ func TestGlossaryValidateDuplicateAlias(t *testing.T) {
 
 // TODO: passes after glossary feature lands
 func TestGlossaryValidateAliasTermCollision(t *testing.T) {
-	scope := "test-gloss-val-coll-" + contentHash(t.Name())[:8]
+	scope := "test-gloss-val-coll-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "pocket", Title: "Pocket", Content: "p",
 		Kind: "glossary", Term: "Pocket", Aliases: []string{"pkt"}, Version: 1,
 	})
 	// Pkt's Term collides with Pocket's alias.
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "pkt", Title: "Pkt", Content: "k",
 		Kind: "glossary", Term: "Pkt", Version: 1,
 	})
@@ -462,12 +465,12 @@ func TestGlossaryValidateAliasTermCollision(t *testing.T) {
 
 // TODO: passes after glossary feature lands
 func TestGlossaryValidateDanglingRelated(t *testing.T) {
-	scope := "test-gloss-val-dangl-" + contentHash(t.Name())[:8]
+	scope := "test-gloss-val-dangl-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	// Pocket points at "Phantom" via Related, but Phantom doesn't exist
 	// in the scope (no glossary entry, no alias).
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "pocket", Title: "Pocket", Content: "p",
 		Kind: "glossary", Term: "Pocket", Related: []string{"Phantom"}, Version: 1,
 	})

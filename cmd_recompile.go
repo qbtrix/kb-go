@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 func cmdRecompile(args []string) {
@@ -22,7 +24,7 @@ func cmdRecompile(args []string) {
 	spec := mustCompilerFromArgs(args)
 	requireCompiler(spec, "recompile", "")
 
-	var targets []*WikiArticle
+	var targets []*model.WikiArticle
 	if recompileAll {
 		all, _ := listArticles(scope)
 		targets = all
@@ -31,7 +33,7 @@ func cmdRecompile(args []string) {
 		if err != nil || a == nil {
 			fatal("Article not found: %s", args[0])
 		}
-		targets = []*WikiArticle{a}
+		targets = []*model.WikiArticle{a}
 	}
 
 	var recompiled, failed int

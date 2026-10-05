@@ -19,6 +19,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // --- sample KB fixture ---
@@ -28,10 +31,10 @@ import (
 // tests do. Returns the scope name and a cleanup func.
 func seedSampleKB(t *testing.T) string {
 	t.Helper()
-	scope := "test-mcp-" + contentHash(t.Name())[:8]
+	scope := "test-mcp-" + textutil.ContentHash(t.Name())[:8]
 	t.Cleanup(func() { os.RemoveAll(scopeDir(scope)) })
 
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{
 			ID: "auth-middleware", Title: "Auth Middleware",
 			Summary:    "Request authentication and token validation layer.",

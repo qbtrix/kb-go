@@ -11,6 +11,8 @@ import (
 	"os"
 	"sort"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // runAccept feeds payload to cmdAccept on stdin and swallows its stdout.
@@ -48,13 +50,13 @@ func sourcePaths(t *testing.T, scope string) []string {
 
 func acceptItem(source, title string) map[string]any {
 	return map[string]any{
-		"source": source, "hash": contentHash(source + title), "raw_id": contentHash(source)[:16],
+		"source": source, "hash": textutil.ContentHash(source + title), "raw_id": textutil.ContentHash(source)[:16],
 		"title": title, "summary": "s", "content": "content of " + source,
 	}
 }
 
 func TestAcceptSameTitleDifferentSourcesKeepsBoth(t *testing.T) {
-	scope := "test-accept-collide-" + contentHash(t.Name())[:8]
+	scope := "test-accept-collide-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	runAccept(t, scope, map[string]any{"articles": []any{
@@ -69,7 +71,7 @@ func TestAcceptSameTitleDifferentSourcesKeepsBoth(t *testing.T) {
 }
 
 func TestAcceptSameTitleAcrossBatchesKeepsBoth(t *testing.T) {
-	scope := "test-accept-collide-batch-" + contentHash(t.Name())[:8]
+	scope := "test-accept-collide-batch-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	runAccept(t, scope, []any{acceptItem("api/README.md", "Overview")})
@@ -81,7 +83,7 @@ func TestAcceptSameTitleAcrossBatchesKeepsBoth(t *testing.T) {
 }
 
 func TestAcceptResubmitSameSourceReplaces(t *testing.T) {
-	scope := "test-accept-resubmit-" + contentHash(t.Name())[:8]
+	scope := "test-accept-resubmit-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	runAccept(t, scope, []any{acceptItem("docs/auth.md", "Auth Flow")})
@@ -104,7 +106,7 @@ func TestAcceptResubmitSameSourceReplaces(t *testing.T) {
 }
 
 func TestIngestArticleJSONSameTitleDifferentSourcesKeepsBoth(t *testing.T) {
-	scope := "test-artjson-collide-" + contentHash(t.Name())[:8]
+	scope := "test-artjson-collide-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	for _, src := range []string{"a/notes.md", "b/notes.md"} {

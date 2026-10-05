@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 // Context budgets are byte counts (len of the UTF-8 string), which is what
@@ -31,14 +33,14 @@ const (
 // contextBlock is one article's context: Block is the "## Title\n..." text
 // the plain --context output prints; Truncated is true when it is an excerpt.
 type contextBlock struct {
-	Article   *WikiArticle
+	Article   *model.WikiArticle
 	Block     string
 	Truncated bool
 }
 
 // formatSearchContext renders ranked results as prompt-ready text: the
 // searchContextBlocks joined by contextSeparator.
-func formatSearchContext(results []*WikiArticle, query string, perArticle, totalCap int) string {
+func formatSearchContext(results []*model.WikiArticle, query string, perArticle, totalCap int) string {
 	var parts []string
 	for _, b := range searchContextBlocks(results, query, perArticle, totalCap) {
 		parts = append(parts, b.Block)
@@ -49,7 +51,7 @@ func formatSearchContext(results []*WikiArticle, query string, perArticle, total
 // searchContextJSON is the --context --json shape: one entry per article with
 // the excerpt body (no "## Title" line). No in-band separator, so bodies that
 // contain "---" rules survive intact.
-func searchContextJSON(results []*WikiArticle, query string, perArticle, totalCap int) []map[string]any {
+func searchContextJSON(results []*model.WikiArticle, query string, perArticle, totalCap int) []map[string]any {
 	out := []map[string]any{}
 	for _, b := range searchContextBlocks(results, query, perArticle, totalCap) {
 		text := ""
@@ -65,7 +67,7 @@ func searchContextJSON(results []*WikiArticle, query string, perArticle, totalCa
 // per-article and total budgets (total counts the text separators, so both
 // output modes return the same excerpts). The total cap never drops the best
 // hit; it is trimmed to fit instead.
-func searchContextBlocks(results []*WikiArticle, query string, perArticle, totalCap int) []contextBlock {
+func searchContextBlocks(results []*model.WikiArticle, query string, perArticle, totalCap int) []contextBlock {
 	var parts []contextBlock
 	total := 0
 	for i, a := range results {
@@ -92,7 +94,7 @@ func searchContextBlocks(results []*WikiArticle, query string, perArticle, total
 	return parts
 }
 
-func contextFullBlock(a *WikiArticle) string {
+func contextFullBlock(a *model.WikiArticle) string {
 	return "## " + contextOneLine(a.Title) + "\n" + strings.TrimSpace(strings.ReplaceAll(a.Content, "\r\n", "\n"))
 }
 
@@ -106,7 +108,7 @@ func contextFullBlock(a *WikiArticle) string {
 // their heading, and "…" marks skipped content. No matching section means the
 // article's head is used instead. A table is never cut mid-row; a table that
 // alone exceeds the budget keeps its header and as many whole rows as fit.
-func contextExcerpt(a *WikiArticle, query string, budget int) string {
+func contextExcerpt(a *model.WikiArticle, query string, budget int) string {
 	full := contextFullBlock(a)
 	if len(full) <= budget {
 		return full

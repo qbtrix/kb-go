@@ -42,6 +42,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // --- JSON-RPC 2.0 wire types ---
@@ -419,7 +422,7 @@ func mcpSearch(c *articleCache, args map[string]any, defaultScope string) (any, 
 
 	scopes := resolveScopes(scope)
 
-	var allArticles []*WikiArticle
+	var allArticles []*model.WikiArticle
 	var scopeMap []string
 	for _, sc := range scopes {
 		articles, err := c.list(sc)
@@ -434,7 +437,7 @@ func mcpSearch(c *articleCache, args map[string]any, defaultScope string) (any, 
 
 	if excludeTags != "" {
 		excluded := strings.Split(excludeTags, ",")
-		var filtered []*WikiArticle
+		var filtered []*model.WikiArticle
 		var filteredScopes []string
 		for i, a := range allArticles {
 			skip := false
@@ -454,7 +457,7 @@ func mcpSearch(c *articleCache, args map[string]any, defaultScope string) (any, 
 		scopeMap = filteredScopes
 	}
 
-	var results []*WikiArticle
+	var results []*model.WikiArticle
 	if len(scopes) == 1 {
 		var si *SearchIndex
 		if excludeTags == "" {
@@ -471,7 +474,7 @@ func mcpSearch(c *articleCache, args map[string]any, defaultScope string) (any, 
 		results = bm25Search(allArticles, query, limit)
 	}
 
-	resultScope := func(a *WikiArticle) string {
+	resultScope := func(a *model.WikiArticle) string {
 		for i, art := range allArticles {
 			if art == a && i < len(scopeMap) {
 				return scopeMap[i]
@@ -602,7 +605,7 @@ func mcpList(c *articleCache, args map[string]any, defaultScope string) (any, er
 		out = append(out, map[string]any{
 			"id":            a.ID,
 			"title":         a.Title,
-			"summary":       truncate(a.Summary, 120),
+			"summary":       textutil.Truncate(a.Summary, 120),
 			"word_count":    a.WordCount,
 			"compiled_with": a.CompiledWith,
 			"version":       a.Version,
@@ -634,13 +637,13 @@ func stampOf(info os.FileInfo) fileStamp { return fileStamp{info.ModTime(), info
 type cachedArticle struct {
 	stamp   fileStamp
 	trusted bool // read at least racyWindow after its mtime
-	article *WikiArticle
+	article *model.WikiArticle
 }
 
 // scopeCache holds one scope's parsed articles and its loaded search index.
 type scopeCache struct {
 	files    map[string]cachedArticle // article id -> parsed file
-	articles []*WikiArticle           // assembled slice, listArticles (ID) order
+	articles []*model.WikiArticle     // assembled slice, listArticles (ID) order
 	built    bool
 
 	si        *SearchIndex
@@ -662,7 +665,7 @@ func newArticleCache() *articleCache {
 
 // list returns the scope's articles exactly as listArticles would read them
 // from disk right now. The returned slice and articles are shared: read-only.
-func (c *articleCache) list(scope string) ([]*WikiArticle, error) {
+func (c *articleCache) list(scope string) ([]*model.WikiArticle, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -722,7 +725,7 @@ func (c *articleCache) list(scope string) ([]*WikiArticle, error) {
 	}
 
 	if changed {
-		articles := make([]*WikiArticle, 0, len(sc.files))
+		articles := make([]*model.WikiArticle, 0, len(sc.files))
 		for _, ca := range sc.files {
 			articles = append(articles, ca.article)
 		}

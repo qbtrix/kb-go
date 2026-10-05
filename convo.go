@@ -15,6 +15,9 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // --- Data models ---
@@ -525,7 +528,7 @@ func clusterTopics(session *ConvoSession) []TopicCluster {
 
 		if len(sorted) > 0 {
 			tc.Label = sorted[0].name
-			tc.ID = slugify(sorted[0].name)
+			tc.ID = textutil.Slugify(sorted[0].name)
 		} else {
 			tc.Label = fmt.Sprintf("topic-%d", cid)
 			tc.ID = fmt.Sprintf("topic-%d", cid)
@@ -561,8 +564,8 @@ func setsOverlap(a, b map[string]bool) bool {
 
 // --- Article generation from conversation ---
 
-func generateConvoArticles(session *ConvoSession, clusters []TopicCluster, decisions []ExtractedDecision) []*WikiArticle {
-	var articles []*WikiArticle
+func generateConvoArticles(session *ConvoSession, clusters []TopicCluster, decisions []ExtractedDecision) []*model.WikiArticle {
+	var articles []*model.WikiArticle
 
 	// Build a decision lookup by turn index
 	decByTurn := map[int][]ExtractedDecision{}
@@ -614,7 +617,7 @@ func generateConvoArticles(session *ConvoSession, clusters []TopicCluster, decis
 			articleID = articleID[:60]
 		}
 
-		articles = append(articles, &WikiArticle{
+		articles = append(articles, &model.WikiArticle{
 			ID:           articleID,
 			Title:        fmt.Sprintf("%s (conversation)", cluster.Label),
 			Summary:      summary,
@@ -622,7 +625,7 @@ func generateConvoArticles(session *ConvoSession, clusters []TopicCluster, decis
 			Concepts:     concepts,
 			Categories:   []string{"conversation"},
 			SourceDocs:   []string{session.ID},
-			WordCount:    wordCount(content.String()),
+			WordCount:    textutil.WordCount(content.String()),
 			CompiledAt:   time.Now().UTC().Format(time.RFC3339),
 			CompiledWith: "kb-convo-deterministic",
 			Version:      1,

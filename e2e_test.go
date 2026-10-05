@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // runKB executes the built kb binary with extra env and optional stdin.
@@ -145,7 +147,7 @@ func TestBuildWithCompilerHook(t *testing.T) {
 	if res["changed"].(float64) != 2 || res["input_tokens"].(float64) != 200 || res["output_tokens"].(float64) != 20*2 {
 		t.Errorf("build json = %v", res)
 	}
-	a, err := loadArticle("hook", slugify("Fake a.md"))
+	a, err := loadArticle("hook", textutil.Slugify("Fake a.md"))
 	if err != nil || a == nil {
 		t.Fatalf("article for a.md missing: %v", err)
 	}
@@ -266,7 +268,7 @@ func TestRecompileWithCompilerHook(t *testing.T) {
 func TestLintLLMWithCompilerHook(t *testing.T) {
 	kbtest.IsolatedHome(t)
 	scope := "lintllm"
-	saveArticle(scope, &WikiArticle{ID: "a1", Title: "A1", Summary: "s", Content: "x", Concepts: []string{"c"}, Version: 1})
+	saveArticle(scope, &model.WikiArticle{ID: "a1", Title: "A1", Summary: "s", Content: "x", Concepts: []string{"c"}, Version: 1})
 	out, stderr, code := runKB(t, []string{"KB_FAKE_COMPILER=lint", "KB_COMPILER=" + kbtest.FakeCompilerCommand(t, "")}, "",
 		"lint", "--llm", "--scope", scope, "--json")
 	if code != 0 || !strings.Contains(out, "FAKE_LINT_ISSUE") {
@@ -308,7 +310,7 @@ func TestAcceptStoresAndReplacesUsage(t *testing.T) {
 func TestUsageFrontmatterBackwardCompatible(t *testing.T) {
 	kbtest.IsolatedHome(t)
 	scope := "fm-usage"
-	saveArticle(scope, &WikiArticle{ID: "legacy", Title: "Legacy", Content: "x", Version: 1})
+	saveArticle(scope, &model.WikiArticle{ID: "legacy", Title: "Legacy", Content: "x", Version: 1})
 	raw, _ := os.ReadFile(filepath.Join(scopeDir(scope), "wiki", "legacy.md"))
 	if strings.Contains(string(raw), `"usage"`) {
 		t.Errorf("articles without usage must not grow a usage key:\n%s", raw)
@@ -317,7 +319,7 @@ func TestUsageFrontmatterBackwardCompatible(t *testing.T) {
 	if a.Usage != nil {
 		t.Errorf("legacy article should load with nil usage")
 	}
-	n, _, _, _ := usageTotals([]*WikiArticle{a})
+	n, _, _, _ := usageTotals([]*model.WikiArticle{a})
 	if n != 0 {
 		t.Errorf("no usage → zero articles counted")
 	}
@@ -338,7 +340,7 @@ func TestNormalizeCategoriesCLIEmptyScope(t *testing.T) {
 	// Integration test: exec the binary against an empty scope and confirm
 	// the no-op path behaves correctly (prints the "no articles" message,
 	// exits 0). Exercises runCategoryNormalize end-to-end via the CLI.
-	scope := "test-cli-empty-" + contentHash(t.Name())[:8]
+	scope := "test-cli-empty-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 	// Intentionally no articles — scope is empty.
 	_ = os.MkdirAll(scopeDir(scope), 0o755)
@@ -355,10 +357,10 @@ func TestNormalizeCategoriesCLIEmptyScope(t *testing.T) {
 
 func TestNormalizeCategoriesCLIJSONMode(t *testing.T) {
 	// Integration test: --json output on a scope with a real cluster.
-	scope := "test-cli-json-" + contentHash(t.Name())[:8]
+	scope := "test-cli-json-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	articles := []*WikiArticle{
+	articles := []*model.WikiArticle{
 		{ID: "a1", Title: "A1", Content: "x", Categories: []string{"CLI"}, Version: 1},
 		{ID: "a2", Title: "A2", Content: "x", Categories: []string{"cli"}, Version: 1},
 	}
@@ -575,7 +577,7 @@ A Pocket is a workspace container. ` + marker + ` lives in this body.`
 		t.Fatalf("write src: %v", err)
 	}
 
-	scope := "test-gloss-build-" + contentHash(t.Name())[:8]
+	scope := "test-gloss-build-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
 	binary := kbtest.BuildBinary(t)
@@ -596,7 +598,7 @@ A Pocket is a workspace container. ` + marker + ` lives in this body.`
 		t.Fatalf("no articles produced by build; stdout: %s", out)
 	}
 
-	var glossaryArt *WikiArticle
+	var glossaryArt *model.WikiArticle
 	for _, a := range articles {
 		if a.Kind == "glossary" {
 			glossaryArt = a
