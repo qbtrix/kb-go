@@ -17,17 +17,17 @@
 // build/ingest/mutation tools are exposed; serving is read-only by design.
 //
 // The server is long-lived while other processes write the same scopes, so
-// kb_search / kb_list / kb_stats read articles through articleCache instead
-// of re-parsing every wiki file per call. Invariant: every call re-stats the
+// kb_list / kb_stats (and multi-scope kb_search) read articles through
+// articleCache instead of re-parsing every wiki file per call. Invariant: every call re-stats the
 // scope (one wiki ReadDir; mtime+size come from the directory entries) and
 // re-parses only files that were added or whose stamp changed; vanished files
 // are dropped. A file read less than racyWindow after its mtime is never
 // trusted (an overwrite inside one filesystem clock tick can keep both mtime
-// and size), so it is re-read on every call until it settles. The search
-// index file is cached under the same stamp rule, and the cached article
-// slice keeps store.ListArticles' ID order so search.Index docIdx stays aligned
-// (search.HealIndex still rebuilds whenever ids/order drift). kb_show and
-// kb_glossary read single files and stay uncached.
+// and size), so it is re-read on every call until it settles. Single-scope
+// kb_search does not list articles at all: it keeps the decoded search index
+// per scope and runs search.SearchScope, which re-proves that index against
+// wiki/ on every call and loads only the top hits. kb_show and kb_glossary
+// read single files and stay uncached.
 package mcp
 
 import (
@@ -424,55 +424,46 @@ func mcpSearch(c *articleCache, args map[string]any, defaultScope string) (any, 
 
 	scopes := store.ResolveScopes(scope)
 
+	var results []*model.WikiArticle
 	var allArticles []*model.WikiArticle
 	var scopeMap []string
-	for _, sc := range scopes {
-		articles, err := c.list(sc)
-		if err != nil {
-			continue
+	if len(scopes) == 1 {
+		// One scope: the same index-only ranking + top-k load as `kb search`,
+		// reusing the decoded index while the wiki still matches it.
+		results = c.search(scopes[0], query, limit, excludeTags)
+	} else {
+		for _, sc := range scopes {
+			articles, err := c.list(sc)
+			if err != nil {
+				continue
+			}
+			for _, a := range articles {
+				allArticles = append(allArticles, a)
+				scopeMap = append(scopeMap, sc)
+			}
 		}
-		for _, a := range articles {
-			allArticles = append(allArticles, a)
-			scopeMap = append(scopeMap, sc)
-		}
-	}
 
-	if excludeTags != "" {
-		excluded := strings.Split(excludeTags, ",")
-		var filtered []*model.WikiArticle
-		var filteredScopes []string
-		for i, a := range allArticles {
-			skip := false
-			for _, tag := range excluded {
-				tag = strings.TrimSpace(tag)
-				if slices.Contains(a.Categories, tag) {
-					skip = true
-					break
+		if excludeTags != "" {
+			excluded := strings.Split(excludeTags, ",")
+			var filtered []*model.WikiArticle
+			var filteredScopes []string
+			for i, a := range allArticles {
+				skip := false
+				for _, tag := range excluded {
+					tag = strings.TrimSpace(tag)
+					if slices.Contains(a.Categories, tag) {
+						skip = true
+						break
+					}
+				}
+				if !skip {
+					filtered = append(filtered, a)
+					filteredScopes = append(filteredScopes, scopeMap[i])
 				}
 			}
-			if !skip {
-				filtered = append(filtered, a)
-				filteredScopes = append(filteredScopes, scopeMap[i])
-			}
+			allArticles = filtered
+			scopeMap = filteredScopes
 		}
-		allArticles = filtered
-		scopeMap = filteredScopes
-	}
-
-	var results []*model.WikiArticle
-	if len(scopes) == 1 {
-		var si *search.Index
-		if excludeTags == "" {
-			// Full-scope search: self-heal a missing/stale/old-format index
-			// (best-effort cache write; failure never fails the search) so
-			// long-lived read-only servers regain the fast path.
-			si = search.HealIndex(scopes[0], allArticles, c.searchIndex(scopes[0]))
-		} else {
-			// Tag-filtered slice — full-scope index can't match; slow path.
-			si = c.searchIndex(scopes[0])
-		}
-		results = search.BM25WithIndex(allArticles, query, limit, si)
-	} else {
 		results = search.BM25(allArticles, query, limit)
 	}
 
@@ -642,27 +633,24 @@ type cachedArticle struct {
 	article *model.WikiArticle
 }
 
-// scopeCache holds one scope's parsed articles and its loaded search index.
+// scopeCache holds one scope's parsed articles.
 type scopeCache struct {
 	files    map[string]cachedArticle // article id -> parsed file
 	articles []*model.WikiArticle     // assembled slice, listArticles (ID) order
 	built    bool
-
-	si        *search.Index
-	siStamp   fileStamp
-	siTrusted bool
 }
 
 // articleCache is the MCP server's per-scope article/search-index cache. It
 // never serves a file without first re-statting it in the same call, so
 // writes by other processes are visible on the very next call.
 type articleCache struct {
-	mu     sync.Mutex
-	scopes map[string]*scopeCache // keyed by scopeDir (sanitized names collide)
+	mu      sync.Mutex
+	scopes  map[string]*scopeCache   // keyed by scopeDir (sanitized names collide)
+	indexes map[string]*search.Index // decoded search index per scopeDir
 }
 
 func newArticleCache() *articleCache {
-	return &articleCache{scopes: map[string]*scopeCache{}}
+	return &articleCache{scopes: map[string]*scopeCache{}, indexes: map[string]*search.Index{}}
 }
 
 // list returns the scope's articles exactly as store.ListArticles would read them
@@ -738,29 +726,18 @@ func (c *articleCache) list(scope string) ([]*model.WikiArticle, error) {
 	return sc.articles, nil
 }
 
-// searchIndex returns what search.LoadIndex would return right now, reusing the
-// decoded index while cache/search_index.json keeps a trusted stamp.
-func (c *articleCache) searchIndex(scope string) *search.Index {
+// search runs search.SearchScope for one scope with the decoded index this
+// cache last used for it. SearchScope re-proves that index against wiki/ on
+// every call (one ReadDir), so writes by other processes are seen at once.
+func (c *articleCache) search(scope, query string, limit int, excludeTags string) []*model.WikiArticle {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
 	key := store.ScopeDir(scope)
-	now := time.Now()
-	info, err := os.Stat(filepath.Join(key, "cache", "search_index.json"))
-	sc := c.scopes[key]
-	if err != nil {
-		if sc != nil {
-			sc.si, sc.siTrusted = nil, false
-		}
-		return nil
+	results, si := search.SearchScope(scope, query, limit, excludeTags, c.indexes[key])
+	if si == nil {
+		delete(c.indexes, key)
+	} else {
+		c.indexes[key] = si
 	}
-	st := stampOf(info)
-	if sc != nil && sc.siTrusted && sc.siStamp.same(st) {
-		return sc.si
-	}
-	si := search.LoadIndex(scope)
-	if sc != nil {
-		sc.si, sc.siStamp, sc.siTrusted = si, st, now.Sub(st.mod) >= racyWindow
-	}
-	return si
+	return results
 }

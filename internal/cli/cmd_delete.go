@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
 )
 
@@ -122,8 +123,7 @@ func cmdDelete(args []string) {
 
 	// 5. Invalidate the caches so stale results don't survive.
 	//    a) The BM25 search cache rebuilds on the next search — just remove it.
-	searchCache := filepath.Join(store.ScopeDir(scope), "cache", "search_index.json")
-	if err := os.Remove(searchCache); err != nil && !os.IsNotExist(err) {
+	if err := search.RemoveIndex(scope); err != nil {
 		fatal("failed to invalidate search cache: %v", err)
 	}
 	//    b) Drop the compile-hash entry that maps to this article id (the hash

@@ -388,7 +388,10 @@ func TestArticleCacheReusesSettledFiles(t *testing.T) {
 	if len(first) != 3 || &first[0] != &second[0] {
 		t.Fatalf("unchanged scope rebuilt the article slice")
 	}
-	if c.searchIndex(scope) != c.searchIndex(scope) {
+	c.search(scope, "alpha", 5, "")
+	si := c.indexes[store.ScopeDir(scope)]
+	c.search(scope, "alpha", 5, "")
+	if si == nil || c.indexes[store.ScopeDir(scope)] != si {
 		t.Fatalf("unchanged search index was decoded twice")
 	}
 

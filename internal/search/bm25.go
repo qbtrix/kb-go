@@ -77,14 +77,14 @@ func bm25ScoresFromPostings(queryTerms []string, si *Index) []float64 {
 
 	idfs := map[string]float64{}
 	for _, term := range queryTerms {
-		df := float64(len(si.Postings[term]))
+		df := float64(len(si.postingsFor(term)))
 		idfs[term] = math.Log((nDocs-df+0.5)/(df+0.5) + 1)
 	}
 
 	scores := make([]float64, len(si.DocIDs))
 	for _, term := range queryTerms {
 		idf := idfs[term]
-		for _, p := range si.Postings[term] {
+		for _, p := range si.postingsFor(term) {
 			docIdx, tf := p[0], float64(p[1])
 			dl := float64(si.DocLens[docIdx])
 			num := tf * (BM25K1 + 1)
@@ -209,22 +209,34 @@ func applyGlossaryBoost(articles []*model.WikiArticle, queryTerms []string, scor
 // rankByScore sorts descending and returns up to limit articles with a
 // strictly positive score.
 func rankByScore(articles []*model.WikiArticle, scores []float64, limit int) []*model.WikiArticle {
+	var result []*model.WikiArticle
+	for _, i := range rankPositions(scores, limit) {
+		result = append(result, articles[i])
+	}
+	return result
+}
+
+// rankPositions is the one ranking rule every BM25 path shares: positions in
+// scores sorted by descending score (sort.Slice over the whole slice, so ties
+// fall where they always have), cut at the first non-positive score and after
+// limit entries. As before, limit <= 0 still yields one hit.
+func rankPositions(scores []float64, limit int) []int {
 	type scored struct {
 		idx   int
 		score float64
 	}
-	ranked := make([]scored, len(articles))
+	ranked := make([]scored, len(scores))
 	for i, s := range scores {
 		ranked[i] = scored{i, s}
 	}
 	sort.Slice(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
 
-	var result []*model.WikiArticle
+	var result []int
 	for _, sc := range ranked {
 		if sc.score <= 0 {
 			break
 		}
-		result = append(result, articles[sc.idx])
+		result = append(result, sc.idx)
 		if len(result) >= limit {
 			break
 		}

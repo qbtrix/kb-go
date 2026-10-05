@@ -33,7 +33,16 @@ func rawTokenize(text string) []string {
 // {"v":2, ...} with raw, unstemmed postings.
 func writeUnstemmedV2Index(t *testing.T, scope string, articles []*model.WikiArticle) string {
 	t.Helper()
-	si := &search.Index{
+	type v2Index struct {
+		V             int                         `json:"v"`
+		DocIDs        []string                    `json:"doc_ids"`
+		DocLens       []int                       `json:"doc_lens"`
+		AvgDL         float64                     `json:"avg_dl"`
+		Postings      map[string][]search.Posting `json:"postings"`
+		TitleTokens   [][]string                  `json:"title_tokens"`
+		ConceptTokens [][]string                  `json:"concept_tokens"`
+	}
+	si := &v2Index{
 		V:             2,
 		DocIDs:        make([]string, len(articles)),
 		DocLens:       make([]int, len(articles)),
