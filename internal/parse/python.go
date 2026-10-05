@@ -1,6 +1,6 @@
 // Python source parser (regex-based).
 
-package main
+package parse
 
 import (
 	"regexp"
@@ -15,8 +15,8 @@ var (
 	pyConstRe     = regexp.MustCompile(`(?m)^([A-Z][A-Z0-9_]+)\s*=`)
 )
 
-func parsePython(path, source string) *CodeModule {
-	mod := &CodeModule{
+func parsePython(path, source string) *Module {
+	mod := &Module{
 		Language: "python",
 		FilePath: path,
 	}

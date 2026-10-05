@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/parse"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -208,7 +209,7 @@ func runBuild(args []string) int {
 				}
 			} else {
 				// Parse AST if supported language
-				codeMod := parseCode(j.filePath, j.text)
+				codeMod := parse.Code(j.filePath, j.text)
 
 				// Compile through the caller's hook. A failure writes no
 				// article and no cache entry: never the raw text in its place.

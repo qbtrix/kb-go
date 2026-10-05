@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/parse"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -67,11 +68,11 @@ func (c compilerSpec) label() string {
 }
 
 // codeContextBlock renders the AST context section of the compile prompt.
-func codeContextBlock(codeMod *CodeModule) string {
+func codeContextBlock(codeMod *parse.Module) string {
 	if codeMod == nil {
 		return ""
 	}
-	return fmt.Sprintf("\nAST-extracted structure:\n```\n%s```\n\n", formatCodeContext(codeMod))
+	return fmt.Sprintf("\nAST-extracted structure:\n```\n%s```\n\n", parse.FormatContext(codeMod))
 }
 
 // buildCompilePrompt constructs the compilation prompt shared by the compiler
@@ -104,7 +105,7 @@ Source text:
 // compileWithHook compiles one source through the compiler hook. On any
 // failure it returns (nil, err): the caller decides how to report, and must
 // not substitute the raw text.
-func compileWithHook(spec compilerSpec, rawText, source string, codeMod *CodeModule, terse bool) (*model.WikiArticle, error) {
+func compileWithHook(spec compilerSpec, rawText, source string, codeMod *parse.Module, terse bool) (*model.WikiArticle, error) {
 	prompt := buildCompilePrompt(source, codeContextBlock(codeMod), rawText, terse)
 	out, err := runCompiler(spec, prompt, source)
 	if err != nil {

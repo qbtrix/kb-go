@@ -1,13 +1,10 @@
 // TypeScript/JavaScript source parser (regex-based).
 
-package main
+package parse
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
-
-	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 var (
@@ -20,8 +17,8 @@ var (
 	tsEnumRe      = regexp.MustCompile(`(?m)^(?:export\s+)?(?:const\s+)?enum\s+(\w+)\s*\{`)
 )
 
-func parseTypeScript(path, source, lang string) *CodeModule {
-	mod := &CodeModule{
+func parseTypeScript(path, source, lang string) *Module {
+	mod := &Module{
 		Language: lang,
 		FilePath: path,
 	}
@@ -117,80 +114,4 @@ func parseTypeScript(path, source, lang string) *CodeModule {
 	}
 
 	return mod
-}
-
-// formatCodeContext produces a structured summary for the LLM prompt.
-func formatCodeContext(mod *CodeModule) string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Language: %s\n", mod.Language)
-	if mod.Package != "" {
-		fmt.Fprintf(&sb, "Package: %s\n", mod.Package)
-	}
-	if mod.Docstring != "" {
-		fmt.Fprintf(&sb, "Module doc: %s\n", mod.Docstring)
-	}
-
-	if len(mod.Imports) > 0 {
-		fmt.Fprintf(&sb, "\nImports: %s\n", strings.Join(mod.Imports, ", "))
-	}
-
-	if len(mod.Types) > 0 {
-		sb.WriteString("\nTypes:\n")
-		for _, t := range mod.Types {
-			exported := ""
-			if t.IsExported {
-				exported = " (exported)"
-			}
-			bases := ""
-			if len(t.Bases) > 0 {
-				bases = " extends " + strings.Join(t.Bases, ", ")
-			}
-			fmt.Fprintf(&sb, "  %s %s%s%s\n", t.Kind, t.Name, bases, exported)
-			if t.Docstring != "" {
-				fmt.Fprintf(&sb, "    doc: %s\n", textutil.Truncate(t.Docstring, 100))
-			}
-			for _, f := range t.Fields {
-				fmt.Fprintf(&sb, "    field: %s\n", f)
-			}
-			for _, m := range t.Methods {
-				async := ""
-				if m.IsAsync {
-					async = "async "
-				}
-				fmt.Fprintf(&sb, "    %smethod: %s(%s)", async, m.Name, strings.Join(m.Args, ", "))
-				if m.Returns != "" {
-					fmt.Fprintf(&sb, " -> %s", m.Returns)
-				}
-				sb.WriteString("\n")
-			}
-		}
-	}
-
-	if len(mod.Functions) > 0 {
-		sb.WriteString("\nFunctions:\n")
-		for _, fn := range mod.Functions {
-			async := ""
-			if fn.IsAsync {
-				async = "async "
-			}
-			exported := ""
-			if fn.IsExported {
-				exported = " (exported)"
-			}
-			fmt.Fprintf(&sb, "  %s%s(%s)", async, fn.Name, strings.Join(fn.Args, ", "))
-			if fn.Returns != "" {
-				fmt.Fprintf(&sb, " -> %s", fn.Returns)
-			}
-			fmt.Fprintf(&sb, "%s\n", exported)
-			if fn.Docstring != "" {
-				fmt.Fprintf(&sb, "    doc: %s\n", textutil.Truncate(fn.Docstring, 100))
-			}
-		}
-	}
-
-	if len(mod.Constants) > 0 {
-		fmt.Fprintf(&sb, "\nConstants: %s\n", strings.Join(mod.Constants, ", "))
-	}
-
-	return sb.String()
 }

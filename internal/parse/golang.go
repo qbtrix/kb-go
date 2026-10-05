@@ -1,6 +1,6 @@
 // Go source parser built on the stdlib go/ast.
 
-package main
+package parse
 
 import (
 	"go/ast"
@@ -9,14 +9,14 @@ import (
 	"strings"
 )
 
-func parseGo(path, source string) *CodeModule {
+func parseGo(path, source string) *Module {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, source, parser.ParseComments)
 	if err != nil {
 		return nil
 	}
 
-	mod := &CodeModule{
+	mod := &Module{
 		Language: "go",
 		FilePath: path,
 		Package:  f.Name.Name,
