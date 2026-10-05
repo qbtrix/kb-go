@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"sort"
+
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 func cmdLint(args []string) {
@@ -32,7 +34,7 @@ func cmdLint(args []string) {
 		requireCompiler(spec, "lint --llm", "Structural `kb lint` (without --llm) needs no compiler.")
 	}
 
-	var issues []LintIssue
+	var issues []model.LintIssue
 
 	// Always run structural lint
 	issues = append(issues, lintStructural(scope)...)
@@ -52,7 +54,7 @@ func cmdLint(args []string) {
 	printLintIssues(issues, jsonOut)
 }
 
-func printLintIssues(issues []LintIssue, jsonOut bool) {
+func printLintIssues(issues []model.LintIssue, jsonOut bool) {
 	if jsonOut {
 		printJSON(issues)
 		return

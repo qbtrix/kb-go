@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 func exportWiki(scope, outputDir string) {
@@ -56,7 +58,7 @@ func exportWiki(scope, outputDir string) {
 			fmt.Fprintf(&sb, "### %s\n\n", cat)
 			for _, a := range articles {
 				if slices.Contains(a.Categories, cat) {
-					fmt.Fprintf(&sb, "- [%s](%s.md) — %s\n", a.Title, a.ID, truncate(a.Summary, 80))
+					fmt.Fprintf(&sb, "- [%s](%s.md) — %s\n", a.Title, a.ID, textutil.Truncate(a.Summary, 80))
 				}
 			}
 			sb.WriteString("\n")
@@ -64,7 +66,7 @@ func exportWiki(scope, outputDir string) {
 	} else {
 		sb.WriteString("## Articles\n\n")
 		for _, a := range articles {
-			fmt.Fprintf(&sb, "- [%s](%s.md) — %s\n", a.Title, a.ID, truncate(a.Summary, 80))
+			fmt.Fprintf(&sb, "- [%s](%s.md) — %s\n", a.Title, a.ID, textutil.Truncate(a.Summary, 80))
 		}
 	}
 	os.WriteFile(filepath.Join(outputDir, "index.md"), []byte(sb.String()), 0o644)

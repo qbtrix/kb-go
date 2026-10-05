@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // --- Helpers ---
@@ -66,7 +68,7 @@ func writeVecJSON(t *testing.T, dir, name string, vec []float32, form string) st
 // attachVectorToArticle's existence check passes and search can resolve hits.
 func stubArticle(t *testing.T, scope, id, title, summary string, content string) {
 	t.Helper()
-	a := &WikiArticle{
+	a := &model.WikiArticle{
 		ID:           id,
 		Title:        title,
 		Summary:      summary,
@@ -75,7 +77,7 @@ func stubArticle(t *testing.T, scope, id, title, summary string, content string)
 		Categories:   []string{},
 		SourceDocs:   []string{},
 		Backlinks:    []string{},
-		WordCount:    wordCount(content),
+		WordCount:    textutil.WordCount(content),
 		CompiledAt:   "2026-04-30T00:00:00Z",
 		CompiledWith: "test",
 		Version:      1,

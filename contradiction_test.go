@@ -17,6 +17,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 // --- 1. Pure detector: same term, two sources, different definitions ---------
@@ -96,14 +99,14 @@ func TestDetectContradictionsStrictKeyedOnFirstSentence(t *testing.T) {
 // --- 6. On-disk: glossaryValidate surfaces CONTRADICTION findings ------------
 
 func TestGlossaryValidateSurfacesContradiction(t *testing.T) {
-	scope := "test-contra-validate-" + contentHash(t.Name())[:8]
+	scope := "test-contra-validate-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "soul-religious", Title: "Soul (religious)", Content: "The Soul is the immaterial spiritual essence of a being.",
 		Kind: "glossary", Term: "Soul", Version: 1,
 	})
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "soul-protocol", Title: "Soul (protocol)", Content: "Soul is the Soul Protocol persistent agent-identity layer.",
 		Kind: "glossary", Term: "Soul", Version: 1,
 	})
@@ -123,10 +126,10 @@ func TestGlossaryValidateSurfacesContradiction(t *testing.T) {
 // --- 7. On-disk: agreeing definitions produce no contradiction ---------------
 
 func TestGlossaryValidateNoContradictionWhenAgreeing(t *testing.T) {
-	scope := "test-contra-agree-" + contentHash(t.Name())[:8]
+	scope := "test-contra-agree-" + textutil.ContentHash(t.Name())[:8]
 	defer func() { os.RemoveAll(scopeDir(scope)) }()
 
-	seedGlossaryArticle(t, scope, &WikiArticle{
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
 		ID: "pocket", Title: "Pocket", Content: "Pocket is a PocketPaw workspace container.",
 		Kind: "glossary", Term: "Pocket", Version: 1,
 	})

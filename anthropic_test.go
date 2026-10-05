@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 func TestMessagesURL(t *testing.T) {
@@ -74,7 +75,7 @@ func TestBuiltinNon200IsLoud(t *testing.T) {
 	kbtest.IsolatedHome(t)
 	text := "raw text that must not silently become an article"
 	err = ingestText("bi-fail", "notes.md", spec, "", "", text, false, false)
-	if err == nil || !strings.Contains(err.Error(), contentHash(text)[:16]) || !strings.Contains(err.Error(), "--allow-fallback") {
+	if err == nil || !strings.Contains(err.Error(), textutil.ContentHash(text)[:16]) || !strings.Contains(err.Error(), "--allow-fallback") {
 		t.Fatalf("ingest must fail loudly naming the raw doc and --allow-fallback: %v", err)
 	}
 	if rawDocCount(t, "bi-fail") != 1 || wikiArticleCount(t, "bi-fail") != 0 {

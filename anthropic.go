@@ -22,6 +22,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 const (
@@ -50,13 +52,13 @@ func messagesURL(base string) string {
 // callAnthropic sends one user prompt and returns the first text block plus
 // the token usage. Any transport error, non-200 status or empty response is
 // an error.
-func callAnthropic(spec compilerSpec, system, prompt string) (string, *ArticleUsage, error) {
-	model := spec.Model
-	if model == "" {
-		model = defaultModel
+func callAnthropic(spec compilerSpec, system, prompt string) (string, *model.ArticleUsage, error) {
+	modelName := spec.Model
+	if modelName == "" {
+		modelName = defaultModel
 	}
 	body, _ := json.Marshal(map[string]any{
-		"model":      model,
+		"model":      modelName,
 		"max_tokens": 4096,
 		"system":     system,
 		"messages":   []map[string]string{{"role": "user", "content": prompt}},
@@ -99,9 +101,9 @@ func callAnthropic(spec compilerSpec, system, prompt string) (string, *ArticleUs
 
 	usedModel := apiResp.Model
 	if usedModel == "" {
-		usedModel = model
+		usedModel = modelName
 	}
-	usage := &ArticleUsage{
+	usage := &model.ArticleUsage{
 		Model:        usedModel,
 		InputTokens:  apiResp.Usage.InputTokens,
 		OutputTokens: apiResp.Usage.OutputTokens,
@@ -117,7 +119,7 @@ func callAnthropic(spec compilerSpec, system, prompt string) (string, *ArticleUs
 
 // compileLLM compiles one source with the built-in client. compiled_with is
 // the requested model (as in v0.3.0); usage carries the response's tokens.
-func compileLLM(spec compilerSpec, rawText, source string, codeMod *CodeModule, terse bool) (*WikiArticle, error) {
+func compileLLM(spec compilerSpec, rawText, source string, codeMod *CodeModule, terse bool) (*model.WikiArticle, error) {
 	if strings.TrimSpace(spec.APIKey) == "" {
 		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set")
 	}
@@ -130,9 +132,9 @@ func compileLLM(spec compilerSpec, rawText, source string, codeMod *CodeModule, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse LLM output: %w", err)
 	}
-	model := spec.Model
-	if model == "" {
-		model = defaultModel
+	modelName := spec.Model
+	if modelName == "" {
+		modelName = defaultModel
 	}
-	return newCompiledArticle(res, terse, model, usage), nil
+	return newCompiledArticle(res, terse, modelName, usage), nil
 }

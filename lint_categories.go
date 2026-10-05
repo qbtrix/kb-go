@@ -9,6 +9,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 // normalizeCategory reduces a category label to a canonical comparison key.
@@ -67,7 +69,7 @@ func pickCanonicalVariant(variants map[string]int) string {
 
 // affectedArticleCount returns how many articles have at least one category
 // that would be rewritten if --apply ran. Used for the dry-run summary.
-func affectedArticleCount(articles []*WikiArticle, clusters []*categoryCluster) int {
+func affectedArticleCount(articles []*model.WikiArticle, clusters []*categoryCluster) int {
 	rewriteMap := buildRewriteMap(clusters)
 	count := 0
 	for _, a := range articles {
@@ -97,7 +99,7 @@ func buildRewriteMap(clusters []*categoryCluster) map[string]string {
 // applyCategoryCanonical rewrites each article's Categories to use canonical
 // forms, saving only articles that actually changed. Returns the count of
 // rewritten articles.
-func applyCategoryCanonical(scope string, articles []*WikiArticle, clusters []*categoryCluster) int {
+func applyCategoryCanonical(scope string, articles []*model.WikiArticle, clusters []*categoryCluster) int {
 	rewriteMap := buildRewriteMap(clusters)
 	changed := 0
 	for _, a := range articles {
@@ -144,7 +146,7 @@ func applyCategoryCanonical(scope string, articles []*WikiArticle, clusters []*c
 // only by casing/whitespace/punctuation. It returns the noisy clusters (more
 // than one distinct variant, Canonical picked) sorted by total desc then key,
 // and the number of normalized groups seen overall.
-func clusterCategories(articles []*WikiArticle) (noisy []*categoryCluster, groups int) {
+func clusterCategories(articles []*model.WikiArticle) (noisy []*categoryCluster, groups int) {
 	// Build clusters: normalized key → map of original → article count
 	clusters := map[string]*categoryCluster{}
 	for _, a := range articles {

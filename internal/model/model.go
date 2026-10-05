@@ -1,8 +1,9 @@
-// Data models shared across the CLI (raw docs, wiki articles and their optional
-// compile usage, the knowledge index, cache entries, lint issues). Field names
-// mirror the Python models.py so both implementations read the same files.
-
-package main
+// Package model holds the data types every kb package shares: raw docs, wiki
+// articles and their optional compile usage, the knowledge index and its
+// concepts, build-cache entries and lint issues. Field names and JSON tags
+// mirror the Python models.py, so both implementations read the same files.
+// Plain data only: no I/O and no internal imports.
+package model
 
 type RawDoc struct {
 	ID          string            `json:"id"`

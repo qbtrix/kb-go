@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 // tokenize lowercases, splits on non-alphanumeric runes, and Porter-stems each
@@ -33,7 +35,7 @@ func tokenize(text string) []string {
 	return tokens
 }
 
-func bm25Search(articles []*WikiArticle, query string, limit int) []*WikiArticle {
+func bm25Search(articles []*model.WikiArticle, query string, limit int) []*model.WikiArticle {
 	return bm25SearchWithIndex(articles, query, limit, nil)
 }
 
@@ -41,7 +43,7 @@ func bm25Search(articles []*WikiArticle, query string, limit int) []*WikiArticle
 // article whose Term or an Alias exactly matches a query term — see issue #15.
 const glossaryExactBoost = 10.0
 
-func bm25SearchWithIndex(articles []*WikiArticle, query string, limit int, si *SearchIndex) []*WikiArticle {
+func bm25SearchWithIndex(articles []*model.WikiArticle, query string, limit int, si *SearchIndex) []*model.WikiArticle {
 	if len(articles) == 0 || query == "" {
 		return nil
 	}
@@ -105,7 +107,7 @@ func bm25ScoresFromPostings(queryTerms []string, si *SearchIndex) []float64 {
 
 // bm25ScoresSlow tokenizes every article on the fly and scores it. Used when
 // no (matching, current-format) search index is available.
-func bm25ScoresSlow(articles []*WikiArticle, queryTerms []string) []float64 {
+func bm25ScoresSlow(articles []*model.WikiArticle, queryTerms []string) []float64 {
 	docs := make([][]string, len(articles))
 	titleTokens := make([][]string, len(articles))
 	conceptTokens := make([][]string, len(articles))
@@ -163,7 +165,7 @@ func bm25ScoresSlow(articles []*WikiArticle, queryTerms []string) []float64 {
 // result, so a glossary hit consistently outranks mention-heavy module
 // articles. Runs over the articles slice — glossary metadata lives on the
 // articles, not in the search index — and is shared by both scoring paths.
-func applyGlossaryBoost(articles []*WikiArticle, queryTerms []string, scores []float64) {
+func applyGlossaryBoost(articles []*model.WikiArticle, queryTerms []string, scores []float64) {
 	for i := range articles {
 		if articles[i].Kind != "glossary" {
 			continue
@@ -206,7 +208,7 @@ func applyGlossaryBoost(articles []*WikiArticle, queryTerms []string, scores []f
 
 // rankByScore sorts descending and returns up to limit articles with a
 // strictly positive score.
-func rankByScore(articles []*WikiArticle, scores []float64, limit int) []*WikiArticle {
+func rankByScore(articles []*model.WikiArticle, scores []float64, limit int) []*model.WikiArticle {
 	type scored struct {
 		idx   int
 		score float64
@@ -217,7 +219,7 @@ func rankByScore(articles []*WikiArticle, scores []float64, limit int) []*WikiAr
 	}
 	sort.Slice(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
 
-	var result []*WikiArticle
+	var result []*model.WikiArticle
 	for _, sc := range ranked {
 		if sc.score <= 0 {
 			break

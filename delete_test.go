@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 // seedArticle writes an article + its hash-keyed raw doc (mirroring what ingest
@@ -29,7 +30,7 @@ import (
 func seedArticle(t *testing.T, scope, id, title string, concepts, categories []string) {
 	t.Helper()
 	rawID := id + "-raw"
-	raw := &RawDoc{
+	raw := &model.RawDoc{
 		ID:          rawID,
 		SourceType:  "file",
 		Source:      "src/" + id + ".go",
@@ -41,7 +42,7 @@ func seedArticle(t *testing.T, scope, id, title string, concepts, categories []s
 	if err := saveRawDoc(scope, raw); err != nil {
 		t.Fatalf("saveRawDoc %s: %v", rawID, err)
 	}
-	a := &WikiArticle{
+	a := &model.WikiArticle{
 		ID:           id,
 		Title:        title,
 		Summary:      "summary for " + id,
@@ -97,8 +98,8 @@ func TestCmdDelete_RemovesArticleEverywhere(t *testing.T) {
 
 	// Plant a hash-cache entry mapping some source path -> target.
 	cache := loadCache(scope)
-	cache.Files["src/target.go"] = CacheEntry{Hash: "abc", ArticleID: "target", CompiledAt: "x"}
-	cache.Files["src/keeper.go"] = CacheEntry{Hash: "def", ArticleID: "keeper", CompiledAt: "x"}
+	cache.Files["src/target.go"] = model.CacheEntry{Hash: "abc", ArticleID: "target", CompiledAt: "x"}
+	cache.Files["src/keeper.go"] = model.CacheEntry{Hash: "def", ArticleID: "keeper", CompiledAt: "x"}
 	if err := saveCache(scope, cache); err != nil {
 		t.Fatalf("saveCache: %v", err)
 	}

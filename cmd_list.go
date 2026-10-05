@@ -4,6 +4,8 @@ package main
 
 import (
 	"fmt"
+
+	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
 func cmdList(args []string) {
@@ -26,7 +28,7 @@ func cmdList(args []string) {
 			out = append(out, map[string]any{
 				"id":            a.ID,
 				"title":         a.Title,
-				"summary":       truncate(a.Summary, 120),
+				"summary":       textutil.Truncate(a.Summary, 120),
 				"word_count":    a.WordCount,
 				"compiled_with": a.CompiledWith,
 				"version":       a.Version,
@@ -37,7 +39,7 @@ func cmdList(args []string) {
 		fmt.Printf("Articles (%d):\n\n", len(articles))
 		for _, a := range articles {
 			fmt.Printf("  [%s] %s\n", a.ID, a.Title)
-			fmt.Printf("    %s\n", truncate(a.Summary, 100))
+			fmt.Printf("    %s\n", textutil.Truncate(a.Summary, 100))
 			fmt.Printf("    Words: %d | Version: %d | Compiled: %s\n\n", a.WordCount, a.Version, a.CompiledWith)
 		}
 	}

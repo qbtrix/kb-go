@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/model"
 )
 
 // rawTokenize is the pre-stemming tokenizer: lowercase + split on
@@ -28,7 +29,7 @@ func rawTokenize(text string) []string {
 
 // writeUnstemmedV2Index persists an index exactly as pre-stemming kb wrote it:
 // {"v":2, ...} with raw, unstemmed postings.
-func writeUnstemmedV2Index(t *testing.T, scope string, articles []*WikiArticle) string {
+func writeUnstemmedV2Index(t *testing.T, scope string, articles []*model.WikiArticle) string {
 	t.Helper()
 	si := &SearchIndex{
 		V:             2,
@@ -73,7 +74,7 @@ func TestUnstemmedV2IndexIsNotTrusted(t *testing.T) {
 	scope := "sidx-stem-" + filepath.Base(dir)
 	ensureDirs(scope)
 
-	for _, a := range []*WikiArticle{
+	for _, a := range []*model.WikiArticle{
 		{ID: "hours", Title: "Store Hours", Content: "The shop opens at 8am and closes at 6pm.", Version: 1},
 		{ID: "payments", Title: "Payments", Content: "We accept cards and cash for all purchases.", Version: 1},
 	} {
