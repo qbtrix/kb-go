@@ -822,6 +822,185 @@ func containedID(id string) error {
 	return nil
 }
 
+// --- Article Identity ---
+//
+// An article's identity is its SOURCE, not its title. Ids start as a slug of
+// the (LLM-chosen) title or file name, but every write path resolves the final
+// id through idRegistry.claim so that:
+//   - a source that already has an article keeps that article's id (re-compiling
+//     under a new title replaces it in place, no stale twin), and any older
+//     twins the same source left behind are retired;
+//   - a slug already held by a DIFFERENT source is disambiguated
+//     deterministically (slug + "-" + hex of the source path), so two sources
+//     that happen to share a title never overwrite each other;
+//   - an article with no source keeps the legacy slug-only behavior.
+// The common no-collision case keeps the plain slug, so existing ids stay put.
+//
+// "Same source" means the same SourcePath for build/accept, where it is a path
+// inside the scanned tree and unique per file. The ingest paths take a
+// caller-chosen label ("manual", an upload's filename), which is not unique, so
+// there a source match only replaces when the raw doc matches too; a label +
+// slug match still overwrites in place, as it always has.
+
+type articleIDEntry struct {
+	id      string
+	rawDocs []string
+}
+
+// idRegistry is a scope's id registry, built once per write command from the
+// articles on disk and updated as the command claims ids, so same-batch
+// collisions are seen too.
+type idRegistry struct {
+	owner    map[string]string // lower(id) -> SourcePath of the article holding it
+	version  map[string]int    // id -> current version
+	bySource map[string][]articleIDEntry
+	retired  []string // stale twins to remove (see retire)
+}
+
+func loadIDRegistry(scope string) *idRegistry {
+	r := &idRegistry{owner: map[string]string{}, version: map[string]int{}, bySource: map[string][]articleIDEntry{}}
+	articles, _ := listArticles(scope)
+	for _, a := range articles {
+		r.record(a.ID, a.SourcePath, a.SourceDocs, a.Version)
+	}
+	return r
+}
+
+func (r *idRegistry) record(id, source string, rawDocs []string, version int) {
+	r.owner[strings.ToLower(id)] = source
+	r.version[id] = version
+	if source == "" {
+		return
+	}
+	entries := r.bySource[source]
+	for i := range entries {
+		if entries[i].id == id {
+			entries[i].rawDocs = rawDocs
+			return
+		}
+	}
+	r.bySource[source] = append(entries, articleIDEntry{id: id, rawDocs: rawDocs})
+}
+
+// claim resolves the id for a write of source's article, given the slug its
+// title or file name proposes, and records the claim. labelSource marks the
+// ingest paths (see the section comment). Returns the id and the version to
+// write. Stale twins of the same source are queued for retire.
+func (r *idRegistry) claim(proposed, source string, rawDocs []string, labelSource bool) (string, int) {
+	if source != "" {
+		var same []string
+		for _, e := range r.bySource[source] {
+			if !labelSource || sharesRaw(e.rawDocs, rawDocs) {
+				same = append(same, e.id)
+			}
+		}
+		if len(same) > 0 {
+			keep := same[0]
+			for _, id := range same {
+				if id == proposed || (keep != proposed && id < keep) {
+					keep = id
+				}
+			}
+			r.retireTwins(source, keep, same)
+			v := r.version[keep] + 1
+			r.record(keep, source, rawDocs, v)
+			return keep, v
+		}
+	}
+	id := proposed
+	if source != "" {
+		for _, n := range []int{8, 16, 64} {
+			if owner, taken := r.owner[strings.ToLower(id)]; !taken || owner == source {
+				break
+			}
+			id = disambiguatedID(proposed, source, n)
+		}
+	}
+	v := r.version[id] + 1
+	r.record(id, source, rawDocs, v)
+	return id, v
+}
+
+// claimFixed records an article whose id is explicit (a glossary entry's
+// frontmatter id) and retires any other article the same source left behind.
+// Returns the version to write.
+func (r *idRegistry) claimFixed(id, source string, rawDocs []string) int {
+	if source != "" {
+		var same []string
+		for _, e := range r.bySource[source] {
+			same = append(same, e.id)
+		}
+		r.retireTwins(source, id, same)
+	}
+	v := r.version[id] + 1
+	r.record(id, source, rawDocs, v)
+	return v
+}
+
+// retireTwins queues every id in ids except keep for removal. The retired ids
+// stay owned by source for the rest of the command, so no other article can
+// claim one before retire deletes its file.
+func (r *idRegistry) retireTwins(source, keep string, ids []string) {
+	kept := r.bySource[source][:0]
+	for _, e := range r.bySource[source] {
+		if e.id == keep || !contains(ids, e.id) {
+			kept = append(kept, e)
+		} else {
+			r.retired = append(r.retired, e.id)
+		}
+	}
+	r.bySource[source] = kept
+}
+
+// retire deletes the queued stale twins: their wiki files and vector entries.
+// Callers rebuild the concept + search indexes from disk afterwards, which
+// drops them there too. Raw docs are kept: a twin usually shares its raw doc
+// with the article that replaced it.
+func (r *idRegistry) retire(scope string) {
+	if len(r.retired) == 0 {
+		return
+	}
+	for _, id := range r.retired {
+		if containedID(id) != nil {
+			continue
+		}
+		p := filepath.Join(scopeDir(scope), "wiki", id+".md")
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Warning: failed to remove superseded article %s: %v\n", id, err)
+		}
+	}
+	if vidx, err := loadOrCreateVectorIndex(scope); err == nil {
+		removed := false
+		for _, id := range r.retired {
+			removed = vidx.Remove(id) || removed
+		}
+		if removed {
+			if err := saveVectorIndex(scope, vidx); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to update vector index: %v\n", err)
+			}
+		}
+	}
+	r.retired = nil
+}
+
+// disambiguatedID appends n hex chars of the source path's hash to slug,
+// trimming the slug so the id stays within slugify's 80-char cap.
+func disambiguatedID(slug, source string, n int) string {
+	if max := 80 - 1 - n; len(slug) > max {
+		slug = strings.TrimRight(slug[:max], "-")
+	}
+	return slug + "-" + contentHash(source)[:n]
+}
+
+func sharesRaw(a, b []string) bool {
+	for _, x := range a {
+		if x != "" && contains(b, x) {
+			return true
+		}
+	}
+	return false
+}
+
 func loadArticle(scope, id string) (*WikiArticle, error) {
 	if err := containedID(id); err != nil {
 		return nil, err
@@ -1916,6 +2095,7 @@ func cmdBuild(args []string) {
 		job     compileJob
 		article *WikiArticle
 		usage   *TokenUsage
+		fixedID bool // glossary entry with an explicit frontmatter id
 	}
 
 	var (
@@ -1951,6 +2131,7 @@ func cmdBuild(args []string) {
 
 			var article *WikiArticle
 			var usage *TokenUsage
+			fixedID := false
 
 			if isGlossarySource(j.relPath) {
 				// Glossary sources are hand-curated: parse frontmatter directly,
@@ -1970,6 +2151,7 @@ func cmdBuild(args []string) {
 					}
 				} else {
 					article = gArt
+					fixedID = true
 					article.Kind = "glossary"
 					if article.CompiledAt == "" {
 						article.CompiledAt = time.Now().UTC().Format(time.RFC3339)
@@ -2023,13 +2205,23 @@ func cmdBuild(args []string) {
 			}
 
 			mu.Lock()
-			results = append(results, compileResult{job: j, article: article, usage: usage})
+			results = append(results, compileResult{job: j, article: article, usage: usage, fixedID: fixedID})
 			mu.Unlock()
 		}(job)
 	}
 	wg.Wait()
 
-	// Phase 3: save articles + update cache (sequential for consistency)
+	// Phase 3: resolve ids, save articles, update cache (sequential for
+	// consistency). Results arrive in goroutine completion order; sort them so
+	// same-batch slug collisions resolve the same way every run, explicit
+	// glossary ids first so compiled articles disambiguate around them.
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].fixedID != results[j].fixedID {
+			return results[i].fixedID
+		}
+		return results[i].job.relPath < results[j].job.relPath
+	})
+	ids := loadIDRegistry(scope)
 	changed := len(results)
 	var totalInput, totalOutput int
 	for _, r := range results {
@@ -2037,8 +2229,14 @@ func cmdBuild(args []string) {
 			totalInput += r.usage.InputTokens
 			totalOutput += r.usage.OutputTokens
 		}
-		if existing, err := loadArticle(scope, r.article.ID); err == nil && existing != nil {
-			r.article.Version = existing.Version + 1
+		if r.fixedID {
+			// Keep the frontmatter version on a first write, as before.
+			_, existed := ids.version[r.article.ID]
+			if v := ids.claimFixed(r.article.ID, r.article.SourcePath, r.article.SourceDocs); existed {
+				r.article.Version = v
+			}
+		} else {
+			r.article.ID, r.article.Version = ids.claim(r.article.ID, r.article.SourcePath, r.article.SourceDocs, false)
 		}
 		saveArticle(scope, r.article)
 		cache.Files[r.job.relPath] = CacheEntry{
@@ -2048,6 +2246,7 @@ func cmdBuild(args []string) {
 		}
 	}
 
+	ids.retire(scope)
 	saveCache(scope, cache)
 
 	// Rebuild index
@@ -2307,6 +2506,7 @@ func cmdAccept(args []string) {
 
 	ensureDirs(scope)
 	cache := loadCache(scope)
+	ids := loadIDRegistry(scope)
 	saved := 0
 
 	for _, a := range articles {
@@ -2363,9 +2563,7 @@ func cmdAccept(args []string) {
 			article.Categories = append(article.Categories, "test")
 		}
 
-		if existing, err := loadArticle(scope, article.ID); err == nil && existing != nil {
-			article.Version = existing.Version + 1
-		}
+		article.ID, article.Version = ids.claim(article.ID, article.SourcePath, article.SourceDocs, false)
 		saveArticle(scope, article)
 
 		// Update cache
@@ -2379,6 +2577,7 @@ func cmdAccept(args []string) {
 		saved++
 	}
 
+	ids.retire(scope)
 	saveCache(scope, cache)
 
 	// Rebuild index
@@ -3031,15 +3230,15 @@ func ingestText(scope, source, model, apiKey, lang, filePath, text string, allow
 			Version:      1,
 		}
 	}
+	article.SourcePath = source
 	article.SourceDocs = []string{raw.ID}
 
-	if existing, err := loadArticle(scope, article.ID); err == nil && existing != nil {
-		article.Version = existing.Version + 1
-	}
-
+	ids := loadIDRegistry(scope)
+	article.ID, article.Version = ids.claim(article.ID, article.SourcePath, article.SourceDocs, true)
 	if err := saveArticle(scope, article); err != nil {
 		return fmt.Errorf("failed to save article %s: %v", article.ID, err)
 	}
+	ids.retire(scope)
 	finishIngest(scope, article, jsonOut)
 	return nil
 }
@@ -3123,13 +3322,12 @@ func ingestArticleJSON(scope string, data []byte, jsonOut bool) error {
 		TargetWords:  500,
 	}
 
-	if existing, err := loadArticle(scope, article.ID); err == nil && existing != nil {
-		article.Version = existing.Version + 1
-	}
-
+	ids := loadIDRegistry(scope)
+	article.ID, article.Version = ids.claim(article.ID, article.SourcePath, article.SourceDocs, true)
 	if err := saveArticle(scope, article); err != nil {
 		return fmt.Errorf("failed to save article %s: %v", article.ID, err)
 	}
+	ids.retire(scope)
 	finishIngest(scope, article, jsonOut)
 	return nil
 }
