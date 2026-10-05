@@ -1,13 +1,15 @@
-// longmemeval_test.go — LongMemEval benchmark harness for kb-go.
-// Runs the 500-question LongMemEval benchmark using kb-go's BM25 search
-// and the new convo entity extraction pipeline.
+// longmemeval_test.go — LongMemEval benchmark harness: runs the 500-question
+// LongMemEval benchmark with BM25 search and the convo entity extraction
+// pipeline (entity-boosted ranking).
 //
-// Data file: benchmarks/longmemeval/longmemeval_s_cleaned.json (265MB, not committed)
+// Data file: benchmarks/longmemeval/longmemeval_s_cleaned.json at the module
+// root (265MB, not committed).
 // Download: https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned
 //
-// Run: go test -v -run TestLongMemEval -timeout 600s
-// Skip: automatically skipped if data file is missing
-package main
+// Run: go test -v -run TestLongMemEval -timeout 600s ./internal/search
+// Skip: automatically skipped if the data file is missing
+
+package search
 
 import (
 	"encoding/json"
@@ -20,8 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qbtrix/kb-go/internal/convo"
 	"github.com/qbtrix/kb-go/internal/kbtest"
-	"github.com/qbtrix/kb-go/internal/search"
 )
 
 // --- LongMemEval data structures ---
@@ -73,7 +75,7 @@ func buildSessionCorpus(sessions [][]LMETurn, sessionIDs []string) ([]string, []
 // bm25RankSessions scores each session doc against the query using BM25.
 // Returns session IDs ranked by descending score.
 func bm25RankSessions(docs []string, docIDs []string, query string) []string {
-	queryTokens := search.Tokenize(query)
+	queryTokens := Tokenize(query)
 	if len(queryTokens) == 0 || len(docs) == 0 {
 		return nil
 	}
@@ -82,7 +84,7 @@ func bm25RankSessions(docs []string, docIDs []string, query string) []string {
 	tokenizedDocs := make([][]string, len(docs))
 	totalLen := 0
 	for i, doc := range docs {
-		tokenizedDocs[i] = search.Tokenize(doc)
+		tokenizedDocs[i] = Tokenize(doc)
 		totalLen += len(tokenizedDocs[i])
 	}
 	avgDL := float64(totalLen) / float64(len(docs))
@@ -110,9 +112,9 @@ func bm25RankSessions(docs []string, docIDs []string, query string) []string {
 		s := 0.0
 		dl := float64(len(doc))
 		for _, term := range queryTokens {
-			tf := float64(countTerm(doc, term))
-			num := tf * (search.BM25K1 + 1)
-			den := tf + search.BM25K1*(1-search.BM25B+search.BM25B*dl/avgDL)
+			tf := float64(countStr(doc, term))
+			num := tf * (BM25K1 + 1)
+			den := tf + BM25K1*(1-BM25B+BM25B*dl/avgDL)
 			s += idfs[term] * num / den
 		}
 		results[i] = scored{id: docIDs[i], score: s}
@@ -130,13 +132,13 @@ func bm25RankSessions(docs []string, docIDs []string, query string) []string {
 // entityBoostedRank runs entity extraction on the query, boosts sessions
 // that mention the same entities, then falls back to BM25.
 func entityBoostedRank(docs []string, docIDs []string, query string) []string {
-	queryEntities := extractEntities(query)
+	queryEntities := convo.ExtractEntities(query)
 
 	if len(queryEntities) == 0 {
 		return bm25RankSessions(docs, docIDs, query)
 	}
 
-	queryTokens := search.Tokenize(query)
+	queryTokens := Tokenize(query)
 	if len(queryTokens) == 0 || len(docs) == 0 {
 		return nil
 	}
@@ -145,7 +147,7 @@ func entityBoostedRank(docs []string, docIDs []string, query string) []string {
 	tokenizedDocs := make([][]string, len(docs))
 	totalLen := 0
 	for i, doc := range docs {
-		tokenizedDocs[i] = search.Tokenize(doc)
+		tokenizedDocs[i] = Tokenize(doc)
 		totalLen += len(tokenizedDocs[i])
 	}
 	avgDL := float64(totalLen) / float64(len(docs))
@@ -166,7 +168,7 @@ func entityBoostedRank(docs []string, docIDs []string, query string) []string {
 	// Entity tokens for boosting
 	entityTokenSet := map[string]bool{}
 	for _, e := range queryEntities {
-		for _, tok := range search.Tokenize(e.Name) {
+		for _, tok := range Tokenize(e.Name) {
 			entityTokenSet[tok] = true
 		}
 	}
@@ -181,9 +183,9 @@ func entityBoostedRank(docs []string, docIDs []string, query string) []string {
 		bm25Score := 0.0
 		dl := float64(len(doc))
 		for _, term := range queryTokens {
-			tf := float64(countTerm(doc, term))
-			num := tf * (search.BM25K1 + 1)
-			den := tf + search.BM25K1*(1-search.BM25B+search.BM25B*dl/avgDL)
+			tf := float64(countStr(doc, term))
+			num := tf * (BM25K1 + 1)
+			den := tf + BM25K1*(1-BM25B+BM25B*dl/avgDL)
 			bm25Score += idfs[term] * num / den
 		}
 
@@ -423,15 +425,4 @@ func runBenchmark(t *testing.T, name string, questions []LMEQuestion, ranker ran
 		pct := float64(r5) * 100 / float64(count)
 		t.Logf("  %-30s  R@5=%5.1f%%  (%d/%d)", tp, pct, r5, count)
 	}
-}
-
-// countTerm counts occurrences of term in tokens.
-func countTerm(tokens []string, term string) int {
-	n := 0
-	for _, t := range tokens {
-		if t == term {
-			n++
-		}
-	}
-	return n
 }

@@ -89,10 +89,6 @@ func TestDetectContradictionsStrictKeyedOnFirstSentence(t *testing.T) {
 	}
 }
 
-// --- 6. On-disk: glossary.Validate surfaces CONTRADICTION findings ------------
-
-// --- 7. On-disk: agreeing definitions produce no contradiction ---------------
-
 // --- 8. Snippet content is preserved for human review ------------------------
 
 func TestContradictionSnippetsCarryBothDefinitions(t *testing.T) {

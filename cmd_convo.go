@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/qbtrix/kb-go/internal/convo"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
@@ -53,7 +54,7 @@ func cmdConvoIngest(args []string) {
 		fatal("Cannot read file: %v", err)
 	}
 
-	session, err := parseTranscript(data, filePath)
+	session, err := convo.ParseTranscript(data, filePath)
 	if err != nil {
 		fatal("Parse error: %v", err)
 	}
@@ -63,14 +64,14 @@ func cmdConvoIngest(args []string) {
 	for _, t := range session.Turns {
 		allText += t.Content + " "
 	}
-	entities := extractEntities(allText)
-	decisions := extractDecisions(session.Turns)
+	entities := convo.ExtractEntities(allText)
+	decisions := convo.ExtractDecisions(session.Turns)
 
 	// Cluster into topics
-	clusters := clusterTopics(session)
+	clusters := convo.ClusterTopics(session)
 
 	// Generate articles
-	articles := generateConvoArticles(session, clusters, decisions)
+	articles := convo.GenerateArticles(session, clusters, decisions)
 
 	// Save raw session
 	store.EnsureDirs(scope)
