@@ -1,10 +1,10 @@
-// glossary_test.go — Tests for the glossary scope feature (issue #15): the
-// WikiArticle glossary fields (Kind/Term/Aliases/Category/Related), the
-// isGlossarySource path helper, parseGlossarySource, exact-term + alias search
-// boosting, and the list/show/validate functions behind `kb glossary`. The
+// Tests for the glossary package (issue #15): IsSource, List / Show (by term,
+// by alias, missing), and Validate (clean, duplicate term or alias, alias/term
+// collision, dangling related refs, and cross-source contradictions surfaced or
+// not). The glossary search boost is tested in internal/search; the
 // binary-level glossary build check lives in e2e_test.go.
 
-package main
+package glossary
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
@@ -30,7 +31,7 @@ func seedGlossaryArticle(t *testing.T, scope string, a *model.WikiArticle) *mode
 	return a
 }
 
-// --- 3. isGlossarySource path classifier ----------------------------------------
+// --- 3. IsSource path classifier ----------------------------------------
 
 // TODO: passes after glossary feature lands
 func TestIsGlossarySource(t *testing.T) {
@@ -47,14 +48,14 @@ func TestIsGlossarySource(t *testing.T) {
 		{"", false},
 	}
 	for _, tc := range cases {
-		got := isGlossarySource(tc.in)
+		got := IsSource(tc.in)
 		if got != tc.want {
 			t.Errorf("isGlossarySource(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
 }
 
-// --- 8-9. glossaryList -----------------------------------------------------------
+// --- 8-9. List -----------------------------------------------------------
 
 // TODO: passes after glossary feature lands
 func TestGlossaryListEmpty(t *testing.T) {
@@ -62,7 +63,7 @@ func TestGlossaryListEmpty(t *testing.T) {
 	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
 
 	var buf bytes.Buffer
-	if err := glossaryList(scope, &buf); err != nil {
+	if err := List(scope, &buf); err != nil {
 		t.Errorf("glossaryList on empty scope returned err: %v", err)
 	}
 	// Don't lock the exact wording yet; assert it ran cleanly.
@@ -92,7 +93,7 @@ func TestGlossaryListMultiple(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	if err := glossaryList(scope, &buf); err != nil {
+	if err := List(scope, &buf); err != nil {
 		t.Fatalf("glossaryList: %v", err)
 	}
 	out := buf.String()
@@ -114,7 +115,7 @@ func TestGlossaryListMultiple(t *testing.T) {
 	}
 }
 
-// --- 10-12. glossaryShow ---------------------------------------------------------
+// --- 10-12. Show ---------------------------------------------------------
 
 // TODO: passes after glossary feature lands
 func TestGlossaryShowByTerm(t *testing.T) {
@@ -129,7 +130,7 @@ func TestGlossaryShowByTerm(t *testing.T) {
 	// Three case variants — all must resolve.
 	for _, q := range []string{"Pocket", "pocket", "POCKET"} {
 		var buf bytes.Buffer
-		if err := glossaryShow(scope, q, &buf); err != nil {
+		if err := Show(scope, q, &buf); err != nil {
 			t.Errorf("glossaryShow(%q): %v", q, err)
 			continue
 		}
@@ -150,7 +151,7 @@ func TestGlossaryShowByAlias(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	if err := glossaryShow(scope, "pkt", &buf); err != nil {
+	if err := Show(scope, "pkt", &buf); err != nil {
 		t.Fatalf("glossaryShow(pkt): %v", err)
 	}
 	if !strings.Contains(buf.String(), "workspace container") {
@@ -168,7 +169,7 @@ func TestGlossaryShowMissing(t *testing.T) {
 	store.EnsureDirs(scope)
 
 	var buf bytes.Buffer
-	err := glossaryShow(scope, "Nonexistent", &buf)
+	err := Show(scope, "Nonexistent", &buf)
 	if err == nil {
 		t.Fatal("glossaryShow on missing term: expected error, got nil")
 	}
@@ -177,7 +178,7 @@ func TestGlossaryShowMissing(t *testing.T) {
 	}
 }
 
-// --- 13-17. glossaryValidate ----------------------------------------------------
+// --- 13-17. Validate ----------------------------------------------------
 
 // TODO: passes after glossary feature lands
 func TestGlossaryValidateClean(t *testing.T) {
@@ -193,7 +194,7 @@ func TestGlossaryValidateClean(t *testing.T) {
 		Kind: "glossary", Term: "Soul", Aliases: []string{"spirit"}, Related: []string{"Pocket"}, Version: 1,
 	})
 
-	issues, err := glossaryValidate(scope)
+	issues, err := Validate(scope)
 	if err != nil {
 		t.Fatalf("glossaryValidate err = %v", err)
 	}
@@ -216,7 +217,7 @@ func TestGlossaryValidateDuplicateTerm(t *testing.T) {
 		Kind: "glossary", Term: "Pocket", Version: 1,
 	})
 
-	issues, _ := glossaryValidate(scope)
+	issues, _ := Validate(scope)
 	if len(issues) == 0 {
 		t.Fatal("expected at least one issue for duplicate Term, got none")
 	}
@@ -242,7 +243,7 @@ func TestGlossaryValidateDuplicateAlias(t *testing.T) {
 		Kind: "glossary", Term: "Packet", Aliases: []string{"pkt"}, Version: 1,
 	})
 
-	issues, _ := glossaryValidate(scope)
+	issues, _ := Validate(scope)
 	if len(issues) == 0 {
 		t.Fatal("expected at least one issue for duplicate alias")
 	}
@@ -269,7 +270,7 @@ func TestGlossaryValidateAliasTermCollision(t *testing.T) {
 		Kind: "glossary", Term: "Pkt", Version: 1,
 	})
 
-	issues, _ := glossaryValidate(scope)
+	issues, _ := Validate(scope)
 	if len(issues) == 0 {
 		t.Fatal("expected at least one issue for alias↔term collision")
 	}
@@ -290,7 +291,7 @@ func TestGlossaryValidateDanglingRelated(t *testing.T) {
 		Kind: "glossary", Term: "Pocket", Related: []string{"Phantom"}, Version: 1,
 	})
 
-	issues, _ := glossaryValidate(scope)
+	issues, _ := Validate(scope)
 	if len(issues) == 0 {
 		t.Fatal("expected at least one issue for dangling Related reference")
 	}
@@ -314,13 +315,57 @@ func containsIssue(issues []string, needle string) bool {
 	return false
 }
 
-// Compile-time anchor: prove glossaryList/Show signatures take an io.Writer.
+// Compile-time anchor: prove List/Show signatures take an io.Writer.
 // If the implementer changes the signature, this assignment fails to compile
 // and the contract conversation surfaces in code review rather than a buried
 // runtime mismatch.
 var (
-	_ func(string, io.Writer) error         = glossaryList
-	_ func(string, string, io.Writer) error = glossaryShow
-	_ func(string) ([]string, error)        = glossaryValidate
-	_ func(string) bool                     = isGlossarySource
+	_ func(string, io.Writer) error         = List
+	_ func(string, string, io.Writer) error = Show
+	_ func(string) ([]string, error)        = Validate
+	_ func(string) bool                     = IsSource
 )
+
+func TestGlossaryValidateSurfacesContradiction(t *testing.T) {
+	scope := "test-contra-validate-" + textutil.ContentHash(t.Name())[:8]
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
+
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
+		ID: "soul-religious", Title: "Soul (religious)", Content: "The Soul is the immaterial spiritual essence of a being.",
+		Kind: "glossary", Term: "Soul", Version: 1,
+	})
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
+		ID: "soul-protocol", Title: "Soul (protocol)", Content: "Soul is the Soul Protocol persistent agent-identity layer.",
+		Kind: "glossary", Term: "Soul", Version: 1,
+	})
+
+	issues, err := Validate(scope)
+	if err != nil {
+		t.Fatalf("glossaryValidate err = %v", err)
+	}
+	if !containsIssue(issues, "contradiction") {
+		t.Errorf("expected a CONTRADICTION finding. Got: %v", issues)
+	}
+	if !containsIssue(issues, "soul-religious") || !containsIssue(issues, "soul-protocol") {
+		t.Errorf("contradiction should name both conflicting source ids. Got: %v", issues)
+	}
+}
+
+func TestGlossaryValidateNoContradictionWhenAgreeing(t *testing.T) {
+	scope := "test-contra-agree-" + textutil.ContentHash(t.Name())[:8]
+	defer func() { os.RemoveAll(store.ScopeDir(scope)) }()
+
+	seedGlossaryArticle(t, scope, &model.WikiArticle{
+		ID: "pocket", Title: "Pocket", Content: "Pocket is a PocketPaw workspace container.",
+		Kind: "glossary", Term: "Pocket", Version: 1,
+	})
+
+	issues, _ := Validate(scope)
+	if containsIssue(issues, "contradiction") {
+		t.Errorf("single clean term should not be flagged. Got: %v", issues)
+	}
+}
+
+func TestMain(m *testing.M) {
+	os.Exit(kbtest.Main(m))
+}

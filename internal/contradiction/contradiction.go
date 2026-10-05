@@ -1,33 +1,28 @@
-// contradiction.go — Cross-source definition contradiction detection (issue #19).
-// Created: 2026-06-02
+// Package contradiction detects cross-source definition contradictions
+// (issue #19): two or more sources that define the same term (or alias) but
+// disagree on what it means. Structural collisions (duplicate term, alias
+// clash, dangling ref) are handled by the glossary package; this is the
+// SEMANTIC check. The build path used to dedupe these silently (last writer
+// wins by article ID), which is exactly the failure the domain glossary (#15)
+// exists to prevent.
 //
-// Structural collisions (duplicate term, alias clash, dangling ref) are handled
-// in glossary.go. This file adds SEMANTIC conflict detection: two or more sources
-// that define the same term (or alias) but disagree on what it means. The build
-// path used to dedupe these silently — last writer wins by article ID — which is
-// exactly the failure mode the domain glossary (#15) exists to prevent.
+// The detector is pure and offline: no LLM, no network. It groups candidates
+// by a normalized term/alias key and flags a group when its definitions are
+// "materially different" under the configured threshold. The tool FLAGS
+// only; a human resolves which definition is canonical.
 //
-// The detector is pure and offline: no LLM, no network. It groups candidates by a
-// normalized term/alias key and flags a group when its definitions are
-// "materially different" under the configured threshold. The tool FLAGS only; a
-// human resolves which definition is canonical.
-//
-// Threshold (tunable via ContradictionConfig.Mode):
+// Threshold (Config.Mode):
 //   - "strict" (default): definitions conflict when their normalized first
 //     sentence differs. Catches the common case (divergent opening line) while
 //     ignoring sources that agree on the headline and only differ in detail.
 //   - "loose": definitions conflict only when the full normalized body differs.
 //     Fewer findings; use when first-sentence drift is expected/acceptable.
 //
-// Caveat — this compares WORDING, not MEANING. The key is normalized text, so
-// two sources that agree but are phrased differently (a paraphrase, reordered
-// clause, or synonym) read as a contradiction. Since cmdBuild exits 3 on a
-// finding, a paraphrase-only divergence can fail a CI gate; drop to "loose" or
-// "off" if strict is too aggressive for the gate.
-//
-// An optional LLM-assisted similarity check can be layered on later as a flag;
-// it is intentionally NOT a hard dependency here.
-package main
+// Caveat: this compares WORDING, not MEANING. Two sources that agree but are
+// phrased differently read as a contradiction. Since `kb build` exits 3 on a
+// finding, a paraphrase-only divergence can fail a CI gate; drop to "loose"
+// or "off" if strict is too aggressive for the gate.
+package contradiction
 
 import (
 	"fmt"
@@ -37,37 +32,37 @@ import (
 	"github.com/qbtrix/kb-go/internal/model"
 )
 
-// ContradictionCandidate is one source's claim about a term. The build path
+// Candidate is one source's claim about a term. The build path
 // produces these from glossary articles (including ones that would otherwise be
-// silently overwritten by a same-ID save); glossaryValidate produces them from
+// silently overwritten by a same-ID save); glossary.Validate produces them from
 // the on-disk glossary set.
-type ContradictionCandidate struct {
+type Candidate struct {
 	SourceID   string   // article id / source identifier
 	Term       string   // canonical term this source defines
 	Aliases    []string // alternative names this source claims for the term
 	Definition string   // the definition text (article body or summary)
 }
 
-// ContradictionConfig tunes the "materially different" threshold. Mode defaults
+// Config tunes the "materially different" threshold. Mode defaults
 // to "strict" when empty.
-type ContradictionConfig struct {
+type Config struct {
 	Mode string // "strict" (first-sentence) or "loose" (full-body)
 }
 
-// Contradiction is a flagged disagreement: one term, the conflicting source ids,
+// Finding is a flagged disagreement: one term, the conflicting source ids,
 // and a definition snippet per source so a human can review without reopening
 // every file.
-type Contradiction struct {
+type Finding struct {
 	Term     string   `json:"term"`
 	Sources  []string `json:"sources"`
 	Snippets []string `json:"snippets"`
 }
 
-// detectContradictions groups candidates by normalized term/alias key and returns
-// one Contradiction per key whose definitions are materially different under cfg.
+// Detect groups candidates by normalized term/alias key and returns
+// one Finding per key whose definitions are materially different under cfg.
 // Pure and deterministic: results are sorted by term, snippets/sources follow the
 // candidates' first-seen order within a key. No LLM, no I/O.
-func detectContradictions(candidates []ContradictionCandidate, cfg ContradictionConfig) []Contradiction {
+func Detect(candidates []Candidate, cfg Config) []Finding {
 	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
 	if mode == "" {
 		mode = "strict"
@@ -114,7 +109,7 @@ func detectContradictions(candidates []ContradictionCandidate, cfg Contradiction
 		}
 	}
 
-	var out []Contradiction
+	var out []Finding
 	for key, members := range groups {
 		if len(members) < 2 {
 			continue
@@ -131,7 +126,7 @@ func detectContradictions(candidates []ContradictionCandidate, cfg Contradiction
 		if term == "" {
 			term = key
 		}
-		c := Contradiction{Term: term}
+		c := Finding{Term: term}
 		for _, m := range members {
 			c.Sources = append(c.Sources, m.sourceID)
 			c.Snippets = append(c.Snippets, snippet(m.definition))
@@ -186,9 +181,9 @@ func snippet(s string) string {
 	return s
 }
 
-// formatContradictionIssue renders a Contradiction as a glossaryValidate issue
+// FormatIssue renders a Finding as a glossary.Validate issue
 // line, matching the existing "duplicate term: ..." finding style.
-func formatContradictionIssue(c Contradiction) string {
+func FormatIssue(c Finding) string {
 	pairs := make([]string, len(c.Sources))
 	for i, src := range c.Sources {
 		snip := ""
@@ -201,11 +196,11 @@ func formatContradictionIssue(c Contradiction) string {
 		c.Term, strings.Join(pairs, " vs "))
 }
 
-// candidatesFromArticles builds ContradictionCandidates from glossary articles,
+// CandidatesFromArticles builds ContradictionCandidates from glossary articles,
 // using the article body as the definition (falling back to Summary when the
 // body is empty). Non-glossary articles are skipped.
-func candidatesFromArticles(articles []*model.WikiArticle) []ContradictionCandidate {
-	var cands []ContradictionCandidate
+func CandidatesFromArticles(articles []*model.WikiArticle) []Candidate {
+	var cands []Candidate
 	for _, a := range articles {
 		if a.Kind != "glossary" {
 			continue
@@ -218,7 +213,7 @@ func candidatesFromArticles(articles []*model.WikiArticle) []ContradictionCandid
 		if id == "" {
 			id = a.Term
 		}
-		cands = append(cands, ContradictionCandidate{
+		cands = append(cands, Candidate{
 			SourceID:   id,
 			Term:       a.Term,
 			Aliases:    a.Aliases,

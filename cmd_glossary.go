@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/qbtrix/kb-go/internal/glossary"
 )
 
 func glossaryUsage() {
@@ -33,7 +35,7 @@ func cmdGlossary(args []string) {
 
 	switch sub {
 	case "list":
-		if err := glossaryList(scope, os.Stdout); err != nil {
+		if err := glossary.List(scope, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "glossary list:", err)
 			os.Exit(1)
 		}
@@ -62,12 +64,12 @@ func cmdGlossary(args []string) {
 			fmt.Fprintln(os.Stderr, "usage: kb glossary show <term> [--scope <scope>]")
 			os.Exit(1)
 		}
-		if err := glossaryShow(scope, term, os.Stdout); err != nil {
+		if err := glossary.Show(scope, term, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "glossary show:", err)
 			os.Exit(1)
 		}
 	case "validate":
-		issues, err := glossaryValidate(scope)
+		issues, err := glossary.Validate(scope)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "glossary validate:", err)
 			os.Exit(1)

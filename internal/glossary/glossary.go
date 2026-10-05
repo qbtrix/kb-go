@@ -1,15 +1,14 @@
-// Domain glossary support (issue #15). Glossary articles are detected by source
-// path (parent directory named "glossary"), skip compilation, and round-trip
-// through the wiki verbatim: parseGlossarySource builds the WikiArticle straight
-// from the file's JSON frontmatter. Kind="glossary" distinguishes them from
-// module articles at search time (10x exact-Term/Alias boost in
-// search.BM25WithIndex).
+// Package glossary is kb's domain glossary support (issue #15). Glossary
+// articles are detected by source path (IsSource: parent directory named
+// "glossary"), skip compilation, and round-trip through the wiki verbatim:
+// ParseSource builds the WikiArticle straight from the file's JSON
+// frontmatter. Kind="glossary" distinguishes them from module articles at
+// search time (10x exact-Term/Alias boost in search.BM25WithIndex).
 //
-// glossaryList / glossaryShow / glossaryValidate are the programmatic API behind
-// `kb glossary`. Validate also reports cross-source contradictions (two sources
-// defining the same term differently) through detectContradictions.
-
-package main
+// List / Show / Validate are the programmatic API behind `kb glossary`.
+// Validate also reports cross-source contradictions (two sources defining
+// the same term differently) through contradiction.Detect.
+package glossary
 
 import (
 	"encoding/json"
@@ -20,12 +19,13 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/qbtrix/kb-go/internal/contradiction"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
-// isGlossarySource returns true when relPath's parent directory is named
+// IsSource returns true when relPath's parent directory is named
 // exactly "glossary". Used by the build pipeline to skip LLM compilation for
 // hand-curated glossary entries. Matches the test cases in glossary_test.go:
 //
@@ -36,7 +36,7 @@ import (
 //	glossary.md                  -> false   (file named glossary, no parent dir)
 //	glossaries/pocket.md         -> false   (plural, distinct dirname)
 //	""                           -> false
-func isGlossarySource(relPath string) bool {
+func IsSource(relPath string) bool {
 	if relPath == "" {
 		return false
 	}
@@ -44,7 +44,7 @@ func isGlossarySource(relPath string) bool {
 	return parent == "glossary"
 }
 
-// parseGlossarySource reads a hand-curated glossary .md file and constructs a
+// ParseSource reads a hand-curated glossary .md file and constructs a
 // WikiArticle directly from its frontmatter, preserving the body verbatim.
 // No LLM is involved. Returns an error if frontmatter is missing or malformed.
 //
@@ -58,7 +58,7 @@ func isGlossarySource(relPath string) bool {
 //
 // If the frontmatter omits "id", we derive it from the basename of relPath
 // minus its extension (e.g. "pocket.md" -> "pocket").
-func parseGlossarySource(raw []byte, relPath string) (*model.WikiArticle, error) {
+func ParseSource(raw []byte, relPath string) (*model.WikiArticle, error) {
 	text := string(raw)
 	if !strings.HasPrefix(text, "---") {
 		return nil, fmt.Errorf("glossary source %s: missing frontmatter (expected leading '---')", relPath)
@@ -128,9 +128,9 @@ func parseGlossarySource(raw []byte, relPath string) (*model.WikiArticle, error)
 
 // --- CLI ---
 
-// glossaryList writes a tab-aligned table of glossary entries to out. Returns
+// List writes a tab-aligned table of glossary entries to out. Returns
 // nil with a "no entries" line if the scope contains no glossary articles.
-func glossaryList(scope string, out io.Writer) error {
+func List(scope string, out io.Writer) error {
 	articles, err := store.ListArticles(scope)
 	if err != nil {
 		return err
@@ -168,10 +168,10 @@ func glossaryList(scope string, out io.Writer) error {
 	return tw.Flush()
 }
 
-// glossaryShow finds a glossary entry by Term or Alias (case-insensitive) and
+// Show finds a glossary entry by Term or Alias (case-insensitive) and
 // writes its body to out. Returns an error preserving the input term's casing
 // if no match is found.
-func glossaryShow(scope, term string, out io.Writer) error {
+func Show(scope, term string, out io.Writer) error {
 	articles, err := store.ListArticles(scope)
 	if err != nil {
 		return err
@@ -195,7 +195,7 @@ func glossaryShow(scope, term string, out io.Writer) error {
 	return fmt.Errorf("term %q not found in glossary", term)
 }
 
-// glossaryValidate inspects every glossary entry in the scope and returns a
+// Validate inspects every glossary entry in the scope and returns a
 // slice of human-readable issue strings. An empty slice + nil error means the
 // glossary is clean. Iteration is in stable ID order so error messages are
 // deterministic across runs.
@@ -205,7 +205,7 @@ func glossaryShow(scope, term string, out io.Writer) error {
 //  2. Duplicate alias across two articles (case-insensitive)
 //  3. Alias collides with another article's Term (case-insensitive)
 //  4. Dangling Related reference (no Term or alias resolves it)
-func glossaryValidate(scope string) ([]string, error) {
+func Validate(scope string) ([]string, error) {
 	articles, err := store.ListArticles(scope)
 	if err != nil {
 		return nil, err
@@ -317,8 +317,8 @@ func glossaryValidate(scope string) ([]string, error) {
 	// threshold by default — see contradiction.go. This is additive to the
 	// structural checks above; a duplicate-term collision can also be a
 	// contradiction, and both findings are reported.
-	for _, c := range detectContradictions(candidatesFromArticles(entries), ContradictionConfig{Mode: "strict"}) {
-		issues = append(issues, formatContradictionIssue(c))
+	for _, c := range contradiction.Detect(contradiction.CandidatesFromArticles(entries), contradiction.Config{Mode: "strict"}) {
+		issues = append(issues, contradiction.FormatIssue(c))
 	}
 
 	return issues, nil
