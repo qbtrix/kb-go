@@ -15,6 +15,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -157,10 +158,10 @@ func TestCmdDelete_RemovesArticleEverywhere(t *testing.T) {
 	}
 
 	// Categories: solo category dropped, shared category survives.
-	if contains(idx.Categories, "SoloCat") {
+	if slices.Contains(idx.Categories, "SoloCat") {
 		t.Errorf("solo category 'SoloCat' should be dropped: %v", idx.Categories)
 	}
-	if !contains(idx.Categories, "Backend") {
+	if !slices.Contains(idx.Categories, "Backend") {
 		t.Errorf("shared category 'Backend' should survive: %v", idx.Categories)
 	}
 

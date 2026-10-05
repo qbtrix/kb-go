@@ -21,6 +21,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -131,7 +132,7 @@ func TestIngestArticleJSONHappyPath(t *testing.T) {
 	if len(article.SourceDocs) != 1 || article.SourceDocs[0] != rawID {
 		t.Errorf("article.SourceDocs = %v, want [%s]", article.SourceDocs, rawID)
 	}
-	if !contains(article.Concepts, "sessions") {
+	if !slices.Contains(article.Concepts, "sessions") {
 		t.Errorf("concepts lost in save: %v", article.Concepts)
 	}
 

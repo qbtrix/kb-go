@@ -1,16 +1,15 @@
-// vsearch.go — Brute-force vector search for kb-go.
-// Cosine similarity over float32 slices + flat in-memory index with JSON persistence.
-// Sufficient for <100k vectors at sub-millisecond query latency.
-// For HNSW-scale search, use the zvec build tag (not yet implemented).
-//
-// This is the "level 2" retrieval layer: kb-go's BM25 handles keyword matching (level 1),
-// the concept graph handles entity lookup (level 0), and this handles dense similarity
-// when the other two miss. Vectors are supplied externally (embedding model is the caller's
-// concern — kb-go does not embed text itself).
+// Brute-force vector search: cosine similarity over float32 slices and a flat
+// in-memory index with JSON persistence, plus the loader for a query/embedding
+// vector file ({"vector": [...]} or a bare array). Sufficient for <100k vectors
+// at sub-millisecond query latency. Vectors are supplied externally: kb never
+// embeds text itself. This is the "level 2" retrieval layer next to BM25
+// (level 1) and the concept graph (level 0).
+
 package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"sort"
@@ -144,4 +143,39 @@ func CosineSimilarity(a, b []float32) float32 {
 		return 0
 	}
 	return float32(dot / (math.Sqrt(normA) * math.Sqrt(normB)))
+}
+
+// loadVectorFromFile parses a JSON file containing either:
+//   - {"vector": [0.1, -0.05, ...]}  (object form)
+//   - [0.1, -0.05, ...]              (bare-array form)
+//
+// Both encodings are accepted because callers come from heterogeneous sources
+// (Python embedding scripts, hand-written test fixtures, future SDK clients).
+// Returns the float32 slice or an error if the file is missing / unparseable
+// / empty.
+func loadVectorFromFile(path string) ([]float32, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		// os.ReadFile errors echo only the path, never file bytes — safe to keep.
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	// Try object form first: {"vector": [...]}
+	var asObj struct {
+		Vector []float32 `json:"vector"`
+	}
+	if err := json.Unmarshal(data, &asObj); err == nil && len(asObj.Vector) > 0 {
+		return asObj.Vector, nil
+	}
+	// Fall back to bare-array form: [...]. Do NOT wrap the json error (issue
+	// #23): encoding/json's messages embed the offending input bytes, which
+	// would echo file contents back to an agent over the MCP surface. A generic
+	// shape message is enough for a human to fix a hand-written fixture.
+	var asArr []float32
+	if err := json.Unmarshal(data, &asArr); err != nil {
+		return nil, fmt.Errorf("parse %s: not {\"vector\": [...]} or [...]", path)
+	}
+	if len(asArr) == 0 {
+		return nil, fmt.Errorf("parse %s: vector is empty", path)
+	}
+	return asArr, nil
 }

@@ -37,6 +37,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -98,18 +99,6 @@ type mcpServer struct {
 }
 
 // --- Entry point (wired into main's dispatch as `case "serve"`) ---
-
-func cmdServe(args []string) {
-	// --scope sets a default scope applied when a tool call omits one. Keeps
-	// single-tenant agents from repeating the scope on every call.
-	defaultScope := flagStr(args, "--scope", "default")
-
-	srv := newMCPServer(os.Stdin, os.Stdout, defaultScope)
-	if err := srv.serve(); err != nil && err != io.EOF {
-		fmt.Fprintf(os.Stderr, "Error: serve: %v\n", err)
-		os.Exit(1)
-	}
-}
 
 func newMCPServer(in io.Reader, out io.Writer, defaultScope string) *mcpServer {
 	s := &mcpServer{in: in, out: out, funcs: map[string]toolHandler{}}
@@ -451,7 +440,7 @@ func mcpSearch(c *articleCache, args map[string]any, defaultScope string) (any, 
 			skip := false
 			for _, tag := range excluded {
 				tag = strings.TrimSpace(tag)
-				if contains(a.Categories, tag) {
+				if slices.Contains(a.Categories, tag) {
 					skip = true
 					break
 				}

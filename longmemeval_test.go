@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -23,15 +24,15 @@ import (
 // --- LongMemEval data structures ---
 
 type LMEQuestion struct {
-	QuestionID        string          `json:"question_id"`
-	QuestionType      string          `json:"question_type"`
-	Question          string          `json:"question"`
-	Answer            json.RawMessage `json:"answer"`
-	QuestionDate      string          `json:"question_date"`
-	HaystackDates     []string        `json:"haystack_dates"`
-	HaystackSessionIDs []string       `json:"haystack_session_ids"`
-	HaystackSessions  [][]LMETurn    `json:"haystack_sessions"`
-	AnswerSessionIDs  []string        `json:"answer_session_ids"`
+	QuestionID         string          `json:"question_id"`
+	QuestionType       string          `json:"question_type"`
+	Question           string          `json:"question"`
+	Answer             json.RawMessage `json:"answer"`
+	QuestionDate       string          `json:"question_date"`
+	HaystackDates      []string        `json:"haystack_dates"`
+	HaystackSessionIDs []string        `json:"haystack_session_ids"`
+	HaystackSessions   [][]LMETurn     `json:"haystack_sessions"`
+	AnswerSessionIDs   []string        `json:"answer_session_ids"`
 }
 
 type LMETurn struct {
@@ -88,7 +89,7 @@ func bm25RankSessions(docs []string, docIDs []string, query string) []string {
 	for _, term := range queryTokens {
 		df := 0
 		for _, doc := range tokenizedDocs {
-			if containsStr(doc, term) {
+			if slices.Contains(doc, term) {
 				df++
 			}
 		}
@@ -151,7 +152,7 @@ func entityBoostedRank(docs []string, docIDs []string, query string) []string {
 	for _, term := range queryTokens {
 		df := 0
 		for _, doc := range tokenizedDocs {
-			if containsStr(doc, term) {
+			if slices.Contains(doc, term) {
 				df++
 			}
 		}
@@ -284,11 +285,11 @@ func TestLongMemEval_ExportRankings(t *testing.T) {
 	}
 
 	type QuestionRanking struct {
-		QuestionID  string   `json:"question_id"`
-		Question    string   `json:"question"`
-		QType       string   `json:"question_type"`
-		CorrectIDs  []string `json:"correct_ids"`
-		BM25Top15   []string `json:"bm25_top15"`
+		QuestionID  string            `json:"question_id"`
+		Question    string            `json:"question"`
+		QType       string            `json:"question_type"`
+		CorrectIDs  []string          `json:"correct_ids"`
+		BM25Top15   []string          `json:"bm25_top15"`
 		SessionDocs map[string]string `json:"session_docs"`
 	}
 
@@ -321,11 +322,11 @@ func TestLongMemEval_ExportRankings(t *testing.T) {
 		}
 
 		rankings = append(rankings, QuestionRanking{
-			QuestionID: q.QuestionID,
-			Question:   q.Question,
-			QType:      q.QuestionType,
-			CorrectIDs: q.AnswerSessionIDs,
-			BM25Top15:  top15,
+			QuestionID:  q.QuestionID,
+			Question:    q.Question,
+			QType:       q.QuestionType,
+			CorrectIDs:  q.AnswerSessionIDs,
+			BM25Top15:   top15,
 			SessionDocs: docMap,
 		})
 	}
@@ -350,7 +351,7 @@ func runBenchmark(t *testing.T, name string, questions []LMEQuestion, ranker ran
 	t.Helper()
 
 	ks := []int{1, 3, 5, 10}
-	hits := make(map[int]int) // k -> hit count
+	hits := make(map[int]int)                // k -> hit count
 	typeHits := make(map[string]map[int]int) // type -> k -> hits
 	typeCounts := make(map[string]int)
 
