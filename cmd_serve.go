@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/qbtrix/kb-go/internal/mcp"
 )
 
 func cmdServe(args []string) {
@@ -13,8 +15,8 @@ func cmdServe(args []string) {
 	// single-tenant agents from repeating the scope on every call.
 	defaultScope := flagStr(args, "--scope", "default")
 
-	srv := newMCPServer(os.Stdin, os.Stdout, defaultScope)
-	if err := srv.serve(); err != nil && err != io.EOF {
+	srv := mcp.NewServer(os.Stdin, os.Stdout, defaultScope)
+	if err := srv.Serve(); err != nil && err != io.EOF {
 		fmt.Fprintf(os.Stderr, "Error: serve: %v\n", err)
 		os.Exit(1)
 	}
