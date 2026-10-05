@@ -1,8 +1,8 @@
-// mcp_cache_test.go — Cross-process write correctness + cost of `kb serve`.
+// cache_test.go — Cross-process write correctness + cost of `kb serve`.
 //
 // The MCP server is long-lived while other processes (`kb ingest`, `build`,
 // `accept`, `recompile`, `delete`, `clear`, convo ingest) write the same scope.
-// These tests drive ONE mcpServer instance and interleave on-disk writes made
+// These tests drive ONE Server instance and interleave on-disk writes made
 // the way those commands make them, pinning that the very next tool call sees
 // every add / overwrite / delete / clear — including writes that touch only
 // wiki/*.md (convo ingest, category normalization) and an overwrite that keeps
@@ -13,16 +13,19 @@
 // BenchmarkMCPSearch measures per-call kb_search cost on a ~300-article scope
 // through the registered tool handler (no stdio framing), so before/after
 // numbers isolate the article-loading cost.
-package main
+package mcp
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
@@ -89,7 +92,7 @@ func backdateScope(t *testing.T, scope string, age time.Duration) {
 }
 
 // toolRows calls a registered tool handler directly and returns its rows.
-func toolRows(t *testing.T, srv *mcpServer, tool string, args map[string]any) []map[string]any {
+func toolRows(t *testing.T, srv *Server, tool string, args map[string]any) []map[string]any {
 	t.Helper()
 	out, err := srv.funcs[tool](args)
 	if err != nil {
@@ -102,7 +105,7 @@ func toolRows(t *testing.T, srv *mcpServer, tool string, args map[string]any) []
 	return rows
 }
 
-func searchIDs(t *testing.T, srv *mcpServer, scope, query string) []string {
+func searchIDs(t *testing.T, srv *Server, scope, query string) []string {
 	t.Helper()
 	var ids []string
 	for _, r := range toolRows(t, srv, "kb_search", map[string]any{"query": query, "scope": scope, "limit": 50}) {
@@ -112,7 +115,7 @@ func searchIDs(t *testing.T, srv *mcpServer, scope, query string) []string {
 }
 
 // listTitles maps id -> title from kb_list.
-func listTitles(t *testing.T, srv *mcpServer, scope string) map[string]string {
+func listTitles(t *testing.T, srv *Server, scope string) map[string]string {
 	t.Helper()
 	m := map[string]string{}
 	for _, r := range toolRows(t, srv, "kb_list", map[string]any{"scope": scope}) {
@@ -130,8 +133,8 @@ func hasID(ids []string, id string) bool {
 	return false
 }
 
-func newCacheTestServer(scope string) *mcpServer {
-	return newMCPServer(strings.NewReader(""), &strings.Builder{}, scope)
+func newCacheTestServer(scope string) *Server {
+	return NewServer(strings.NewReader(""), &strings.Builder{}, scope)
 }
 
 func TestMCPCacheSeesNewArticle(t *testing.T) {
@@ -255,11 +258,11 @@ func TestMCPCacheDropsDeleted(t *testing.T) {
 		t.Fatalf("search returned removed article alpha: %v", ids)
 	}
 
-	// `kb delete` (in-process, same code path as the CLI).
+	// `kb delete`, run as the real binary (another process, as in production).
 	if ids := searchIDs(t, srv, scope, "buffalo"); !hasID(ids, "beta") {
 		t.Fatalf("warm-up search missed beta: %v", ids)
 	}
-	cmdDelete([]string{"beta", "--scope", scope, "--json"})
+	kbExec(t, "delete", "beta", "--scope", scope, "--json")
 	if ids := searchIDs(t, srv, scope, "buffalo"); hasID(ids, "beta") {
 		t.Fatalf("search returned kb-deleted article beta: %v", ids)
 	}
@@ -278,7 +281,7 @@ func TestMCPCacheClearScope(t *testing.T) {
 	if ids := searchIDs(t, srv, scope, "gazelle"); !hasID(ids, "gamma") {
 		t.Fatalf("warm-up search missed gamma: %v", ids)
 	}
-	cmdClear([]string{"--scope", scope, "--json"})
+	kbExec(t, "clear", "--scope", scope, "--json")
 	if ids := searchIDs(t, srv, scope, "gazelle aardvark buffalo"); len(ids) != 0 {
 		t.Fatalf("search after clear returned %v", ids)
 	}
@@ -361,7 +364,7 @@ func seedBenchScope(b *testing.B, n int) string {
 
 func BenchmarkMCPSearch(b *testing.B) {
 	scope := seedBenchScope(b, 300)
-	srv := newMCPServer(strings.NewReader(""), &strings.Builder{}, scope)
+	srv := NewServer(strings.NewReader(""), &strings.Builder{}, scope)
 	h := srv.funcs["kb_search"]
 	queries := []string{"async database", "middleware routing", "cache queue handler", "encrypted storage"}
 	if _, err := h(map[string]any{"query": "warm", "scope": scope}); err != nil {
@@ -438,4 +441,59 @@ func TestMCPCacheSearchMatchesUncachedPath(t *testing.T) {
 	os.Remove(filepath.Join(store.ScopeDir(scope), "wiki", "a.md"))
 	cliRebuild(t, scope)
 	check("after remove + rebuild")
+}
+
+// kbExec runs the real kb binary against the same home, the way another
+// process mutates a scope while the server is running.
+func kbExec(t *testing.T, args ...string) {
+	t.Helper()
+	if out, err := exec.Command(kbtest.BuildBinary(t), args...).CombinedOutput(); err != nil {
+		t.Fatalf("kb %v: %v\n%s", args, err, out)
+	}
+}
+
+// generateCorpus creates n synthetic WikiArticles with realistic content.
+func generateCorpus(n int) []*model.WikiArticle {
+	rng := rand.New(rand.NewSource(42)) // deterministic
+	domains := []string{"authentication", "database", "routing", "middleware", "config",
+		"logging", "cache", "queue", "storage", "api", "service", "handler",
+		"model", "controller", "repository", "factory", "builder", "observer"}
+	adjectives := []string{"async", "distributed", "concurrent", "stateless", "encrypted",
+		"cached", "batched", "streaming", "reactive", "immutable"}
+
+	articles := make([]*model.WikiArticle, n)
+	for i := 0; i < n; i++ {
+		domain := domains[rng.Intn(len(domains))]
+		adj := adjectives[rng.Intn(len(adjectives))]
+		title := fmt.Sprintf("%s %s %d", adj, domain, i)
+
+		// Generate realistic content (50-200 words)
+		wordCount := 50 + rng.Intn(150)
+		words := make([]string, wordCount)
+		vocab := append(domains, adjectives...)
+		vocab = append(vocab, "the", "a", "an", "is", "are", "was", "with", "for",
+			"and", "or", "to", "from", "in", "on", "by", "this", "that",
+			"function", "class", "method", "struct", "interface", "type",
+			"returns", "handles", "processes", "manages", "creates", "deletes")
+		for j := range words {
+			words[j] = vocab[rng.Intn(len(vocab))]
+		}
+
+		concepts := []string{domain, adj}
+		if rng.Float64() > 0.5 {
+			concepts = append(concepts, domains[rng.Intn(len(domains))])
+		}
+
+		articles[i] = &model.WikiArticle{
+			ID:         textutil.Slugify(title),
+			Title:      title,
+			Summary:    fmt.Sprintf("Article about %s %s patterns", adj, domain),
+			Content:    strings.Join(words, " "),
+			Concepts:   concepts,
+			Categories: []string{domain},
+			WordCount:  wordCount,
+			Version:    1,
+		}
+	}
+	return articles
 }
