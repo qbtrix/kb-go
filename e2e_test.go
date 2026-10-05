@@ -28,6 +28,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/lint"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
@@ -379,9 +380,9 @@ func TestNormalizeCategoriesCLIJSONMode(t *testing.T) {
 	}
 
 	var payload struct {
-		Scope    string            `json:"scope"`
-		Applied  bool              `json:"applied"`
-		Clusters []categoryCluster `json:"clusters"`
+		Scope    string                 `json:"scope"`
+		Applied  bool                   `json:"applied"`
+		Clusters []lint.CategoryCluster `json:"clusters"`
 	}
 	if err := json.Unmarshal(out, &payload); err != nil {
 		t.Fatalf("json parse failed: %v\n%s", err, out)

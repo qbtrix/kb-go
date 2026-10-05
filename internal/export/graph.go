@@ -1,10 +1,9 @@
-// Concept-graph export core for `kb graph`: the whole-scope concept graph
-// (top concepts by article count, edges between concepts that share articles),
-// the one-hop neighbourhood of a concept or an article, and the mermaid and dot
-// renderers. The builders return errors instead of exiting; the command prints
-// them.
+// Concept-graph core for `kb graph`: the whole-scope concept graph (top
+// concepts by article count, edges between concepts that share articles), the
+// one-hop neighbourhood of a concept or an article, and the mermaid and dot
+// renderers.
 
-package main
+package export
 
 import (
 	"fmt"
@@ -15,21 +14,21 @@ import (
 	"github.com/qbtrix/kb-go/internal/store"
 )
 
-type graphNode struct {
+type Node struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Kind  string `json:"kind"` // "concept" or "article"
 	Size  int    `json:"size"` // article count for concepts, concept count for articles
 }
 
-type graphEdge struct {
+type Edge struct {
 	Source string `json:"source"`
 	Target string `json:"target"`
 	Weight int    `json:"weight"` // number of shared articles
 }
 
-// buildConceptGraph returns top N concepts + edges for co-occurring concepts.
-func buildConceptGraph(idx *model.KnowledgeIndex, limit, minArticles int) ([]graphNode, []graphEdge) {
+// ConceptGraph returns top N concepts + edges for co-occurring concepts.
+func ConceptGraph(idx *model.KnowledgeIndex, limit, minArticles int) ([]Node, []Edge) {
 	// Collect concepts with >= minArticles, sort by article count desc
 	type conceptStat struct {
 		name     string
@@ -49,11 +48,11 @@ func buildConceptGraph(idx *model.KnowledgeIndex, limit, minArticles int) ([]gra
 	}
 
 	// Build nodes
-	nodes := make([]graphNode, 0, len(stats))
+	nodes := make([]Node, 0, len(stats))
 	included := make(map[string]bool)
 	for i, s := range stats {
 		id := fmt.Sprintf("c%d", i)
-		nodes = append(nodes, graphNode{
+		nodes = append(nodes, Node{
 			ID:    id,
 			Label: s.name,
 			Kind:  "concept",
@@ -69,12 +68,12 @@ func buildConceptGraph(idx *model.KnowledgeIndex, limit, minArticles int) ([]gra
 		nameToID[n.Label] = fmt.Sprintf("c%d", i)
 	}
 
-	var edges []graphEdge
+	var edges []Edge
 	for i := 0; i < len(stats); i++ {
 		for j := i + 1; j < len(stats); j++ {
 			shared := countSharedArticles(stats[i].articles, stats[j].articles)
 			if shared > 0 {
-				edges = append(edges, graphEdge{
+				edges = append(edges, Edge{
 					Source: nameToID[stats[i].name],
 					Target: nameToID[stats[j].name],
 					Weight: shared,
@@ -85,10 +84,10 @@ func buildConceptGraph(idx *model.KnowledgeIndex, limit, minArticles int) ([]gra
 	return nodes, edges
 }
 
-// buildConceptSubgraph returns nodes and edges for a one-hop neighborhood
+// ConceptSubgraph returns nodes and edges for a one-hop neighborhood
 // around a focus concept: the concept, its articles, and other concepts
 // those articles contain. Errors when the concept is not in the index.
-func buildConceptSubgraph(idx *model.KnowledgeIndex, focus string) ([]graphNode, []graphEdge, error) {
+func ConceptSubgraph(idx *model.KnowledgeIndex, focus string) ([]Node, []Edge, error) {
 	c, ok := idx.Concepts[focus]
 	if !ok {
 		// Case-insensitive fallback
@@ -105,7 +104,7 @@ func buildConceptSubgraph(idx *model.KnowledgeIndex, focus string) ([]graphNode,
 		return nil, nil, fmt.Errorf("Concept not found: %s", focus)
 	}
 
-	nodes := []graphNode{{ID: "focus", Label: focus, Kind: "concept", Size: len(c.Articles)}}
+	nodes := []Node{{ID: "focus", Label: focus, Kind: "concept", Size: len(c.Articles)}}
 	articleNodes := make(map[string]string) // articleID -> nodeID
 	for i, articleID := range c.Articles {
 		nodeID := fmt.Sprintf("a%d", i)
@@ -117,7 +116,7 @@ func buildConceptSubgraph(idx *model.KnowledgeIndex, focus string) ([]graphNode,
 				}
 			}
 		}
-		nodes = append(nodes, graphNode{
+		nodes = append(nodes, Node{
 			ID:    nodeID,
 			Label: label,
 			Kind:  "article",
@@ -126,9 +125,9 @@ func buildConceptSubgraph(idx *model.KnowledgeIndex, focus string) ([]graphNode,
 		articleNodes[articleID] = nodeID
 	}
 
-	edges := make([]graphEdge, 0, len(c.Articles))
+	edges := make([]Edge, 0, len(c.Articles))
 	for _, nodeID := range articleNodes {
-		edges = append(edges, graphEdge{Source: "focus", Target: nodeID, Weight: 1})
+		edges = append(edges, Edge{Source: "focus", Target: nodeID, Weight: 1})
 	}
 
 	// Find related concepts (other concepts appearing in the same articles)
@@ -168,41 +167,41 @@ func buildConceptSubgraph(idx *model.KnowledgeIndex, focus string) ([]graphNode,
 	}
 	for i, r := range relStats {
 		nodeID := fmt.Sprintf("r%d", i)
-		nodes = append(nodes, graphNode{
+		nodes = append(nodes, Node{
 			ID:    nodeID,
 			Label: r.name,
 			Kind:  "concept",
 			Size:  r.overlap,
 		})
-		edges = append(edges, graphEdge{Source: "focus", Target: nodeID, Weight: r.overlap})
+		edges = append(edges, Edge{Source: "focus", Target: nodeID, Weight: r.overlap})
 	}
 
 	return nodes, edges, nil
 }
 
-// buildArticleSubgraph returns nodes for an article and its concepts.
+// ArticleSubgraph returns nodes for an article and its concepts.
 // Errors when the article cannot be loaded.
-func buildArticleSubgraph(idx *model.KnowledgeIndex, articleID string) ([]graphNode, []graphEdge, error) {
+func ArticleSubgraph(idx *model.KnowledgeIndex, articleID string) ([]Node, []Edge, error) {
 	article, err := store.LoadArticle(idx.Scope, articleID)
 	if err != nil || article == nil {
 		return nil, nil, fmt.Errorf("Article not found: %s", articleID)
 	}
 
-	nodes := []graphNode{{ID: "focus", Label: article.Title, Kind: "article", Size: len(article.Concepts)}}
-	edges := make([]graphEdge, 0, len(article.Concepts))
+	nodes := []Node{{ID: "focus", Label: article.Title, Kind: "article", Size: len(article.Concepts)}}
+	edges := make([]Edge, 0, len(article.Concepts))
 	for i, concept := range article.Concepts {
 		nodeID := fmt.Sprintf("c%d", i)
 		size := 1
 		if c, ok := idx.Concepts[concept]; ok {
 			size = len(c.Articles)
 		}
-		nodes = append(nodes, graphNode{
+		nodes = append(nodes, Node{
 			ID:    nodeID,
 			Label: concept,
 			Kind:  "concept",
 			Size:  size,
 		})
-		edges = append(edges, graphEdge{Source: "focus", Target: nodeID, Weight: 1})
+		edges = append(edges, Edge{Source: "focus", Target: nodeID, Weight: 1})
 	}
 	return nodes, edges, nil
 }
@@ -221,8 +220,8 @@ func countSharedArticles(a, b []string) int {
 	return n
 }
 
-// renderMermaid produces a Mermaid graph diagram from nodes and edges.
-func renderMermaid(nodes []graphNode, edges []graphEdge, focus string) string {
+// Mermaid produces a Mermaid graph diagram from nodes and edges.
+func Mermaid(nodes []Node, edges []Edge, focus string) string {
 	var sb strings.Builder
 	sb.WriteString("graph LR\n")
 	for _, n := range nodes {
@@ -249,8 +248,8 @@ func renderMermaid(nodes []graphNode, edges []graphEdge, focus string) string {
 	return sb.String()
 }
 
-// renderDot produces a Graphviz DOT graph from nodes and edges.
-func renderDot(nodes []graphNode, edges []graphEdge, focus string) string {
+// Dot produces a Graphviz DOT graph from nodes and edges.
+func Dot(nodes []Node, edges []Edge, focus string) string {
 	var sb strings.Builder
 	sb.WriteString("graph G {\n")
 	sb.WriteString("  rankdir=LR;\n")

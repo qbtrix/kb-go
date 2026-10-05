@@ -1,9 +1,10 @@
-// Knowledge-base lint: structural checks that need no LLM, and an LLM review
-// for inconsistencies, gaps, missing connections and stale articles. The LLM
-// review goes through the caller's --compiler hook (compile.go); kb itself
-// holds no LLM client.
-
-package main
+// Package lint checks a scope's health. Structural runs offline checks
+// (missing concepts, broken backlinks, an empty KB); LLM asks for a review of
+// inconsistencies, gaps, missing connections and stale articles through the
+// caller's --compiler hook (compile.Run), since kb itself holds no LLM
+// client. categories.go clusters category labels that differ only by casing,
+// whitespace or punctuation for `kb lint --normalize-categories`.
+package lint
 
 import (
 	"encoding/json"
@@ -18,7 +19,7 @@ import (
 
 // --- Structural Lint (no LLM) ---
 
-func lintStructural(scope string) []model.LintIssue {
+func Structural(scope string) []model.LintIssue {
 	articles, _ := store.ListArticles(scope)
 	idx := store.LoadIndex(scope)
 	var issues []model.LintIssue
@@ -154,9 +155,9 @@ Knowledge base:
 %s`, sb.String())
 }
 
-// lintWithHook runs the LLM review through the compiler hook and parses the
+// LLM runs the LLM review through the compiler hook and parses the
 // JSON array of issues it prints. Unparseable output is an error.
-func lintWithHook(scope string, spec compile.Spec) ([]model.LintIssue, error) {
+func LLM(scope string, spec compile.Spec) ([]model.LintIssue, error) {
 	articles, _ := store.ListArticles(scope)
 	if len(articles) == 0 {
 		return []model.LintIssue{{

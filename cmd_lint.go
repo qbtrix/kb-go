@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"github.com/qbtrix/kb-go/internal/compile"
+	"github.com/qbtrix/kb-go/internal/lint"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/store"
 )
@@ -38,12 +39,12 @@ func cmdLint(args []string) {
 	var issues []model.LintIssue
 
 	// Always run structural lint
-	issues = append(issues, lintStructural(scope)...)
+	issues = append(issues, lint.Structural(scope)...)
 
 	// Optionally run the LLM review through the hook. A failed review is
 	// loud: the structural issues are still printed, then kb exits 1.
 	if llmMode {
-		llmIssues, err := lintWithHook(scope, spec)
+		llmIssues, err := lint.LLM(scope, spec)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: LLM lint failed: %v\n", err)
 			printLintIssues(issues, jsonOut)
@@ -105,7 +106,7 @@ func runCategoryNormalize(scope string, apply, jsonOut bool) {
 		return
 	}
 
-	noisy, groups := clusterCategories(articles)
+	noisy, groups := lint.ClusterCategories(articles)
 
 	if jsonOut {
 		printJSON(map[string]any{
@@ -114,7 +115,7 @@ func runCategoryNormalize(scope string, apply, jsonOut bool) {
 			"applied":  apply,
 		})
 		if apply {
-			applyCategoryCanonical(scope, articles, noisy)
+			lint.ApplyCanonical(scope, articles, noisy)
 		}
 		return
 	}
@@ -151,9 +152,9 @@ func runCategoryNormalize(scope string, apply, jsonOut bool) {
 	}
 
 	if apply {
-		changed := applyCategoryCanonical(scope, articles, noisy)
+		changed := lint.ApplyCanonical(scope, articles, noisy)
 		fmt.Printf("Applied: rewrote %d article(s) to use canonical forms.\n", changed)
 	} else {
-		fmt.Printf("Dry run. Re-run with --apply to rewrite %d article(s).\n", affectedArticleCount(articles, noisy))
+		fmt.Printf("Dry run. Re-run with --apply to rewrite %d article(s).\n", lint.AffectedCount(articles, noisy))
 	}
 }

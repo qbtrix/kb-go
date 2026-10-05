@@ -6,7 +6,7 @@ Headless knowledge base engine. One Go binary, no frameworks: a thin root `packa
 
 - `main.go` — entry point, command dispatch, usage text, version; `flags.go` — minimal flag parsing; `compiler_flags.go` — `--compiler`/`--compiler-timeout` resolution and the exit-2 refusals
 - `cmd_<name>.go` — one file per command (`cmd_build.go`, `cmd_search.go`, `cmd_ingest.go`, `cmd_accept.go`, `cmd_graph.go`, `cmd_convo.go`, `cmd_glossary.go`, `cmd_serve.go`, …) with the helpers only that command uses; `helpers.go` — small CLI helpers
-- `internal/` — the library, one folder package per concern, layered (a package imports only lower layers): layer 0 `textutil`, `model`, `vector`; layer 1 `parse`, `compile`, `store`, `contradiction`, `convo`; layer 2 `search`, `glossary`; the rest still lives in the root `package main` while the split lands
+- `internal/` — the library, one folder package per concern, layered (a package imports only lower layers): layer 0 `textutil`, `model`, `vector`; layer 1 `parse`, `compile`, `store`, `contradiction`, `convo`; layer 2 `search`, `glossary`, `lint`, `export`; the rest still lives in the root `package main` while the split lands
   - `internal/search/` — Porter-stemmed `Tokenize`, `BM25`/`BM25WithIndex` with title/concept/glossary boosts, the persisted inverted `Index` (`BuildIndex`, `LoadOrHealIndex`, `IndexVersion`), `--context` excerpts (`FormatContext`, `ContextJSON`), `VectorSearch`/`HybridSearch` (RRF)
   - `internal/store/` — on-disk storage under `~/.knowledge-base/{scope}/` (raw/, wiki/, cache/, index.json, vectors.json): articles + frontmatter, raw docs, `IDRegistry` (same-title articles never overwrite each other), index, build cache, vector persistence; `ValidateID` guards every id that reaches a path
   - `internal/textutil/` — pure text helpers (`Slugify`, `ContentHash`, `WordCount`, `Truncate`, `NilToEmpty`), stdlib only
@@ -14,10 +14,12 @@ Headless knowledge base engine. One Go binary, no frameworks: a thin root `packa
   - `internal/compile/` — the `--compiler` hook: `Prompt`, `Run`, `Article` (one JSON article from the caller's command), `ParseUsage`, `UsageTotals`; `shell_{unix,windows}.go` — platform shell + process-tree kill
   - `internal/contradiction/` — offline cross-source definition contradiction detection (`Detect`, `CandidatesFromArticles`, `Finding`, `Config`, `FormatIssue`)
   - `internal/convo/` — conversation mode library: `ParseTranscript` (JSON, JSONL, plain text), `ExtractEntities`/`ExtractDecisions` (deterministic, no LLM), `ClusterTopics`, `GenerateArticles`
+  - `internal/export/` — `Wiki` (markdown wiki export) and the concept graph behind `kb graph` (`ConceptGraph`, `ConceptSubgraph`, `ArticleSubgraph`, `Mermaid`, `Dot`)
   - `internal/glossary/` — domain glossary: `IsSource`/`ParseSource` (skip-LLM verbatim passthrough) and `List`/`Show`/`Validate` behind `kb glossary`
+  - `internal/lint/` — `Structural` (offline) and `LLM` (review through the compiler hook) lint, plus category normalisation (`ClusterCategories`, `ApplyCanonical`)
   - `internal/parse/` — source structure extraction (`Code`, `Module`, `FormatContext`, `PromptBlock` for the compile prompt): Go via go/ast, Python and TypeScript/JS via regex
   - `internal/vector/` — flat cosine vector index (`Index`, `New`, `Load`, `Cosine`) and `LoadFile` for vector JSON files
-- `lint.go` — structural + LLM lint (via the hook); `lint_categories.go` — category normalisation; `export.go` — wiki export; `graph.go` — concept graph build + mermaid/dot render; `watch.go`, `scan.go`
+- `watch.go`, `scan.go` — watch mode and the build file scanner
 - `examples/compilers/` — ready-made compilers: `claude_code.py` (headless Claude Code, user's login), `openai_compatible.py` (LiteLLM proxy / LM Studio / Ollama)
 - `mcp.go` — `kb serve` MCP server
 - root `*_test.go` — tests for the code still in package main (`kb_test.go`, `mcp_test.go`, …); each internal package keeps its own tests; `compiler_test.go` — `--compiler` flag resolution, usage and version tests; `e2e_test.go` — tests that exec the built binary (hook through every command, exit-2 refusals, MCP-vs-CLI parity)
