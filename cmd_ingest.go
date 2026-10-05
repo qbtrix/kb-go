@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/parse"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
 
@@ -138,13 +139,13 @@ func ingestText(scope, source string, spec compilerSpec, lang, filePath, text st
 	}
 
 	// Parse AST if it's a code file
-	var codeMod *CodeModule
+	var codeMod *parse.Module
 	if filePath != "" {
-		codeMod = parseCode(filePath, text)
+		codeMod = parse.Code(filePath, text)
 	} else if lang != "" {
 		// Use --lang flag for stdin input (e.g., --lang go)
 		fakeFile := "stdin." + langToExt(lang)
-		codeMod = parseCode(fakeFile, text)
+		codeMod = parse.Code(fakeFile, text)
 	}
 
 	// Compile — ingest always uses non-terse mode (full documentation).
