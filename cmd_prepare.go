@@ -12,7 +12,6 @@ import (
 // cmdPrepare scans files and outputs compilation prompts as JSON.
 // Used in agent mode — the calling agent (Claude Code, Cursor, etc.)
 // processes each prompt using its own LLM, then pipes results to `kb accept`.
-// No API key needed.
 func cmdPrepare(args []string) {
 	if len(args) < 1 {
 		fatal("Usage: kb prepare <path> [--scope NAME] [--pattern GLOB] [--exclude GLOB]")
@@ -103,14 +102,8 @@ func cmdPrepare(args []string) {
 		}
 		saveRawDoc(scope, raw)
 
-		// Build the same prompt compileLLM would use — shared helper keeps them in sync.
-		codeMod := parseCode(f, string(text))
-		var contextBlock string
-		if codeMod != nil {
-			contextBlock = fmt.Sprintf("\nAST-extracted structure:\n```\n%s```\n\n", formatCodeContext(codeMod))
-		}
-
-		prompt := buildCompilePrompt(relPath, contextBlock, string(text), terse)
+		// Build the same prompt the --compiler hook gets — shared helpers keep them in sync.
+		prompt := buildCompilePrompt(relPath, codeContextBlock(parseCode(f, string(text))), string(text), terse)
 
 		items = append(items, prepareItem{
 			Source:  relPath,

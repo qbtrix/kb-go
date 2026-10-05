@@ -1,4 +1,6 @@
-// Implements `kb recompile`.
+// Implements `kb recompile`: re-reads an article's raw docs and compiles them
+// again through the --compiler hook (required; exit 2 without one). A failed
+// compile leaves that article untouched and makes the command exit 1.
 
 package main
 
@@ -10,15 +12,15 @@ import (
 
 func cmdRecompile(args []string) {
 	if len(args) < 1 {
-		fatal("Usage: kb recompile <article_id|--all> [--scope NAME] [--model MODEL]")
+		fatal("Usage: kb recompile <article_id|--all> [--scope NAME] --compiler \"<command>\"")
 	}
 
 	scope := flagStr(args, "--scope", "default")
-	model := flagStr(args, "--model", defaultModel)
 	jsonOut := flagBool(args, "--json")
 	terse := flagBool(args, "--terse")
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	recompileAll := flagBool(args, "--all") || args[0] == "--all"
+	spec := mustCompilerFromArgs(args)
+	requireCompiler(spec, "recompile", "")
 
 	var targets []*WikiArticle
 	if recompileAll {
@@ -32,7 +34,7 @@ func cmdRecompile(args []string) {
 		targets = []*WikiArticle{a}
 	}
 
-	var recompiled int
+	var recompiled, failed int
 	for _, a := range targets {
 		// Load raw source docs
 		var texts []string
@@ -54,9 +56,10 @@ func cmdRecompile(args []string) {
 			fmt.Printf("Recompiling: %s\n", a.Title)
 		}
 
-		newArticle, _, err := compileLLM(combined, source, model, apiKey, nil, terse)
+		newArticle, err := compileWithHook(spec, combined, source, nil, terse)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: recompilation failed for %s: %v\n", a.ID, err)
+			fmt.Fprintf(os.Stderr, "Error: recompile failed for %s: %v\n", a.ID, err)
+			failed++
 			continue
 		}
 
@@ -75,8 +78,11 @@ func cmdRecompile(args []string) {
 	saveSearchIndex(scope, buildSearchIndex(allArticles))
 
 	if jsonOut {
-		printJSON(map[string]any{"recompiled": recompiled, "total": len(targets)})
+		printJSON(map[string]any{"recompiled": recompiled, "failed": failed, "total": len(targets)})
 	} else {
 		fmt.Printf("Recompiled: %d / %d articles\n", recompiled, len(targets))
+	}
+	if failed > 0 {
+		os.Exit(1)
 	}
 }

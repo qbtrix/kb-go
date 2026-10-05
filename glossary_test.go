@@ -144,7 +144,7 @@ func TestIsGlossarySource(t *testing.T) {
 		{"docs/glossary/soul.md", true},
 		{"docs/wiki/glossary/ripple.md", true},
 		{"src/pocket.go", false},
-		{"glossary.md", false},        // not inside a glossary/ dir
+		{"glossary.md", false},          // not inside a glossary/ dir
 		{"glossaries/pocket.md", false}, // plural — distinct dirname
 		{"", false},
 	}
@@ -161,11 +161,10 @@ func TestIsGlossarySource(t *testing.T) {
 // TODO: passes after glossary feature lands
 func TestGlossaryBuildPreservesBodyVerbatim(t *testing.T) {
 	// Use the binary subprocess pattern (matches TestNormalizeCategoriesCLI* in
-	// kb_test.go). With ANTHROPIC_API_KEY explicitly cleared, the LLM call path
-	// would fall back to copying raw text — so the fallback alone can't satisfy
-	// this test. The implementer MUST add a glossary-specific branch in cmdBuild
-	// that parses the frontmatter and populates Kind/Term/Aliases/Category/Related
-	// from the source file. Only then does this test pass.
+	// kb_test.go). With no compiler configured, a build that needed one would
+	// refuse (exit 2) — so this passes only because cmdBuild's glossary branch
+	// parses the frontmatter and populates Kind/Term/Aliases/Category/Related
+	// from the source file without compiling.
 	srcRoot := t.TempDir()
 	glossaryDir := filepath.Join(srcRoot, "glossary")
 	if err := os.MkdirAll(glossaryDir, 0o755); err != nil {
@@ -199,10 +198,9 @@ A Pocket is a workspace container. ` + marker + ` lives in this body.`
 
 	binary := buildTestBinary(t)
 	cmd := exec.Command(binary, "build", srcRoot, "--scope", scope, "--pattern", "*.md")
-	// Deliberately clear ANTHROPIC_API_KEY so any code path that reaches the
-	// LLM compile step would fail or fall back. The glossary branch must
-	// bypass the LLM entirely.
-	cmd.Env = append(os.Environ(), "ANTHROPIC_API_KEY=")
+	// Deliberately clear KB_COMPILER: the glossary branch must bypass the
+	// compiler entirely.
+	cmd.Env = append(os.Environ(), "KB_COMPILER=")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("kb build failed: %v\noutput: %s", err, out)
@@ -582,8 +580,8 @@ func containsIssue(issues []string, needle string) bool {
 // and the contract conversation surfaces in code review rather than a buried
 // runtime mismatch.
 var (
-	_ func(string, io.Writer) error             = glossaryList
-	_ func(string, string, io.Writer) error     = glossaryShow
-	_ func(string) ([]string, error)            = glossaryValidate
-	_ func(string) bool                         = isGlossarySource
+	_ func(string, io.Writer) error         = glossaryList
+	_ func(string, string, io.Writer) error = glossaryShow
+	_ func(string) ([]string, error)        = glossaryValidate
+	_ func(string) bool                     = isGlossarySource
 )

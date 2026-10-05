@@ -48,6 +48,10 @@ type WikiArticle struct {
 	Aliases  []string `json:"aliases,omitempty"`  // glossary: alternative names
 	Category string   `json:"category,omitempty"` // glossary: single category (distinct from Categories []string)
 	Related  []string `json:"related,omitempty"`  // glossary: refs to other terms/aliases
+	// Usage is the optional spend record reported by whoever compiled the
+	// article (compiler hook, accept, ingest --article-json). nil on articles
+	// that never reported one, including every pre-v0.4 article.
+	Usage *ArticleUsage `json:"usage,omitempty"`
 }
 
 // Frontmatter is the JSON block at the top of .md files.
@@ -73,6 +77,8 @@ type Frontmatter struct {
 	Aliases  []string `json:"aliases,omitempty"`
 	Category string   `json:"category,omitempty"`
 	Related  []string `json:"related,omitempty"`
+	// Compile spend: mirrors WikiArticle.Usage; omitted when absent.
+	Usage *ArticleUsage `json:"usage,omitempty"`
 }
 
 type Concept struct {

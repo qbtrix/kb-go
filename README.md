@@ -69,7 +69,7 @@ RAG is better for fuzzy semantic matching over huge unstructured text where you 
 
 ## Numbers
 
-Real codebases, `claude-haiku-4-5-20251001`. Not synthetic benchmarks.
+Real codebases, compiled by `claude-haiku-4-5-20251001`. Not synthetic benchmarks. These were measured when kb still called the Anthropic API itself (before v0.4). Since v0.4 the same prompt goes through your own compiler, so build time and cost depend on the model and endpoint you pick; [Compiling articles](#compiling-articles) has measured numbers for each recipe.
 
 ### Build speed
 
@@ -125,7 +125,7 @@ Full benchmark harness and error analysis in [`benchmarks/longmemeval/`](benchma
 
 ### Raw throughput
 
-Offline, Apple M2 Pro. No API key needed to reproduce.
+Offline, Apple M2 Pro. No model needed to reproduce.
 
 | Operation | Speed |
 |-----------|-------|
@@ -167,16 +167,19 @@ git clone https://github.com/qbtrix/kb-go && cd kb-go && go build -o kb .
 
 Binaries for macOS and Linux (ARM and x86) on the [releases page](https://github.com/qbtrix/kb-go/releases).
 
-For standalone use, you need an Anthropic API key:
-```bash
-export ANTHROPIC_API_KEY="sk-..."
-```
+kb has no LLM client and never reads an API key. You bring the model, one of two ways:
 
-Running inside an AI agent (Claude Code, Cursor, Codex)? Use [agent mode](#agent-mode) instead — no API key needed.
+- **A compiler command.** `--compiler "<command>"` (or `KB_COMPILER`): kb pipes each prompt into the command and reads one JSON article back. Use your Claude Code login, a LiteLLM proxy, LM Studio, Ollama, or anything else. See [Compiling articles](#compiling-articles).
+- **Your agent.** Running inside Claude Code, Cursor or Codex? Use [agent mode](#agent-mode-explained): `kb prepare` hands out the prompts, the agent writes the articles, `kb accept` stores them.
+
+Search, show, list, stats, structural lint, glossary and `kb serve` never need a model.
 
 ## Quick start
 
 ```bash
+# Pick a compiler once (recipes below), e.g. your Claude Code login
+export KB_COMPILER="python examples/compilers/claude_code.py"
+
 # Build a wiki from a codebase
 kb build ./src --scope myapp --pattern "*.go,*.py,*.ts"
 
@@ -191,11 +194,102 @@ kb build ./src --scope myapp --output docs/wiki/
 
 # Watch for changes
 kb watch ./src --scope myapp --pattern "*.go"
+
+# See what compiling cost (when the compiler reports usage)
+kb stats --scope myapp
+```
+
+## Compiling articles
+
+kb builds the prompt; something else runs the model. That keeps spend on the caller's own metered, observable path: PocketPaw's agent backend, a LiteLLM gateway with budgets and logs, or one person's Claude Code login. kb itself has no Anthropic client, no API key and no `--model` flag.
+
+### The compiler contract
+
+`--compiler "<command>"` (or the `KB_COMPILER` environment variable; the flag wins) is used by `build`, `ingest`, `recompile`, `watch` and `lint --llm`. For each item kb:
+
+1. runs the command through the platform shell: `sh -c "<command>"` on Linux/macOS, `cmd /S /C "<command>"` on Windows. Write the command exactly as you would type it in that shell. On Windows, `"` quotes work and `'` does not; run a POSIX script there through `bash script.sh`, or use `python script.py`;
+2. writes the prompt to the command's stdin;
+3. reads stdout and parses **one JSON object**: `title`, `summary`, `content`, `concepts`, `categories`, plus optional `compiled_with` and `usage`. Markdown code fences and a stray line around the object are tolerated.
+
+The command's stderr is passed through, prefixed with `[compiler <source>]`. Each run has a timeout (`--compiler-timeout`, default `300s`; accepts `90s`, `2m` or plain seconds); on timeout kb kills the command's whole process tree. `--concurrency N` (default 5) runs that many at once during `build`.
+
+A non-zero exit, a timeout, or output without a title and content fails that item loudly: an `Error:` line on stderr naming the source, no article, no cache entry (the next build retries it), and exit code 1 once the rest of the build is saved. kb never stores the raw text as the article in its place. The only verbatim path is the explicit `kb ingest --allow-fallback`.
+
+Glossary files and unchanged (cached) files need no compiler, so `kb build` only asks for one when something actually needs compiling.
+
+### Usage metadata
+
+A compiler, `kb accept`, or `kb ingest --article-json` can report what an article cost:
+
+```json
+{"title": "...", "summary": "...", "content": "...", "concepts": [], "categories": [],
+ "usage": {"model": "claude-haiku-4-5-20251001", "input_tokens": 931, "output_tokens": 526, "cost_usd": 0.0036}}
+```
+
+Every field is optional and unknown keys are ignored. kb stores it in the article frontmatter as `usage`, uses `usage.model` as `compiled_with` when you didn't send one (a compiler without either is recorded as `compiler:<first word of the command>`), and replaces it when the article is recompiled or re-accepted. `kb stats` adds the totals when any article has usage:
+
+```
+  Compile usage (3 articles): 2364 input + 1295 output tokens, $0.0088
+```
+
+`kb stats --json` carries the same numbers under `"usage": {"articles", "input_tokens", "output_tokens", "cost_usd"}`. `kb build --json` keeps its `input_tokens` / `output_tokens` / `total_tokens` fields, summed from what the compiler reported, and adds `failed`.
+
+### Recipe: headless Claude Code (your Claude login, no API key)
+
+For one person on their own machine; it bills to your Claude plan. The flags strip everything a compile doesn't need: no tools, no MCP servers, no CLAUDE.md, skills or user settings (which can switch on an advisor model), no extended thinking, no saved session.
+
+```bash
+kb build ./docs --scope docs --pattern "*.md" --terse --compiler 'claude -p --safe-mode --setting-sources "" --strict-mcp-config --tools "" --settings "{\"alwaysThinkingEnabled\":false}" --no-session-persistence --model haiku --system-prompt "You are a knowledge compiler. Output only valid JSON. No markdown fences."'
+```
+
+The inner command (everything inside the single quotes) is shell-neutral: it runs unchanged under `sh -c` and `cmd /S /C`. Tested on Windows with Claude Code 2.1.289.
+
+That one-liner records `compiled_with: compiler:claude` and no usage. For per-article tokens and cost, use the wrapper, which runs the same flags with `--output-format json` and maps Claude Code's usage block (input includes cache reads and writes) into `usage`:
+
+```bash
+kb build ./docs --scope docs --pattern "*.md" --terse --compiler "python examples/compilers/claude_code.py"
+# KB_COMPILE_MODEL=sonnet to change the model; CLAUDE_BIN to point at another claude binary
+```
+
+Measured on three small C4 docs (0.3 to 2.5 KB) with `--terse` and Haiku 4.5, one at a time: 488 to 945 input tokens, 361 to 526 output tokens, about 6 s and $0.002 to $0.004 per doc. The same three in parallel (default concurrency) took 7.5 s. Drop `--safe-mode --setting-sources ""` and a call made inside a repo picks up its CLAUDE.md (about 8K extra input tokens per call in our workspace) plus any advisor model from your settings (one call went from $0.003 to $0.19).
+
+### Recipe: LiteLLM proxy or any OpenAI-compatible endpoint
+
+[`examples/compilers/openai_compatible.py`](examples/compilers/openai_compatible.py) (Python 3.8+, standard library only) posts the prompt to `$OPENAI_BASE_URL/chat/completions` and prints the article with `usage` filled from the response. Behind a LiteLLM proxy, `cost_usd` comes from its `x-litellm-response-cost` header; elsewhere set `KB_COMPILE_COST_IN` / `KB_COMPILE_COST_OUT` (USD per million tokens) if you want a cost.
+
+```bash
+export OPENAI_BASE_URL=http://localhost:4000/v1     # your LiteLLM proxy
+export OPENAI_API_KEY=sk-litellm-virtual-key        # optional bearer token
+export KB_COMPILE_MODEL=claude-haiku                 # a model name the proxy knows
+kb build ./src --scope myapp --pattern "*.go" --compiler "python examples/compilers/openai_compatible.py"
+```
+
+Tested against LM Studio's OpenAI-compatible server (`OPENAI_BASE_URL=http://localhost:1234/v1`, `KB_COMPILE_MODEL=zai-org/glm-4.6v-flash` on a local GPU): three docs compiled, about 26 s per doc, 1,454 input and 3,323 output tokens in total (the output count includes the model's reasoning), no cost reported. The bearer token and the LiteLLM cost header were checked against a stub proxy.
+
+### Recipe: Ollama
+
+The same script, pointed at Ollama's OpenAI-compatible endpoint (untested here):
+
+```bash
+export OPENAI_BASE_URL=http://localhost:11434/v1 KB_COMPILE_MODEL=llama3.1:8b
+kb build ./src --scope myapp --pattern "*.py" --compiler "python examples/compilers/openai_compatible.py"
+```
+
+Small local models often break the JSON contract. kb fails those items loudly and retries them on the next build, so watch stderr.
+
+### Recipe: inside a Claude Code (or any agent) conversation
+
+No compiler at all: the agent you are already talking to writes the articles. See [Agent mode explained](#agent-mode-explained).
+
+```bash
+kb prepare ./src --scope myapp --pattern "*.go" --terse > prompts.json   # prompts, nothing compiled
+# the agent answers each item's "prompt" with the article JSON
+echo '{"scope":"myapp","articles":[...]}' | kb accept --scope myapp       # optional "usage" per article
 ```
 
 ## Use with AI agents
 
-kb works in two modes: search an existing wiki, or build the wiki using the agent's own LLM (no API key).
+kb works in two modes: search an existing wiki, or build the wiki using the agent's own LLM (no compiler needed).
 
 ### Claude Code
 
@@ -221,7 +315,7 @@ This project has a knowledge base. Use it before reading raw files.
 kb search "<topic>" --scope myapp --context
 \`\`\`
 
-### Build wiki (agent mode, no API key)
+### Build wiki (agent mode)
 To build or update the wiki, use agent mode:
 1. Run `kb prepare ./src --scope myapp --pattern "*.go,*.py,*.ts" --json`
 2. For each item in the output, process the `prompt` field yourself
@@ -267,7 +361,7 @@ Add to `.cursorrules`:
 ```
 This project has a knowledge base. Before searching files, run:
   kb search "<topic>" --scope myapp --context
-To build/update the wiki without an API key, use agent mode:
+To build/update the wiki with your own model, use agent mode:
   kb prepare ./src --scope myapp --pattern "*.go" --json
   Then compile each prompt and pipe results to: kb accept --scope myapp
 ```
@@ -278,7 +372,7 @@ If the agent can run shell commands, the same pattern applies. `kb search "topic
 
 ### Agent mode explained
 
-If kb is running inside an agent, the agent already has LLM access. A separate API call means paying twice and managing another key. Agent mode avoids that by splitting the build into two steps:
+If kb is running inside an agent, the agent already has LLM access. Agent mode lets it do the compiling by splitting the build into two steps:
 
 ```bash
 # Step 1: Scan files, check cache, output prompts (no LLM call)
@@ -295,7 +389,7 @@ echo '<json>' | kb accept --scope myapp
 
 `accept` reads JSON from stdin. It accepts a wrapped object `{"scope":"...","articles":[...]}`, a bare array `[{...}]`, or a single article `{...}`.
 
-Each article needs: `source`, `hash`, `raw_id` (from prepare output), plus `title`, `summary`, `content`, `concepts`, `categories` (from your LLM compilation).
+Each article needs: `source`, `hash`, `raw_id` (from prepare output), plus `title`, `summary`, `content`, `concepts`, `categories` (from your LLM compilation). Optional: `compiled_with` and `usage` (see [Usage metadata](#usage-metadata)).
 
 Cache works across both modes. Run `prepare` again and unchanged files are skipped.
 
@@ -538,18 +632,18 @@ The bridge is thin by design. Any agent pipeline can wire them together in ~20 l
 
 | Command | Description |
 |---------|-------------|
-| `kb build <path>` | Scan, parse AST, compile with LLM, build wiki |
+| `kb build <path>` | Scan, parse AST, compile pending files with `--compiler`, build wiki. Exits 2 without a compiler when something needs compiling, 1 if any file failed to compile |
 | `kb prepare <path>` | Output compilation prompts as JSON (agent mode) |
 | `kb accept` | Read compiled articles from stdin (agent mode) |
 | `kb graph` | Export concept graph (mermaid, dot, or json) |
 | `kb search <query>` | BM25 search over articles |
-| `kb ingest [file]` | Ingest a file or piped stdin. Fails (exit 1) if LLM compilation fails — the raw doc is kept, no article is written. `--allow-fallback` stores the raw text verbatim as an article instead. `--article-json` reads `{"raw_text", "article"}` from stdin so an external caller supplies the compiled article (no API key needed) |
+| `kb ingest [file]` | Ingest a file or piped stdin, compiled with `--compiler`. Fails (exit 1) if the compile fails — the raw doc is kept, no article is written. `--allow-fallback` stores the raw text verbatim instead (no compiler needed). `--article-json` reads `{"raw_text", "article"}` from stdin so the caller supplies the compiled article. Exits 2 with none of these |
 | `kb show <id>` | Print a full article |
 | `kb list` | List all articles |
-| `kb stats` | Counts for articles, concepts, words |
-| `kb lint` | Structural checks; `--llm` for deep LLM check; `--normalize-categories [--apply]` to collapse variant labels ("CLI"/"cli") into one |
-| `kb recompile <id>` | Recompile from raw source (`--all` for everything) |
-| `kb watch <path>` | Auto-rebuild on file changes |
+| `kb stats` | Counts for articles, concepts, words, plus compile usage totals when reported |
+| `kb lint` | Structural checks; `--llm` for an LLM review through `--compiler`; `--normalize-categories [--apply]` to collapse variant labels ("CLI"/"cli") into one |
+| `kb recompile <id>` | Recompile from raw source with `--compiler` (`--all` for everything) |
+| `kb watch <path>` | Auto-rebuild on file changes (needs `--compiler`) |
 | `kb convo ingest <file>` | Parse a conversation transcript, extract entities/decisions/topics, create wiki articles |
 | `kb convo search <query>` | Search conversation articles |
 | `kb convo list` | List conversation articles |
@@ -557,6 +651,7 @@ The bridge is thin by design. Any agent pipeline can wire them together in ~20 l
 | `kb glossary show <term>` | Print a glossary entry's body (matches Term or Alias, case-insensitive) |
 | `kb glossary validate` | Check for duplicate terms, alias collisions, dangling references, and cross-source contradictions |
 | `kb clear` | Wipe all data for a scope |
+| `kb version` | Module version (`go install …@vX`), or `dev` plus the VCS revision for local builds |
 
 ## Flags
 
@@ -564,14 +659,15 @@ The bridge is thin by design. Any agent pipeline can wire them together in ~20 l
 |------|---------|-------------|
 | `--scope` | `default` | Scope name, for multi-tenant use |
 | `--json` | off | JSON output |
-| `--model` | `claude-haiku-4-5-20251001` | Model for compilation |
+| `--compiler` | `$KB_COMPILER` | Command that compiles one article (prompt on stdin, JSON article on stdout). See [Compiling articles](#compiling-articles) |
+| `--compiler-timeout` | `300s` | Per-item compiler timeout (`90s`, `2m`, or seconds) |
 | `--pattern` | `*.py` | File patterns, comma-separated |
-| `--concurrency` | `5` | Parallel compilations |
+| `--concurrency` | `5` | Parallel compiler runs |
 | `--output` | | Export wiki to directory |
 | `--contradiction-mode` | `strict` | Glossary contradiction threshold on `kb build`: `strict`, `loose`, or `off` |
 | `--lang` | auto | Language for stdin ingest |
-| `--allow-fallback` | off | On `kb ingest`: if LLM compilation fails, store the raw text verbatim as an article instead of failing |
-| `--article-json` | off | On `kb ingest`: read `{"raw_text": "...", "article": {"title", "summary", "content", "concepts", "categories", "source", "compiled_with"}}` from stdin; kb saves raw doc + article without calling the LLM |
+| `--allow-fallback` | off | On `kb ingest`: store the raw text verbatim as an article when there is no compiler or the compile fails |
+| `--article-json` | off | On `kb ingest`: read `{"raw_text": "...", "article": {"title", "summary", "content", "concepts", "categories", "source", "compiled_with", "usage"}}` from stdin; kb saves raw doc + article, no compiler involved |
 
 ## AST parsing
 
@@ -590,7 +686,7 @@ Source (any text)
     ↓
 AST parse if code (Go: go/ast, Python: regex, TS: regex)
     ↓
-LLM compile (Anthropic API, 5 concurrent)
+Compile: your --compiler command (5 concurrent), or your agent via prepare/accept
     ↓
 Wiki article (markdown + JSON frontmatter)
     ↓
@@ -615,8 +711,8 @@ One `package main`, split by concern: [`main.go`](main.go) (dispatch), one `cmd_
 | AST parsers | 400 | Go (stdlib), Python (regex), TypeScript (regex) |
 | Storage | 200 | File CRUD, markdown with JSON frontmatter |
 | BM25 search | 100 | Weighted scoring from an inverted postings index |
-| LLM compilation | 100 | Direct HTTP to Anthropic API, no SDK |
-| Lint | 150 | Structural checks and LLM analysis |
+| Compilation | 300 | Prompt building and the `--compiler` hook (platform shell, timeout, one-JSON-article parsing, usage). No LLM client |
+| Lint | 150 | Structural checks and an LLM review through the hook |
 | CLI | 400 | Commands, flags, JSON output |
 | Watch | 80 | fsnotify, 3s debounce |
 
@@ -627,7 +723,7 @@ One `package main`, split by concern: [`main.go`](main.go) (dispatch), one `cmd_
 ```bash
 go test -v ./...       # Unit tests
 go test -bench=. ./... # Benchmarks
-./bench.sh small       # Full pipeline (needs API key)
+./bench.sh small       # Full pipeline (needs KB_COMPILER)
 ```
 
 ### Coverage
@@ -662,7 +758,7 @@ examples/
 │   ├── python/         service, models, utils
 │   └── typescript/     api, types
 ├── golden/             Expected search results and concept extraction
-├── output/             Pre-built wiki (browse without an API key)
+├── output/             Pre-built wiki (browse without compiling anything)
 ├── fetch.sh            Download litestream + flask for benchmarking
 └── README.md
 ```

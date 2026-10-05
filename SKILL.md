@@ -1,10 +1,10 @@
 ---
 name: kb
 description: Build searchable knowledge bases from any source — codebases, docs, markdown, text. LLM-compiled articles with BM25 search. No embeddings, no vectors. Use when the user needs to build, search, ingest, or manage a knowledge base.
-compatibility: Requires Go 1.21+ or pre-built kb binary. ANTHROPIC_API_KEY env var for LLM compilation.
+compatibility: Requires Go 1.25+ or a pre-built kb binary. kb has no LLM client; compile with your own agent (prepare/accept) or a --compiler command (KB_COMPILER).
 metadata:
   author: qbtrix
-  version: 0.1.0
+  version: 0.4.0
   tags: knowledge-base search bm25 llm documentation
 ---
 
@@ -21,21 +21,29 @@ go install github.com/qbtrix/kb-go@latest
 # Or build locally
 git clone https://github.com/qbtrix/kb-go && cd kb-go && go build -o kb .
 
-# Set your API key
-export ANTHROPIC_API_KEY="sk-..."
+# Optional: a compiler for standalone builds (kb pipes each prompt to it and
+# reads one JSON article back). Inside an agent, use Agent Mode instead.
+export KB_COMPILER="python /path/to/kb-go/examples/compilers/claude_code.py"
 ```
+
+kb never calls an LLM itself and reads no API key. Builds need either Agent
+Mode (`kb prepare` → you compile → `kb accept`, below) or a compiler command
+(`--compiler "<cmd>"` / `KB_COMPILER`). Search, show, list, stats, structural
+lint and glossary commands need neither.
 
 ## Commands
 
 ### Build a knowledge base from a codebase
 
-Scans files, compiles each with LLM into a structured article, indexes concepts and backlinks. Uses SHA256 content hashing — unchanged files are skipped on subsequent builds.
+Scans files, compiles each through the compiler command into a structured article, indexes concepts and backlinks. Uses SHA256 content hashing — unchanged files are skipped on subsequent builds. Without a compiler, `kb build` exits 2 when anything needs compiling; inside an agent, use Agent Mode (below) instead.
 
 ```bash
-kb build ./src/myproject --scope myproject
-kb build ./src/myproject --scope myproject --pattern "*.go"
-kb build ./src/ --scope myapp --model claude-haiku-4-5-20251001
+kb build ./src/myproject --scope myproject --compiler "python examples/compilers/claude_code.py"
+kb build ./src/myproject --scope myproject --pattern "*.go"      # with KB_COMPILER set
+kb build ./src/ --scope myapp --compiler-timeout 120s --concurrency 3
 ```
+
+A file whose compile fails (non-zero exit, timeout, output that isn't one JSON article) gets no article, is retried on the next build, and makes the command exit 1. The raw text is never stored as the article.
 
 ### Search the knowledge base
 
@@ -64,14 +72,15 @@ echo "extracted text here" | kb ingest --scope myproject --source "https://docs.
 cat README.md | kb ingest --scope myproject --source "readme"
 ```
 
-If LLM compilation fails (e.g. no `ANTHROPIC_API_KEY`), ingest keeps the raw
-doc but writes NO article and exits 1. Two ways forward:
+Ingest compiles through `--compiler` / `KB_COMPILER`. Without one it exits 2;
+if the compile fails it keeps the raw doc but writes NO article and exits 1.
+Two ways forward:
 
 ```bash
-# Store the raw text verbatim as an article anyway (old fallback behavior)
+# Store the raw text verbatim as an article (explicit opt-in, no compiler)
 cat notes.md | kb ingest --scope myproject --allow-fallback
 
-# Supply an externally compiled article — no API key needed
+# Supply an article you compiled yourself (optional "usage" is recorded)
 echo '{"raw_text": "original text", "article": {"title": "My Doc", "summary": "…", "content": "compiled article body", "concepts": ["a"], "categories": ["b"], "source": "notes.md", "compiled_with": "my-backend"}}' \
   | kb ingest --article-json --scope myproject
 ```
@@ -105,18 +114,18 @@ Structural lint runs instantly with no LLM call — checks for empty content, mi
 kb lint --scope myproject
 ```
 
-Deep LLM-powered lint finds inconsistencies, knowledge gaps, missing connections, and stale content:
+The LLM review finds inconsistencies, knowledge gaps, missing connections, and stale content. It sends one prompt through the compiler command and expects a JSON array of issues back:
 
 ```bash
-kb lint --scope myproject --llm
+kb lint --scope myproject --llm --compiler "python examples/compilers/claude_code.py"
 ```
 
 ### Watch mode (auto-rebuild)
 
-Watches for file changes and rebuilds automatically. Uses content hashing so only changed files are recompiled.
+Watches for file changes and rebuilds automatically. Uses content hashing so only changed files are recompiled. Needs a compiler (exit 2 without one).
 
 ```bash
-kb watch ./src/ --scope myproject --pattern "*.py"
+kb watch ./src/ --scope myproject --pattern "*.py" --compiler "$KB_COMPILER"
 ```
 
 ### Concept graph export
@@ -218,11 +227,12 @@ All files are human-readable. No database required.
 |------|---------|-------------|
 | `--scope` | `default` | Knowledge scope name (supports multi-tenant) |
 | `--json` | off | Machine-readable JSON output |
-| `--model` | `claude-haiku-4-5-20251001` | LLM model for compilation |
+| `--compiler` | `$KB_COMPILER` | Command that compiles one article: prompt on stdin, one JSON article on stdout. Runs via `sh -c` (`cmd /S /C` on Windows) |
+| `--compiler-timeout` | `300s` | Per-item compiler timeout |
 
-## Agent Mode (no API key needed)
+## Agent Mode (no compiler needed)
 
-When running inside an AI agent (Claude Code, Cursor, Codex, etc.), you can compile articles using the agent's own LLM instead of making separate API calls. This means no API key, no extra cost — the agent you're already paying for does the compilation.
+When running inside an AI agent (Claude Code, Cursor, Codex, etc.), compile articles with the agent's own LLM. No API key, no extra cost — the agent you're already using does the compilation.
 
 ### Step 1: Get compilation prompts
 
@@ -255,21 +265,22 @@ Input format (JSON object with articles array):
       "summary": "...",
       "content": "...",
       "concepts": ["http", "server"],
-      "categories": ["infrastructure"]
+      "categories": ["infrastructure"],
+      "usage": {"model": "your-model", "input_tokens": 900, "output_tokens": 450, "cost_usd": 0.003}
     }
   ]
 }
 ```
 
-Also accepts a bare array or a single article object.
+Also accepts a bare array or a single article object. `usage` (and `compiled_with`) are optional; `kb stats` totals usage across articles.
 
-### When to use agent mode vs direct build
+### When to use agent mode vs a compiler command
 
-- **Agent mode** (`prepare` + `accept`): When running as a skill inside an AI agent. Uses the agent's LLM. No API key needed. Works with any LLM.
-- **Direct build**: When running standalone or in CI. Calls Anthropic API directly. Needs `ANTHROPIC_API_KEY`.
+- **Agent mode** (`prepare` + `accept`): When running as a skill inside an AI agent. Uses the agent's LLM. Works with any LLM.
+- **Compiler command** (`--compiler` / `KB_COMPILER`): When running standalone or in CI. kb runs your command once per file: headless Claude Code (`examples/compilers/claude_code.py`), a LiteLLM proxy or any OpenAI-compatible endpoint (`examples/compilers/openai_compatible.py`), Ollama. Recipes and measured costs: README, "Compiling articles".
 
 ## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | For build/ingest/llm-lint | Anthropic API key (not needed for prepare/accept or `ingest --article-json`) |
+| `KB_COMPILER` | For build/ingest/recompile/watch/`lint --llm` (unless `--compiler` is passed) | Compiler command; `--compiler` wins. Not needed for prepare/accept, `ingest --article-json`, search, or structural lint |

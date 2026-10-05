@@ -1,4 +1,9 @@
-// Implements `kb build`.
+// Implements `kb build`: scan, hash-cache skip, compile pending files through
+// the caller's --compiler hook (glossary files pass through verbatim, no
+// compiler), save articles, rebuild indexes. A file whose compile fails gets
+// no article and no cache entry (the next build retries it) and makes the
+// command exit 1; files that compiled are still saved. Without a compiler,
+// build refuses (exit 2) when anything needs compiling.
 
 package main
 
@@ -13,15 +18,22 @@ import (
 )
 
 func cmdBuild(args []string) {
+	if code := runBuild(args); code != 0 {
+		os.Exit(code)
+	}
+}
+
+// runBuild is cmdBuild returning its exit code, so `kb watch` can rebuild
+// after a failed compile without exiting.
+func runBuild(args []string) int {
 	if len(args) < 1 {
-		fatal("Usage: kb build <path> [--scope NAME] [--pattern GLOB] [--model MODEL]")
+		fatal("Usage: kb build <path> [--scope NAME] [--pattern GLOB] --compiler \"<command>\"")
 	}
 
 	path := args[0]
 	scope := flagStr(args, "--scope", filepath.Base(path))
 	pattern := flagStr(args, "--pattern", "*.py")
 	exclude := flagStr(args, "--exclude", "")
-	model := flagStr(args, "--model", defaultModel)
 	jsonOut := flagBool(args, "--json")
 	terse := flagBool(args, "--terse")
 	outputDir := flagStr(args, "--output", "")
@@ -29,7 +41,7 @@ func cmdBuild(args []string) {
 	// strict | loose | off (issue #19). NB: matching is on wording, not meaning —
 	// paraphrased-but-agreeing sources can be flagged. See contradiction.go.
 	contraMode := flagStr(args, "--contradiction-mode", "strict")
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	spec := mustCompilerFromArgs(args)
 
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -106,17 +118,26 @@ func cmdBuild(args []string) {
 		})
 	}
 
+	// Refuse before writing anything when a file needs compiling and there is
+	// no compiler. Glossary-only and fully cached builds need none.
+	for _, j := range jobs {
+		if !isGlossarySource(j.relPath) {
+			requireCompiler(spec, "build", "Or compile in your own agent: `kb prepare` emits the prompts, `kb accept` stores the articles.")
+			break
+		}
+	}
+
 	// Phase 2: compile in parallel
 	type compileResult struct {
 		job     compileJob
 		article *WikiArticle
-		usage   *TokenUsage
 		fixedID bool // glossary entry with an explicit frontmatter id
 	}
 
 	var (
 		mu      sync.Mutex
 		results []compileResult
+		failed  []string
 		wg      sync.WaitGroup
 		sem     = make(chan struct{}, concurrency)
 	)
@@ -146,12 +167,11 @@ func cmdBuild(args []string) {
 			saveRawDoc(scope, raw)
 
 			var article *WikiArticle
-			var usage *TokenUsage
 			fixedID := false
 
 			if isGlossarySource(j.relPath) {
 				// Glossary sources are hand-curated: parse frontmatter directly,
-				// preserve body verbatim, do NOT call compileLLM.
+				// preserve body verbatim, never sent to the compiler.
 				gArt, gErr := parseGlossarySource([]byte(j.text), j.relPath)
 				if gErr != nil {
 					fmt.Fprintf(os.Stderr, "Warning: glossary parse failed for %s: %v\n", j.relPath, gErr)
@@ -186,31 +206,17 @@ func cmdBuild(args []string) {
 				// Parse AST if supported language
 				codeMod := parseCode(j.filePath, j.text)
 
-				// Compile with LLM
-				compArticle, compUsage, err := compileLLM(j.text, j.relPath, model, apiKey, codeMod, terse)
-				usage = compUsage
+				// Compile through the caller's hook. A failure writes no
+				// article and no cache entry: never the raw text in its place.
+				compArticle, err := compileWithHook(spec, j.text, j.relPath, codeMod, terse)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: compilation failed for %s: %v\n", j.relPath, err)
-					audience, depth, targetWords := "human", "deep", 500
-					if terse {
-						audience, depth, targetWords = "agent", "overview", 150
-					}
-					article = &WikiArticle{
-						ID:           slugify(filepath.Base(j.filePath)),
-						Title:        filepath.Base(j.filePath),
-						Summary:      truncate(j.text, 200),
-						Content:      j.text,
-						WordCount:    wordCount(j.text),
-						CompiledAt:   time.Now().UTC().Format(time.RFC3339),
-						CompiledWith: "none (fallback)",
-						Version:      1,
-						Audience:     audience,
-						Depth:        depth,
-						TargetWords:  targetWords,
-					}
-				} else {
-					article = compArticle
+					fmt.Fprintf(os.Stderr, "Error: compile failed for %s: %v\n", j.relPath, err)
+					mu.Lock()
+					failed = append(failed, j.relPath)
+					mu.Unlock()
+					return
 				}
+				article = compArticle
 			}
 			article.SourcePath = j.relPath
 			article.SourceDocs = []string{j.rawID}
@@ -221,7 +227,7 @@ func cmdBuild(args []string) {
 			}
 
 			mu.Lock()
-			results = append(results, compileResult{job: j, article: article, usage: usage, fixedID: fixedID})
+			results = append(results, compileResult{job: j, article: article, fixedID: fixedID})
 			mu.Unlock()
 		}(job)
 	}
@@ -241,9 +247,9 @@ func cmdBuild(args []string) {
 	changed := len(results)
 	var totalInput, totalOutput int
 	for _, r := range results {
-		if r.usage != nil {
-			totalInput += r.usage.InputTokens
-			totalOutput += r.usage.OutputTokens
+		if r.article.Usage != nil {
+			totalInput += r.article.Usage.InputTokens
+			totalOutput += r.article.Usage.OutputTokens
 		}
 		if r.fixedID {
 			// Keep the frontmatter version on a first write, as before.
@@ -297,9 +303,11 @@ func cmdBuild(args []string) {
 		contradictions = detectContradictions(buildCands, ContradictionConfig{Mode: contraMode})
 	}
 
+	sort.Strings(failed)
 	if jsonOut {
 		out := map[string]any{
 			"changed":        changed,
+			"failed":         len(failed),
 			"cached":         skipped,
 			"total":          len(files),
 			"articles":       len(allArticles),
@@ -311,6 +319,9 @@ func cmdBuild(args []string) {
 		printJSON(out)
 	} else {
 		fmt.Printf("\nBuilt: %d compiled, %d cached (skipped), %d total files\n", changed, skipped, len(files))
+		if len(failed) > 0 {
+			fmt.Printf("Failed: %d (no article written; the next build retries them)\n", len(failed))
+		}
 		fmt.Printf("KB: %d articles, %d concepts\n", len(allArticles), len(idx.Concepts))
 		if totalInput > 0 {
 			fmt.Printf("Tokens: %d input + %d output = %d total\n", totalInput, totalOutput, totalInput+totalOutput)
@@ -329,10 +340,18 @@ func cmdBuild(args []string) {
 		exportWiki(scope, outputDir)
 	}
 
+	// Failed compiles exit 1 in every output mode (after the successes and the
+	// export are written).
+	if len(failed) > 0 {
+		fmt.Fprintf(os.Stderr, "%d file(s) failed to compile: %s\n", len(failed), strings.Join(failed, ", "))
+		return 1
+	}
+
 	// Non-zero signal so CI can gate on unresolved contradictions. Runs after
 	// export so the wiki is still written. Suppressed in --json mode (the
 	// "contradictions" array already carries the machine-readable signal).
 	if len(contradictions) > 0 && !jsonOut {
-		os.Exit(3)
+		return 3
 	}
+	return 0
 }

@@ -1,13 +1,11 @@
 // ingest_test.go — Tests for cmdIngest's compile/fallback contract and the
 // --article-json external-compile mode.
 //
-// Covers the loud-fail slice: when LLM compilation fails (no API key here) and
-// --allow-fallback is NOT passed, ingest must keep the raw doc, write NO
-// article, and surface an error naming the raw doc id and the --allow-fallback
-// escape hatch. With --allow-fallback the old verbatim-article behavior is
-// restored (CompiledWith "none (fallback)"). The --article-json mode lets an
-// external caller supply the compiled article on stdin (raw_text + article),
-// so no ANTHROPIC_API_KEY is needed; happy path + field validation are pinned.
+// --allow-fallback without a compiler stores the raw text verbatim
+// (CompiledWith "none (fallback)"); the loud-fail contract for a failing
+// compiler lives in compiler_test.go. The --article-json mode lets an external
+// caller supply the compiled article on stdin (raw_text + article); happy path
+// + field validation are pinned.
 //
 // Tests target the extracted helpers ingestText / ingestArticleJSON rather
 // than cmdIngest itself, because cmdIngest routes errors through fatal()
@@ -66,48 +64,13 @@ func rawDocCount(t *testing.T, scope string) int {
 	return n
 }
 
-// --- Loud-fail path: compile fails, no --allow-fallback ---
-
-func TestIngestCompileFailureRefusesFallback(t *testing.T) {
-	scope := tempHomeScope(t, "ingest-loudfail")
-
-	text := "some raw meeting notes that should not silently become an article"
-	// Empty API key guarantees compileLLM fails without any network call.
-	err := ingestText(scope, "notes.md", defaultModel, "", "", "", text, false, false)
-	if err == nil {
-		t.Fatalf("ingestText should return an error when compilation fails and fallback is not allowed")
-	}
-
-	// The error must point the caller at the saved raw doc and the escape hatch.
-	rawID := contentHash(text)[:16]
-	if !strings.Contains(err.Error(), rawID) {
-		t.Errorf("error should mention raw doc id %s, got: %v", rawID, err)
-	}
-	if !strings.Contains(err.Error(), "--allow-fallback") {
-		t.Errorf("error should mention --allow-fallback, got: %v", err)
-	}
-
-	// Raw content is preserved...
-	if got := rawDocCount(t, scope); got != 1 {
-		t.Errorf("raw doc count = %d, want 1 (content must not be lost)", got)
-	}
-	raw, loadErr := loadRawDoc(scope, rawID)
-	if loadErr != nil || raw.RawText != text {
-		t.Errorf("raw doc %s should round-trip the ingested text", rawID)
-	}
-	// ...but NO article was written.
-	if got := wikiArticleCount(t, scope); got != 0 {
-		t.Errorf("wiki article count = %d, want 0 (no silent verbatim fallback)", got)
-	}
-}
-
 // --- Explicit fallback: --allow-fallback restores the verbatim article ---
 
 func TestIngestAllowFallbackSavesVerbatimArticle(t *testing.T) {
 	scope := tempHomeScope(t, "ingest-fallback")
 
 	text := "verbatim raw text stored on explicit request"
-	err := ingestText(scope, "notes.md", defaultModel, "", "", "", text, true, false)
+	err := ingestText(scope, "notes.md", compilerSpec{}, "", "", text, true, false)
 	if err != nil {
 		t.Fatalf("ingestText with allowFallback should succeed, got: %v", err)
 	}
