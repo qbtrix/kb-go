@@ -1,6 +1,7 @@
 // Implements `kb recompile`: re-reads an article's raw docs and compiles them
-// again through the --compiler hook (required; exit 2 without one). A failed
-// compile leaves that article untouched and makes the command exit 1.
+// again through the configured compile path (built-in client or --compiler
+// hook; exit 2 without either). A failed compile leaves that article
+// untouched and makes the command exit 1.
 
 package main
 
@@ -12,7 +13,7 @@ import (
 
 func cmdRecompile(args []string) {
 	if len(args) < 1 {
-		fatal("Usage: kb recompile <article_id|--all> [--scope NAME] --compiler \"<command>\"")
+		fatal("Usage: kb recompile <article_id|--all> [--scope NAME] [--model MODEL | --compiler \"<command>\"]")
 	}
 
 	scope := flagStr(args, "--scope", "default")
@@ -56,7 +57,7 @@ func cmdRecompile(args []string) {
 			fmt.Printf("Recompiling: %s\n", a.Title)
 		}
 
-		newArticle, err := compileWithHook(spec, combined, source, nil, terse)
+		newArticle, err := compileArticle(spec, combined, source, nil, terse)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: recompile failed for %s: %v\n", a.ID, err)
 			failed++

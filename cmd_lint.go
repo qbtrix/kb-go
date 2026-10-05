@@ -23,7 +23,8 @@ func cmdLint(args []string) {
 		return
 	}
 
-	// --llm needs the caller's compiler; refuse before doing any work.
+	// --llm needs a compile path (built-in client or hook); refuse before
+	// doing any work.
 	var spec compilerSpec
 	if llmMode {
 		spec = mustCompilerFromArgs(args)
@@ -35,10 +36,10 @@ func cmdLint(args []string) {
 	// Always run structural lint
 	issues = append(issues, lintStructural(scope)...)
 
-	// Optionally run the LLM review through the hook. A failed review is
+	// Optionally run the LLM review. A failed review is
 	// loud: the structural issues are still printed, then kb exits 1.
 	if llmMode {
-		llmIssues, err := lintWithHook(scope, spec)
+		llmIssues, err := lintLLM(scope, spec)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: LLM lint failed: %v\n", err)
 			printLintIssues(issues, jsonOut)

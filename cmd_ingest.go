@@ -1,5 +1,5 @@
 // Implements `kb ingest`, plus the helpers only that command uses. Modes:
-// compile one file/stdin text through the --compiler hook; --article-json
+// compile one file/stdin text (built-in client or --compiler hook); --article-json
 // (the caller already compiled: raw_text + article on stdin); --allow-fallback
 // (explicit opt-in to store the text verbatim, also used when a compile
 // fails); --vec (attach an embedding). Without a compiler and without one of
@@ -58,7 +58,7 @@ func cmdIngest(args []string) {
 	// Check for non-flag argument (file path)
 	// Skip flag values: if previous arg was a flag that takes a value, skip this one
 	filePath := ""
-	flagsWithValues := map[string]bool{"--scope": true, "--source": true, "--lang": true, "--compiler": true, "--compiler-timeout": true}
+	flagsWithValues := map[string]bool{"--scope": true, "--source": true, "--lang": true, "--model": true, "--compiler": true, "--compiler-timeout": true}
 	skipNext := false
 	for _, a := range args {
 		if skipNext {
@@ -101,7 +101,7 @@ func cmdIngest(args []string) {
 	}
 }
 
-// ingestText saves the raw doc, compiles it through the compiler hook, and
+// ingestText saves the raw doc, compiles it (hook or built-in client), and
 // refreshes the indexes. With allowFallback the text is stored verbatim
 // (CompiledWith "none (fallback)") when there is no compiler or the compile
 // fails; without it a failed compile returns an error — the raw doc is
@@ -113,7 +113,7 @@ func ingestText(scope, source string, spec compilerSpec, lang, filePath, text st
 		return fmt.Errorf("No content to ingest")
 	}
 	if !spec.enabled() && !allowFallback {
-		return fmt.Errorf("no compiler configured: pass --compiler, --article-json or --allow-fallback")
+		return fmt.Errorf("no compiler configured: set ANTHROPIC_API_KEY, or pass --compiler, --article-json or --allow-fallback")
 	}
 
 	ensureDirs(scope)
@@ -148,7 +148,7 @@ func ingestText(scope, source string, spec compilerSpec, lang, filePath, text st
 	var article *WikiArticle
 	err := fmt.Errorf("no compiler configured")
 	if spec.enabled() {
-		article, err = compileWithHook(spec, text, source, codeMod, false)
+		article, err = compileArticle(spec, text, source, codeMod, false)
 	}
 	if err != nil {
 		if !allowFallback {

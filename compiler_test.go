@@ -1,6 +1,7 @@
-// Tests for the caller-owned compiler hook (`--compiler` / KB_COMPILER), the
-// commands that require it, the optional `usage` metadata, and the guarantee
-// that kb itself holds no LLM client.
+// Tests for the bring-your-own-compiler hook (`--compiler` / KB_COMPILER), the
+// commands that need a compile path, the --model / --compiler conflict, and
+// the optional `usage` metadata. The built-in Anthropic client and the
+// precedence between it and the hook are tested in anthropic_test.go.
 //
 // The compiler under test is this test binary re-executed: TestMain checks
 // KB_FAKE_COMPILER and, when set, behaves as a compiler (reads the prompt on
@@ -28,6 +29,12 @@ import (
 func TestMain(m *testing.M) {
 	if mode := os.Getenv("KB_FAKE_COMPILER"); mode != "" {
 		os.Exit(runFakeCompiler(mode))
+	}
+	// Hermetic suite: a developer's real key, gateway or compiler must never
+	// be picked up (in-process or by exec'd kb, which inherits this env).
+	// Tests that need one set it explicitly.
+	for _, k := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "KB_COMPILER"} {
+		os.Unsetenv(k)
 	}
 	os.Exit(m.Run())
 }
@@ -302,34 +309,13 @@ func TestCompilerFromArgs(t *testing.T) {
 	}
 }
 
-// --- No LLM client in kb ---------------------------------------------------
-
-func TestNoLLMClientInSources(t *testing.T) {
-	files, _ := filepath.Glob("*.go")
-	banned := []string{"ANTHROPIC_API_KEY", "api.anthropic.com", "anthropic-version", "x-api-key"}
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, s := range banned {
-			if bytes.Contains(b, []byte(s)) {
-				t.Errorf("%s still references %q: kb must not contain an LLM client", f, s)
-			}
-		}
-	}
-}
-
 // --- Commands without a compiler: exit 2 with guidance ----------------------
 
 func TestCommandsWithoutCompilerExit2(t *testing.T) {
 	isolatedHome(t)
 	src := writeFiles(t, map[string]string{"a.md": "# A\nalpha", "b.md": "# B\nbeta"})
-	// A key in the environment must change nothing: kb never reads it.
-	env := []string{"KB_COMPILER=", "ANTHROPIC_API_KEY=sk-should-be-ignored"}
+	// No compile path at all: no hook and no key.
+	env := []string{"KB_COMPILER=", "ANTHROPIC_API_KEY="}
 
 	cases := []struct {
 		name  string
@@ -337,11 +323,11 @@ func TestCommandsWithoutCompilerExit2(t *testing.T) {
 		args  []string
 		want  []string
 	}{
-		{"build", "", []string{"build", src, "--scope", "nocomp", "--pattern", "*.md"}, []string{"--compiler", "kb prepare", "kb accept"}},
-		{"ingest", "some text", []string{"ingest", "--scope", "nocomp"}, []string{"--compiler", "--article-json", "--allow-fallback"}},
-		{"recompile", "", []string{"recompile", "--all", "--scope", "nocomp"}, []string{"--compiler"}},
-		{"watch", "", []string{"watch", src, "--scope", "nocomp", "--pattern", "*.md"}, []string{"--compiler"}},
-		{"lint-llm", "", []string{"lint", "--llm", "--scope", "nocomp"}, []string{"--compiler"}},
+		{"build", "", []string{"build", src, "--scope", "nocomp", "--pattern", "*.md"}, []string{"ANTHROPIC_API_KEY", "--compiler", "kb prepare", "kb accept"}},
+		{"ingest", "some text", []string{"ingest", "--scope", "nocomp"}, []string{"ANTHROPIC_API_KEY", "--compiler", "--article-json", "--allow-fallback"}},
+		{"recompile", "", []string{"recompile", "--all", "--scope", "nocomp"}, []string{"ANTHROPIC_API_KEY", "--compiler", "kb prepare"}},
+		{"watch", "", []string{"watch", src, "--scope", "nocomp", "--pattern", "*.md"}, []string{"ANTHROPIC_API_KEY", "--compiler"}},
+		{"lint-llm", "", []string{"lint", "--llm", "--scope", "nocomp"}, []string{"ANTHROPIC_API_KEY", "--compiler"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -364,12 +350,25 @@ func TestCommandsWithoutCompilerExit2(t *testing.T) {
 	}
 }
 
-func TestRemovedModelFlagIsRejected(t *testing.T) {
+// --model picks the built-in client's model; with a compiler it is a usage
+// error (exit 2) rather than silently ignored, whether the compiler came from
+// the flag or from KB_COMPILER.
+func TestModelWithCompilerIsUsageError(t *testing.T) {
 	isolatedHome(t)
 	src := writeFiles(t, map[string]string{"a.md": "alpha"})
-	_, stderr, code := runKB(t, nil, "", "build", src, "--scope", "m", "--pattern", "*.md", "--model", "claude-haiku")
-	if code != 2 || !strings.Contains(stderr, "--model") || !strings.Contains(stderr, "--compiler") {
-		t.Errorf("--model should be rejected with exit 2 and point at --compiler; code=%d stderr=%s", code, stderr)
+	env := []string{"KB_FAKE_COMPILER=ok", "ANTHROPIC_API_KEY=sk-dummy"}
+	_, stderr, code := runKB(t, env, "", "build", src, "--scope", "m", "--pattern", "*.md",
+		"--model", "claude-haiku", "--compiler", fakeCompilerCommand(t, ""))
+	if code != 2 || !strings.Contains(stderr, "--model") || !strings.Contains(stderr, "--compiler is given") {
+		t.Errorf("--model with --compiler: want exit 2 naming both; code=%d stderr=%s", code, stderr)
+	}
+	env = append(env, "KB_COMPILER="+fakeCompilerCommand(t, ""))
+	_, stderr, code = runKB(t, env, "", "ingest", "--scope", "m", "--model", "claude-haiku")
+	if code != 2 || !strings.Contains(stderr, "KB_COMPILER is set") {
+		t.Errorf("--model with KB_COMPILER: want exit 2 naming KB_COMPILER; code=%d stderr=%s", code, stderr)
+	}
+	if n := wikiArticleCount(t, "m"); n != 0 {
+		t.Errorf("a usage error must write nothing, got %d articles", n)
 	}
 }
 

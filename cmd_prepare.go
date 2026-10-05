@@ -102,7 +102,7 @@ func cmdPrepare(args []string) {
 		}
 		saveRawDoc(scope, raw)
 
-		// Build the same prompt the --compiler hook gets — shared helpers keep them in sync.
+		// Build the same prompt `kb build` sends — shared helpers keep them in sync.
 		prompt := buildCompilePrompt(relPath, codeContextBlock(parseCode(f, string(text))), string(text), terse)
 
 		items = append(items, prepareItem{

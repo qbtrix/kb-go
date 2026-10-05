@@ -1,7 +1,7 @@
 // Knowledge-base lint: structural checks that need no LLM, and an LLM review
 // for inconsistencies, gaps, missing connections and stale articles. The LLM
-// review goes through the caller's --compiler hook (compile.go); kb itself
-// holds no LLM client.
+// review takes the same compile path as build (compile.go): the --compiler
+// hook when one is configured, else the built-in Anthropic client.
 
 package main
 
@@ -149,9 +149,9 @@ Knowledge base:
 %s`, sb.String())
 }
 
-// lintWithHook runs the LLM review through the compiler hook and parses the
-// JSON array of issues it prints. Unparseable output is an error.
-func lintWithHook(scope string, spec compilerSpec) ([]LintIssue, error) {
+// lintLLM runs the LLM review through the configured compile path and parses
+// the JSON array of issues the model returns. Unparseable output is an error.
+func lintLLM(scope string, spec compilerSpec) ([]LintIssue, error) {
 	articles, _ := listArticles(scope)
 	if len(articles) == 0 {
 		return []LintIssue{{
@@ -160,11 +160,25 @@ func lintWithHook(scope string, spec compilerSpec) ([]LintIssue, error) {
 		}}, nil
 	}
 
-	out, err := runCompiler(spec, buildLintPrompt(articles), "lint")
-	if err != nil {
-		return nil, err
+	prompt := buildLintPrompt(articles)
+	var out string
+	switch {
+	case spec.hook():
+		b, err := runCompiler(spec, prompt, "lint")
+		if err != nil {
+			return nil, err
+		}
+		out = string(b)
+	case spec.builtin():
+		text, _, err := callAnthropic(spec, "You are a knowledge base auditor. Output only valid JSON arrays.", prompt)
+		if err != nil {
+			return nil, err
+		}
+		out = text
+	default:
+		return nil, fmt.Errorf("no compiler configured")
 	}
-	text := stripFences(string(out))
+	text := stripFences(out)
 	var issues []LintIssue
 	if err := json.Unmarshal([]byte(text), &issues); err != nil {
 		i, j := strings.Index(text, "["), strings.LastIndex(text, "]")

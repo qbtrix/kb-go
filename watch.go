@@ -1,7 +1,7 @@
 // `kb watch`: rebuilds a scope when source files change (fsnotify). Every
-// rebuild is `kb build` with the same flags, so it needs a --compiler
-// (checked up front, exit 2). A rebuild whose compiles fail is reported and
-// watching continues.
+// rebuild is `kb build` with the same flags, so it needs a compile path
+// (ANTHROPIC_API_KEY or --compiler / KB_COMPILER, checked up front, exit 2).
+// A rebuild whose compiles fail is reported and watching continues.
 
 package main
 
@@ -17,7 +17,7 @@ import (
 
 func cmdWatch(args []string) {
 	if len(args) < 1 {
-		fatal("Usage: kb watch <path> [--scope NAME] [--pattern GLOB] --compiler \"<command>\"")
+		fatal("Usage: kb watch <path> [--scope NAME] [--pattern GLOB] [--model MODEL | --compiler \"<command>\"]")
 	}
 
 	path := args[0]

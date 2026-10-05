@@ -1,8 +1,9 @@
 // Implements `kb build`: scan, hash-cache skip, compile pending files through
-// the caller's --compiler hook (glossary files pass through verbatim, no
-// compiler), save articles, rebuild indexes. A file whose compile fails gets
-// no article and no cache entry (the next build retries it) and makes the
-// command exit 1; files that compiled are still saved. Without a compiler,
+// the configured compile path (--compiler / KB_COMPILER, else the built-in
+// Anthropic client; glossary files pass through verbatim, never compiled),
+// save articles, rebuild indexes. A file whose compile fails gets no article
+// and no cache entry (the next build retries it) and makes the command exit
+// 1; files that compiled are still saved. With no compile path configured,
 // build refuses (exit 2) when anything needs compiling.
 
 package main
@@ -27,7 +28,7 @@ func cmdBuild(args []string) {
 // after a failed compile without exiting.
 func runBuild(args []string) int {
 	if len(args) < 1 {
-		fatal("Usage: kb build <path> [--scope NAME] [--pattern GLOB] --compiler \"<command>\"")
+		fatal("Usage: kb build <path> [--scope NAME] [--pattern GLOB] [--model MODEL | --compiler \"<command>\"]")
 	}
 
 	path := args[0]
@@ -206,9 +207,9 @@ func runBuild(args []string) int {
 				// Parse AST if supported language
 				codeMod := parseCode(j.filePath, j.text)
 
-				// Compile through the caller's hook. A failure writes no
+				// Compile (hook or built-in client). A failure writes no
 				// article and no cache entry: never the raw text in its place.
-				compArticle, err := compileWithHook(spec, j.text, j.relPath, codeMod, terse)
+				compArticle, err := compileArticle(spec, j.text, j.relPath, codeMod, terse)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error: compile failed for %s: %v\n", j.relPath, err)
 					mu.Lock()

@@ -1,19 +1,25 @@
-// Article compilation through a caller-owned compiler. kb holds no LLM client:
-// it builds the compile prompt (buildCompilePrompt, shared with `kb prepare`),
-// hands it to the user's `--compiler` command (or KB_COMPILER) on stdin, and
-// parses ONE JSON article object from that command's stdout. The caller picks
-// the model and pays for it through their own metered path (an agent backend,
-// a LiteLLM/OpenAI-compatible gateway, a local Claude Code login).
+// Article compilation: picks the compile path and runs the --compiler hook.
+// kb's default is the built-in Anthropic client (anthropic.go): set
+// ANTHROPIC_API_KEY and the LLM compiles your sources at write time. The
+// extension lets a caller bring its own model: a `--compiler` command (or
+// KB_COMPILER) gets the compile prompt (buildCompilePrompt, shared with
+// `kb prepare`) on stdin and prints ONE JSON article object on stdout.
+//
+// Precedence (compilerFromArgs): --compiler flag > KB_COMPILER > built-in
+// client when ANTHROPIC_API_KEY is set > none (commands exit 2 with guidance).
+// --model applies to the built-in client only; with a compiler it is a usage
+// error, because the compiler picks its own model.
 //
 // Invariants:
-//   - A failed compile (non-zero exit, timeout, unparseable or incomplete
-//     output) is an error for that item. Callers never store the raw text as
+//   - A failed compile (hook: non-zero exit, timeout, unparseable or
+//     incomplete output; built-in: transport error, non-200, unparseable
+//     reply) is an error for that item. Callers never store the raw text as
 //     the article in its place; `kb ingest --allow-fallback` is the only
 //     explicit verbatim path.
-//   - The command runs through the platform shell (compiler_shell_*.go) so the
+//   - The hook runs through the platform shell (compiler_shell_*.go) so the
 //     same string works as typed in a terminal; its stderr is passed through
 //     line by line, prefixed with the source being compiled.
-//   - `usage` in the output is optional and parsed leniently: wrong-typed or
+//   - `usage` in hook output is optional and parsed leniently: wrong-typed or
 //     unknown keys are dropped, never fatal.
 
 package main
@@ -46,15 +52,23 @@ type ArticleUsage struct {
 	CostUSD      float64 `json:"cost_usd,omitempty"`
 }
 
-// compilerSpec is the resolved `--compiler` hook. A zero Command means no
-// compiler is configured.
+// compilerSpec is the resolved compile path. A non-empty Command selects the
+// hook; otherwise a non-empty APIKey selects the built-in Anthropic client;
+// neither means no compiler is configured.
 type compilerSpec struct {
 	Command string
 	Timeout time.Duration
 	Stderr  io.Writer // where the compiler's stderr is relayed; nil = os.Stderr
+
+	// Built-in client (anthropic.go).
+	APIKey  string
+	Model   string
+	BaseURL string
 }
 
-func (c compilerSpec) enabled() bool { return strings.TrimSpace(c.Command) != "" }
+func (c compilerSpec) hook() bool    { return strings.TrimSpace(c.Command) != "" }
+func (c compilerSpec) builtin() bool { return !c.hook() && strings.TrimSpace(c.APIKey) != "" }
+func (c compilerSpec) enabled() bool { return c.hook() || c.builtin() }
 
 // label is the default compiled_with value: "compiler:<first word>", with
 // quotes and directories stripped from that word.
@@ -75,12 +89,18 @@ func (c compilerSpec) label() string {
 	return "compiler:" + first
 }
 
-// compilerFromArgs resolves the hook: --compiler wins over KB_COMPILER.
-// --compiler-timeout takes a Go duration ("90s", "2m") or whole seconds.
+// compilerFromArgs resolves the compile path: --compiler wins over
+// KB_COMPILER, and either wins over the built-in client (ANTHROPIC_API_KEY,
+// --model, ANTHROPIC_BASE_URL). --compiler-timeout takes a Go duration
+// ("90s", "2m") or whole seconds. --model together with a compiler is an
+// error: the compiler picks its own model.
 func compilerFromArgs(args []string) (compilerSpec, error) {
 	spec := compilerSpec{
 		Command: flagStr(args, "--compiler", os.Getenv("KB_COMPILER")),
 		Timeout: defaultCompilerTimeout,
+		APIKey:  os.Getenv("ANTHROPIC_API_KEY"),
+		Model:   flagStr(args, "--model", defaultModel),
+		BaseURL: anthropicBaseURL(),
 	}
 	if raw := flagStr(args, "--compiler-timeout", ""); raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -96,18 +116,21 @@ func compilerFromArgs(args []string) (compilerSpec, error) {
 		}
 		spec.Timeout = d
 	}
+	if flagBool(args, "--model") && spec.hook() {
+		from := "KB_COMPILER is set"
+		if flagBool(args, "--compiler") {
+			from = "--compiler is given"
+		}
+		return spec, fmt.Errorf("--model applies to the built-in Anthropic client, but %s: the\n"+
+			"  compiler picks its own model. Drop --model (set the model inside the compiler\n"+
+			"  command), or drop --compiler and unset KB_COMPILER to use the built-in client.", from)
+	}
 	return spec, nil
 }
 
-// mustCompilerFromArgs is compilerFromArgs for commands: a bad flag is a usage
-// error (exit 2), and the removed --model flag is rejected with a pointer to
-// --compiler instead of being silently ignored.
+// mustCompilerFromArgs is compilerFromArgs for commands: a bad flag or flag
+// combination is a usage error (exit 2).
 func mustCompilerFromArgs(args []string) compilerSpec {
-	if flagBool(args, "--model") {
-		usageExit("--model was removed in kb v0.4.0: kb no longer calls an LLM itself.\n" +
-			"  Pick the model inside your --compiler command (e.g. `claude -p --model haiku ...`,\n" +
-			"  or KB_COMPILE_MODEL for examples/compilers/openai_compatible.py).")
-	}
 	spec, err := compilerFromArgs(args)
 	if err != nil {
 		usageExit(err.Error())
@@ -115,19 +138,23 @@ func mustCompilerFromArgs(args []string) compilerSpec {
 	return spec
 }
 
-// requireCompiler exits 2 with guidance when no compiler is configured.
+// requireCompiler exits 2 with guidance listing every way to compile when no
+// compile path is configured. alternative replaces the default third option
+// (agent mode) where another escape hatch fits the command better.
 func requireCompiler(spec compilerSpec, command, alternative string) {
 	if spec.enabled() {
 		return
 	}
-	msg := fmt.Sprintf("kb %s needs a compiler: kb does not call an LLM itself.\n"+
-		"  Pass --compiler \"<command>\" (or set KB_COMPILER): kb writes each prompt to the\n"+
-		"  command's stdin and reads one JSON article from its stdout.\n", command)
-	if alternative != "" {
-		msg += "  " + alternative + "\n"
+	if alternative == "" {
+		alternative = "Compile in your own agent: `kb prepare` emits the prompts, `kb accept` stores the articles."
 	}
-	msg += "  Recipes: README.md, \"Compiling articles\"."
-	usageExit(msg)
+	usageExit(fmt.Sprintf("kb %s needs an LLM to compile articles. Pick one:\n"+
+		"  1. Set ANTHROPIC_API_KEY to use the built-in Anthropic client (--model picks the\n"+
+		"     model; ANTHROPIC_BASE_URL routes it through a proxy such as LiteLLM).\n"+
+		"  2. Bring your own compiler: pass --compiler \"<command>\" (or set KB_COMPILER). kb\n"+
+		"     writes each prompt to its stdin and reads one JSON article from its stdout.\n"+
+		"  3. %s\n"+
+		"  Recipes: README.md, \"Compiling articles\".", command, alternative))
 }
 
 func usageExit(msg string) {
@@ -143,9 +170,10 @@ func codeContextBlock(codeMod *CodeModule) string {
 	return fmt.Sprintf("\nAST-extracted structure:\n```\n%s```\n\n", formatCodeContext(codeMod))
 }
 
-// buildCompilePrompt constructs the compilation prompt shared by the compiler
-// hook and cmdPrepare. When terse is true, the prompt targets 120-180 words
-// for agent context budgets; otherwise 400-800 words for human documentation.
+// buildCompilePrompt constructs the compilation prompt shared by the built-in
+// client, the compiler hook and cmdPrepare. When terse is true, the prompt
+// targets 120-180 words for agent context budgets; otherwise 400-800 words
+// for human documentation.
 func buildCompilePrompt(source, contextBlock, rawText string, terse bool) string {
 	var instructions string
 	if terse {
@@ -170,9 +198,20 @@ Source text:
 %s`, source, contextBlock, instructions, rawText)
 }
 
-// compileWithHook compiles one source through the compiler hook. On any
-// failure it returns (nil, err): the caller decides how to report, and must
-// not substitute the raw text.
+// compileArticle compiles one source through the configured path (hook, else
+// built-in client). On any failure it returns (nil, err): the caller decides
+// how to report, and must not substitute the raw text.
+func compileArticle(spec compilerSpec, rawText, source string, codeMod *CodeModule, terse bool) (*WikiArticle, error) {
+	switch {
+	case spec.hook():
+		return compileWithHook(spec, rawText, source, codeMod, terse)
+	case spec.builtin():
+		return compileLLM(spec, rawText, source, codeMod, terse)
+	}
+	return nil, errors.New("no compiler configured")
+}
+
+// compileWithHook compiles one source through the compiler hook.
 func compileWithHook(spec compilerSpec, rawText, source string, codeMod *CodeModule, terse bool) (*WikiArticle, error) {
 	prompt := buildCompilePrompt(source, codeContextBlock(codeMod), rawText, terse)
 	out, err := runCompiler(spec, prompt, source)
@@ -183,7 +222,11 @@ func compileWithHook(spec compilerSpec, rawText, source string, codeMod *CodeMod
 	if err != nil {
 		return nil, err
 	}
+	return newCompiledArticle(res, terse, compiledWithFor(res.CompiledWith, res.Usage, spec.label()), res.Usage), nil
+}
 
+// newCompiledArticle builds the stored article from a parsed compile result.
+func newCompiledArticle(res *compiledArticle, terse bool, compiledWith string, usage *ArticleUsage) *WikiArticle {
 	audience, depth, targetWords := "human", "deep", 500
 	if terse {
 		audience, depth, targetWords = "agent", "overview", 150
@@ -197,13 +240,13 @@ func compileWithHook(spec compilerSpec, rawText, source string, codeMod *CodeMod
 		Categories:   nilToEmpty(res.Categories),
 		WordCount:    wordCount(res.Content),
 		CompiledAt:   time.Now().UTC().Format(time.RFC3339),
-		CompiledWith: compiledWithFor(res.CompiledWith, res.Usage, spec.label()),
+		CompiledWith: compiledWith,
 		Version:      1,
 		Audience:     audience,
 		Depth:        depth,
 		TargetWords:  targetWords,
-		Usage:        res.Usage,
-	}, nil
+		Usage:        usage,
+	}
 }
 
 // compiledWithFor picks compiled_with: explicit value, else usage.model, else
@@ -316,7 +359,7 @@ func usageTotals(articles []*WikiArticle) (n, in, out int, cost float64) {
 // runCompiler runs the hook once: prompt on stdin, stdout returned. Non-zero
 // exit and timeout are errors. label names the item in relayed stderr lines.
 func runCompiler(spec compilerSpec, prompt, label string) ([]byte, error) {
-	if !spec.enabled() {
+	if !spec.hook() {
 		return nil, errors.New("no compiler configured")
 	}
 	timeout := spec.Timeout
