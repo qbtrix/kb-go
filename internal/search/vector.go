@@ -10,7 +10,7 @@
 //     `score` carries the fused RRF score; ranks come from the source lists
 //     (-1 means the article was not in that list).
 
-package main
+package search
 
 import (
 	"fmt"
@@ -71,10 +71,10 @@ func rrfFuse(bm25IDs []string, vecIDs []string) (fusedIDs []string, fusedScores 
 	return fusedIDs, fusedScores, bm25RankByID, vecRankByID
 }
 
-// vectorSearchResult bundles a hit's article with the metadata we want to
+// Hit bundles a hit's article with the metadata we want to
 // surface in JSON output for vector / hybrid modes. The plain WikiArticle has
 // no slot for score or rank — they're properties of the query, not the doc.
-type vectorSearchResult struct {
+type Hit struct {
 	Article   *model.WikiArticle
 	Score     float64 // cosine for pure-vec, RRF fused for hybrid
 	BM25Rank  int     // -1 when not in BM25 list
@@ -82,15 +82,15 @@ type vectorSearchResult struct {
 	FusedRank int     // -1 for non-hybrid modes
 }
 
-// runVectorSearch performs pure cosine search over the per-scope vector index.
+// VectorSearch performs pure cosine search over the per-scope vector index.
 // Used when --query-vec is set without --hybrid.
-func runVectorSearch(scope string, queryVec []float32, topK int) ([]vectorSearchResult, error) {
+func VectorSearch(scope string, queryVec []float32, topK int) ([]Hit, error) {
 	idx, err := store.LoadVectors(scope)
 	if err != nil {
 		return nil, fmt.Errorf("load vector index: %w", err)
 	}
 	hits := idx.Search(queryVec, topK)
-	out := make([]vectorSearchResult, 0, len(hits))
+	out := make([]Hit, 0, len(hits))
 	for rank, h := range hits {
 		a, err := store.LoadArticle(scope, h.ID)
 		if err != nil || a == nil {
@@ -98,7 +98,7 @@ func runVectorSearch(scope string, queryVec []float32, topK int) ([]vectorSearch
 			// Skip silently — orphans are a maintenance issue, not a query-time error.
 			continue
 		}
-		out = append(out, vectorSearchResult{
+		out = append(out, Hit{
 			Article:   a,
 			Score:     float64(h.Score),
 			BM25Rank:  -1,
@@ -109,7 +109,7 @@ func runVectorSearch(scope string, queryVec []float32, topK int) ([]vectorSearch
 	return out, nil
 }
 
-// runHybridSearch fuses BM25 over the article corpus with cosine over the
+// HybridSearch fuses BM25 over the article corpus with cosine over the
 // vector index using reciprocal rank fusion. Both sides run independently
 // against the full corpus / index — RRF only re-orders by combined rank, it
 // does not re-score with raw values, so the BM25 and cosine numbers don't
@@ -118,13 +118,13 @@ func runVectorSearch(scope string, queryVec []float32, topK int) ([]vectorSearch
 // articlesByID lets us materialize the fused ID order back into article
 // pointers without re-listing on each lookup. Articles missing from the
 // listing are skipped (orphan vectors, mid-query deletions).
-func runHybridSearch(scope string, queryText string, queryVec []float32, topK int) ([]vectorSearchResult, error) {
+func HybridSearch(scope string, queryText string, queryVec []float32, topK int) ([]Hit, error) {
 	// BM25 side — same code path as the existing search.
 	allArticles, err := store.ListArticles(scope)
 	if err != nil {
 		return nil, fmt.Errorf("list articles: %w", err)
 	}
-	si := loadSearchIndex(scope)
+	si := LoadIndex(scope)
 	// For RRF we want a deeper BM25 list than topK so low-vec-ranked items
 	// have a chance to surface via fusion. 4*topK is a coarse heuristic; the
 	// CLI doesn't expose a fusion-depth flag yet (see future-upgrades).
@@ -132,7 +132,7 @@ func runHybridSearch(scope string, queryText string, queryVec []float32, topK in
 	if bm25Depth < 20 {
 		bm25Depth = 20
 	}
-	bm25Articles := bm25SearchWithIndex(allArticles, queryText, bm25Depth, si)
+	bm25Articles := BM25WithIndex(allArticles, queryText, bm25Depth, si)
 	bm25IDs := make([]string, len(bm25Articles))
 	for i, a := range bm25Articles {
 		bm25IDs[i] = a.ID
@@ -161,7 +161,7 @@ func runHybridSearch(scope string, queryText string, queryVec []float32, topK in
 
 	fusedIDs, fusedScores, bm25RankByID, vecRankByID := rrfFuse(bm25IDs, vecIDs)
 
-	out := make([]vectorSearchResult, 0, len(fusedIDs))
+	out := make([]Hit, 0, len(fusedIDs))
 	for fusedRank, id := range fusedIDs {
 		if topK > 0 && fusedRank >= topK {
 			break
@@ -179,7 +179,7 @@ func runHybridSearch(scope string, queryText string, queryVec []float32, topK in
 		if !ok2 {
 			vecRank = -1
 		}
-		out = append(out, vectorSearchResult{
+		out = append(out, Hit{
 			Article:   a,
 			Score:     fusedScores[fusedRank],
 			BM25Rank:  bm25Rank,

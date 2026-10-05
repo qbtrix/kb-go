@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/search"
 )
 
 // --- Transcript Parsing ---
@@ -348,7 +349,7 @@ func TestConvoPipeline_EndToEnd(t *testing.T) {
 	}
 
 	// Verify articles are searchable via BM25
-	results := bm25Search(articles, "auth migration Clerk", 5)
+	results := search.BM25(articles, "auth migration Clerk", 5)
 	if len(results) == 0 {
 		t.Error("BM25 search for 'auth migration Clerk' should return results")
 	}

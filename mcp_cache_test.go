@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
@@ -70,7 +71,7 @@ func cliRebuild(t *testing.T, scope string) {
 	if err := store.SaveIndex(scope, store.RebuildIndex(scope, all)); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveSearchIndex(scope, buildSearchIndex(all)); err != nil {
+	if err := search.SaveIndex(scope, search.BuildIndex(all)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -347,7 +348,7 @@ func seedBenchScope(b *testing.B, n int) string {
 	}
 	all, _ := store.ListArticles(scope)
 	store.SaveIndex(scope, store.RebuildIndex(scope, all))
-	saveSearchIndex(scope, buildSearchIndex(all))
+	search.SaveIndex(scope, search.BuildIndex(all))
 	old := time.Now().Add(-time.Hour)
 	filepath.Walk(store.ScopeDir(scope), func(p string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() {
@@ -401,9 +402,9 @@ func TestArticleCacheReusesSettledFiles(t *testing.T) {
 }
 
 // Cached search must rank exactly like the uncached CLI path (store.ListArticles +
-// loadOrHealSearchIndex), including ids whose file-name order differs from ID
+// search.LoadOrHealIndex), including ids whose file-name order differs from ID
 // order ("a-b.md" sorts before "a.md", but ID "a" sorts before "a-b"), so the
-// SearchIndex docIdx stays aligned with the cached slice.
+// search.Index docIdx stays aligned with the cached slice.
 func TestMCPCacheSearchMatchesUncachedPath(t *testing.T) {
 	scope := cacheTestScope(t, "parity")
 	for _, a := range []*model.WikiArticle{
@@ -423,7 +424,7 @@ func TestMCPCacheSearchMatchesUncachedPath(t *testing.T) {
 			got := searchIDs(t, srv, scope, q)
 			all, _ := store.ListArticles(scope)
 			var want []string
-			for _, a := range bm25SearchWithIndex(all, q, 50, loadOrHealSearchIndex(scope, all)) {
+			for _, a := range search.BM25WithIndex(all, q, 50, search.LoadOrHealIndex(scope, all)) {
 				want = append(want, a.ID)
 			}
 			if strings.Join(got, ",") != strings.Join(want, ",") {

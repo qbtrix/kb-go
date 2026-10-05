@@ -1,5 +1,4 @@
-// porter_test.go — Tests for the vendored Porter stemmer (feat/bm25-stemming).
-// Created: 2026-07-15.
+// porter_test.go — Tests for the vendored Porter stemmer.
 //
 // Three layers:
 //   1. TestPorterStem_Canonical — hand-verified word->stem pairs spanning every
@@ -10,7 +9,7 @@
 //      the actual recall fix: morphological variants collapse to one stem, and
 //      an over-stem false positive we worried about does NOT happen.
 
-package main
+package search
 
 import "testing"
 

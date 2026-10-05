@@ -12,6 +12,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
@@ -164,7 +165,7 @@ func cmdAccept(args []string) {
 	allArticles, _ := store.ListArticles(scope)
 	idx := store.RebuildIndex(scope, allArticles)
 	store.SaveIndex(scope, idx)
-	saveSearchIndex(scope, buildSearchIndex(allArticles))
+	search.SaveIndex(scope, search.BuildIndex(allArticles))
 
 	output := map[string]any{
 		"accepted": saved,

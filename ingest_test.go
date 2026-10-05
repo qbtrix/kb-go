@@ -26,6 +26,7 @@ import (
 
 	"github.com/qbtrix/kb-go/internal/compile"
 	"github.com/qbtrix/kb-go/internal/kbtest"
+	"github.com/qbtrix/kb-go/internal/search"
 	"github.com/qbtrix/kb-go/internal/store"
 	"github.com/qbtrix/kb-go/internal/textutil"
 )
@@ -142,8 +143,8 @@ func TestIngestArticleJSONHappyPath(t *testing.T) {
 
 	// Search index was refreshed and finds the new article.
 	all, _ := store.ListArticles(scope)
-	si := loadSearchIndex(scope)
-	hits := bm25SearchWithIndex(all, "sessions", 5, si)
+	si := search.LoadIndex(scope)
+	hits := search.BM25WithIndex(all, "sessions", 5, si)
 	found := false
 	for _, h := range hits {
 		if h.ID == article.ID {
