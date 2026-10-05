@@ -1,5 +1,5 @@
-// Small shared helpers: string and slice utilities, file checks and test-file
-// filtering, scope resolution, language extensions, JSON output.
+// Small CLI helpers: slice pruning, file checks, build file filtering
+// (exclude patterns, test-file detection), language extensions and JSON output.
 
 package main
 
@@ -8,53 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
-
-func slugify(s string) string {
-	lower := strings.ToLower(s)
-	re := regexp.MustCompile(`[^a-z0-9\s-]`)
-	clean := re.ReplaceAllString(lower, "")
-	re2 := regexp.MustCompile(`[\s-]+`)
-	slug := re2.ReplaceAllString(clean, "-")
-	slug = strings.Trim(slug, "-")
-	if len(slug) > 80 {
-		slug = slug[:80]
-	}
-	if slug == "" {
-		return contentHash(s)[:16]
-	}
-	return slug
-}
-
-func wordCount(s string) int {
-	return len(strings.Fields(s))
-}
-
-func truncate(s string, maxLen int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
-
-func nilToEmpty(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
-}
-
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
 
 // removeString returns a copy of slice with every occurrence of item dropped.
 // Used by cmdDelete to prune an article id from a concept's article list.
@@ -122,36 +77,6 @@ func isTestFile(path string) bool {
 	return strings.Contains(dir, "__tests__") || strings.Contains(dir, "/test/") || strings.Contains(dir, "/tests/")
 }
 
-// resolveScopes handles "*" (all scopes), "a,b,c" (multi), or single scope.
-func resolveScopes(scope string) []string {
-	if scope == "*" {
-		// List all scope directories under basePath
-		entries, err := os.ReadDir(basePath())
-		if err != nil {
-			return nil
-		}
-		var scopes []string
-		for _, e := range entries {
-			if e.IsDir() {
-				// Check it has a wiki/ dir (is a real scope)
-				wikiDir := filepath.Join(basePath(), e.Name(), "wiki")
-				if info, err := os.Stat(wikiDir); err == nil && info.IsDir() {
-					scopes = append(scopes, e.Name())
-				}
-			}
-		}
-		return scopes
-	}
-	if strings.Contains(scope, ",") {
-		parts := strings.Split(scope, ",")
-		for i := range parts {
-			parts[i] = strings.TrimSpace(parts[i])
-		}
-		return parts
-	}
-	return []string{scope}
-}
-
 func langToExt(lang string) string {
 	switch strings.ToLower(lang) {
 	case "go", "golang":
@@ -165,25 +90,6 @@ func langToExt(lang string) string {
 	default:
 		return lang
 	}
-}
-
-func containsStr(tokens []string, term string) bool {
-	for _, t := range tokens {
-		if t == term {
-			return true
-		}
-	}
-	return false
-}
-
-func countStr(tokens []string, term string) int {
-	n := 0
-	for _, t := range tokens {
-		if t == term {
-			n++
-		}
-	}
-	return n
 }
 
 func printJSON(v any) {

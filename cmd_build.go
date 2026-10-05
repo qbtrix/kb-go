@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -223,7 +224,7 @@ func runBuild(args []string) int {
 			article.SourceDocs = []string{j.rawID}
 
 			// Auto-tag test files
-			if isTestFile(j.filePath) && !contains(article.Categories, "test") {
+			if isTestFile(j.filePath) && !slices.Contains(article.Categories, "test") {
 				article.Categories = append(article.Categories, "test")
 			}
 

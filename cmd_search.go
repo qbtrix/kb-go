@@ -1,9 +1,12 @@
-// Implements `kb search`.
+// Implements `kb search`: BM25 (plain, --context excerpts, --exclude-tags,
+// multi-scope), pure vector (--query-vec) and hybrid (--hybrid) modes, and the
+// printer for vector/hybrid results.
 
 package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -94,7 +97,7 @@ func cmdSearch(args []string) {
 			skip := false
 			for _, tag := range excluded {
 				tag = strings.TrimSpace(tag)
-				if contains(a.Categories, tag) {
+				if slices.Contains(a.Categories, tag) {
 					skip = true
 					break
 				}
@@ -181,5 +184,60 @@ func cmdSearch(args []string) {
 			}
 			fmt.Println()
 		}
+	}
+}
+
+// emitVectorResults renders vector / hybrid search hits to stdout. Mirrors
+// the existing JSON-vs-table split in cmdSearch but with the extended row
+// shape (score / bm25_rank / vec_rank / fused_rank). Only called when
+// --query-vec is set, so the BM25-only output path is left intact upstream.
+//
+// Hybrid mode emits all four rank-related keys; pure-vec mode emits only
+// `score` and `vec_rank`. We deliberately do NOT add bm25_rank=-1 to pure-vec
+// rows — keeping the schema minimal makes consumers easier to write.
+func emitVectorResults(results []vectorSearchResult, hybridMode, jsonOut bool) {
+	if jsonOut {
+		out := make([]map[string]any, 0, len(results))
+		for _, r := range results {
+			row := map[string]any{
+				"id":       r.Article.ID,
+				"title":    r.Article.Title,
+				"summary":  r.Article.Summary,
+				"concepts": r.Article.Concepts,
+				"score":    r.Score,
+			}
+			if hybridMode {
+				row["bm25_rank"] = r.BM25Rank
+				row["vec_rank"] = r.VecRank
+				row["fused_rank"] = r.FusedRank
+			} else {
+				row["vec_rank"] = r.VecRank
+			}
+			out = append(out, row)
+		}
+		printJSON(out)
+		return
+	}
+	if len(results) == 0 {
+		fmt.Println("No results found.")
+		return
+	}
+	mode := "vector"
+	if hybridMode {
+		mode = "hybrid (BM25 + cosine, RRF k=60)"
+	}
+	fmt.Printf("Found %d results (%s):\n\n", len(results), mode)
+	for i, r := range results {
+		fmt.Printf("  %d. %s  [score=%.4f", i+1, r.Article.Title, r.Score)
+		if hybridMode {
+			fmt.Printf(" bm25=%d vec=%d", r.BM25Rank, r.VecRank)
+		} else {
+			fmt.Printf(" vec=%d", r.VecRank)
+		}
+		fmt.Println("]")
+		if r.Article.Summary != "" {
+			fmt.Printf("     %s\n", truncate(r.Article.Summary, 120))
+		}
+		fmt.Println()
 	}
 }

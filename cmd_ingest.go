@@ -2,8 +2,8 @@
 // compile one file/stdin text (built-in client or --compiler hook); --article-json
 // (the caller already compiled: raw_text + article on stdin); --allow-fallback
 // (explicit opt-in to store the text verbatim, also used when a compile
-// fails); --vec (attach an embedding). Without a compiler and without one of
-// those flags, ingest refuses with exit 2 before reading input.
+// fails); --vec (attach an embedding, runIngestVec). Without a compiler and
+// without one of those flags, ingest refuses with exit 2 before reading input.
 
 package main
 
@@ -291,5 +291,24 @@ func finishIngest(scope string, article *WikiArticle, jsonOut bool) {
 		if len(article.Concepts) > 0 {
 			fmt.Printf("  Concepts: %s\n", strings.Join(article.Concepts, ", "))
 		}
+	}
+}
+
+// runIngestVec is the CLI wrapper around attachVectorToArticle. Calls fatal()
+// on any failure (matching the rest of cmdIngest) and emits human/JSON output
+// on success.
+func runIngestVec(scope, articleID, vecPath string, jsonOut bool) {
+	dim, total, err := attachVectorToArticle(scope, articleID, vecPath)
+	if err != nil {
+		fatal("%v", err)
+	}
+	if jsonOut {
+		printJSON(map[string]any{
+			"article": articleID,
+			"dim":     dim,
+			"vectors": total,
+		})
+	} else {
+		fmt.Printf("Attached %d-dim vector to %s (scope %s, %d total)\n", dim, articleID, scope, total)
 	}
 }

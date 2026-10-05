@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"time"
 )
 
@@ -133,7 +134,7 @@ func cmdAccept(args []string) {
 		}
 
 		// Auto-tag test files
-		if a.IsTest && !contains(article.Categories, "test") {
+		if a.IsTest && !slices.Contains(article.Categories, "test") {
 			article.Categories = append(article.Categories, "test")
 		}
 

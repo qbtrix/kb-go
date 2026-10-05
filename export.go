@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -54,7 +55,7 @@ func exportWiki(scope, outputDir string) {
 		for _, cat := range idx.Categories {
 			fmt.Fprintf(&sb, "### %s\n\n", cat)
 			for _, a := range articles {
-				if contains(a.Categories, cat) {
+				if slices.Contains(a.Categories, cat) {
 					fmt.Fprintf(&sb, "- [%s](%s.md) — %s\n", a.Title, a.ID, truncate(a.Summary, 80))
 				}
 			}

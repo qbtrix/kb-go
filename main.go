@@ -4,22 +4,16 @@
 // (ANTHROPIC_API_KEY); callers can bring their own model through a --compiler
 // command, or compile in their own agent (`kb prepare` → `kb accept`,
 // `kb ingest --article-json`).
-// This file holds the entry point, command dispatch, usage text, the version
-// string and the package-wide constants (base dir, BM25 parameters).
-// Storage is markdown with JSON frontmatter; the only external dep is fsnotify
-// (watch mode).
+// This file holds the entry point, command dispatch, usage text and the version
+// string. Storage is markdown with JSON frontmatter; the only external dep is
+// fsnotify (watch mode).
+
 package main
 
 import (
 	"fmt"
 	"os"
 	"runtime/debug"
-)
-
-const (
-	defaultBaseDir = ".knowledge-base"
-	bm25K1         = 1.2
-	bm25B          = 0.75
 )
 
 // formatVersion reports the module version stamped by `go install …@vX`.
