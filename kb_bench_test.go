@@ -1,8 +1,9 @@
-// kb_bench_test.go — Performance benchmarks for kb-go.
-// All offline, no API key needed. Run: go test -bench=. -benchmem
-// Updated: added BenchmarkSearchLargeCorpus (50 docs x 50k words) comparing
-// the inverted-index fast path against the tokenize-on-the-fly slow path,
-// plus generateLargeCorpus helper.
+// kb_bench_test.go — Performance benchmarks for kb-go, all offline. Includes
+// BenchmarkSearchLargeCorpus (50 docs x 50k words), which compares the
+// inverted-index fast path with the tokenize-on-the-fly slow path. Example
+// files resolve from the module root (kbtest.Path).
+// Run: go test -bench=. -benchmem
+
 package main
 
 import (
@@ -12,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 // --- Helpers ---
@@ -65,16 +68,11 @@ func generateCorpus(n int) []*WikiArticle {
 // loadExampleFile reads a file from examples/ relative to the module root.
 func loadExampleFile(b *testing.B, relPath string) string {
 	b.Helper()
-	// Try relative to working dir, then up one level
-	for _, base := range []string{".", ".."} {
-		path := filepath.Join(base, "examples", relPath)
-		data, err := os.ReadFile(path)
-		if err == nil {
-			return string(data)
-		}
+	data, err := os.ReadFile(filepath.Join(kbtest.Path(b, "examples"), relPath))
+	if err != nil {
+		b.Skipf("example file not found: examples/%s", relPath)
 	}
-	b.Skipf("example file not found: examples/%s", relPath)
-	return ""
+	return string(data)
 }
 
 // --- Benchmarks ---
@@ -333,13 +331,9 @@ func BenchmarkFormatCodeContext(b *testing.B) {
 // findExamplesDir locates the examples/ directory.
 func findExamplesDir(b *testing.B) string {
 	b.Helper()
-	for _, base := range []string{".", ".."} {
-		path := filepath.Join(base, "examples")
-		if info, err := os.Stat(path); err == nil && info.IsDir() {
-			abs, _ := filepath.Abs(path)
-			return abs
-		}
+	path := kbtest.Path(b, "examples")
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		b.Skip("examples/ directory not found")
 	}
-	b.Skip("examples/ directory not found")
-	return ""
+	return path
 }

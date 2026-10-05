@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 func searchTestCorpus() []*WikiArticle {
@@ -90,7 +92,7 @@ func TestInvertedIndexMatchesSlowPath(t *testing.T) {
 
 func TestSearchIndexRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	kbtest.SetHome(t, dir)
 	scope := "sidx-" + filepath.Base(dir)
 	ensureDirs(scope)
 
@@ -114,7 +116,7 @@ func TestSearchIndexRoundTrip(t *testing.T) {
 
 func TestLoadSearchIndexIgnoresOldFormat(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	kbtest.SetHome(t, dir)
 	scope := "sidx-old-" + filepath.Base(dir)
 	ensureDirs(scope)
 
@@ -150,7 +152,7 @@ func seedSearchCorpus(t *testing.T, scope string) {
 
 func TestSearchSelfHealsIndex(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	kbtest.SetHome(t, dir)
 	scope := "sidx-heal-" + filepath.Base(dir)
 	ensureDirs(scope)
 	seedSearchCorpus(t, scope)
@@ -194,7 +196,7 @@ func TestSearchSelfHealsIndex(t *testing.T) {
 
 func TestSearchTagFilteredDoesNotClobberIndex(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	kbtest.SetHome(t, dir)
 	scope := "sidx-noclobber-" + filepath.Base(dir)
 	ensureDirs(scope)
 	seedSearchCorpus(t, scope)

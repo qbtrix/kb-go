@@ -4,11 +4,10 @@
 //   - JSON-RPC handshake: initialize, tools/list (shape + tool set).
 //   - tools/call for every tool (kb_search, kb_show, kb_glossary, kb_stats,
 //     kb_list) against a sample KB built in a temp scope.
-//   - Functional parity: the search result returned over the MCP transport is
-//     byte-identical to `kb search --json` from the CLI for the same query.
-//   - Latency delta: cold CLI spawn-per-query vs one persistent kb serve
-//     process over N queries. Printed via t.Logf so the captain can see the
-//     before/after number. Run with: go test -run MCP -v
+//
+// MCP-vs-CLI parity and the latency comparison exec the binary and live in
+// e2e_test.go.
+
 package main
 
 import (
@@ -18,10 +17,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
-	"time"
 )
 
 // --- sample KB fixture ---
@@ -272,153 +269,5 @@ func TestMCPToolList(t *testing.T) {
 	json.Unmarshal([]byte(text), &got)
 	if len(got) != 3 {
 		t.Errorf("list returned %d articles, want 3", len(got))
-	}
-}
-
-// --- functional parity: MCP transport vs CLI ---
-
-// normalizeSearchJSON parses a search JSON payload and re-marshals it in a
-// canonical key order so the two sources can be compared regardless of map
-// iteration order.
-func normalizeSearchJSON(t *testing.T, raw []byte) string {
-	t.Helper()
-	var arr []map[string]any
-	if err := json.Unmarshal(raw, &arr); err != nil {
-		t.Fatalf("decode search json %q: %v", raw, err)
-	}
-	canon, err := json.Marshal(arr)
-	if err != nil {
-		t.Fatalf("re-marshal: %v", err)
-	}
-	return string(canon)
-}
-
-func TestMCPSearchParityWithCLI(t *testing.T) {
-	scope := seedSampleKB(t)
-	binary := buildTestBinary(t)
-	const query = "middleware authentication"
-
-	// CLI path: spawn the process, parse stdout JSON.
-	cliOut, err := exec.Command(binary, "search", query, "--scope", scope, "--json", "--limit", "5").Output()
-	if err != nil {
-		t.Fatalf("cli search: %v", err)
-	}
-	cliCanon := normalizeSearchJSON(t, cliOut)
-
-	// MCP path: drive the server over its real stdio transport (subprocess),
-	// so this exercises the same code the agent host would.
-	cmd := exec.Command(binary, "serve", "--scope", scope)
-	stdin, _ := cmd.StdinPipe()
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start serve: %v", err)
-	}
-	fmt.Fprintln(stdin, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
-	callParams, _ := json.Marshal(map[string]any{
-		"name":      "kb_search",
-		"arguments": map[string]any{"query": query, "scope": scope, "limit": 5},
-	})
-	fmt.Fprintf(stdin, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":%s}`+"\n", callParams)
-	stdin.Close()
-	if err := cmd.Wait(); err != nil {
-		t.Fatalf("serve wait: %v\n%s", err, stdout.String())
-	}
-
-	// Pull the tools/call (id:2) response and extract its text content.
-	var mcpCanon string
-	sc := bufio.NewScanner(&stdout)
-	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for sc.Scan() {
-		var r rpcResponse
-		if json.Unmarshal(sc.Bytes(), &r) != nil {
-			continue
-		}
-		var id int
-		json.Unmarshal(r.ID, &id)
-		if id != 2 {
-			continue
-		}
-		text := toolText(t, "kb_search", r.Result)
-		mcpCanon = normalizeSearchJSON(t, []byte(text))
-	}
-	if mcpCanon == "" {
-		t.Fatalf("no kb_search response found in serve output:\n%s", stdout.String())
-	}
-
-	if cliCanon != mcpCanon {
-		t.Fatalf("parity mismatch:\n CLI: %s\n MCP: %s", cliCanon, mcpCanon)
-	}
-	t.Logf("parity OK: CLI and MCP return identical search JSON (%d bytes)", len(cliCanon))
-}
-
-// --- latency delta: cold CLI spawn vs persistent server ---
-
-func TestMCPLatencyDelta(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping latency measurement in -short mode")
-	}
-	scope := seedSampleKB(t)
-	binary := buildTestBinary(t)
-	const n = 20
-	queries := []string{
-		"middleware authentication", "rate limiting", "bm25 search index",
-		"tokens", "gateway throttle",
-	}
-
-	// (1) Cold CLI: spawn a fresh process for each query.
-	cliStart := time.Now()
-	for i := 0; i < n; i++ {
-		q := queries[i%len(queries)]
-		if _, err := exec.Command(binary, "search", q, "--scope", scope, "--json").Output(); err != nil {
-			t.Fatalf("cli query %d: %v", i, err)
-		}
-	}
-	cliTotal := time.Since(cliStart)
-
-	// (2) Persistent server: one process, N tools/call over the same stdio.
-	cmd := exec.Command(binary, "serve", "--scope", scope)
-	stdin, _ := cmd.StdinPipe()
-	stdoutPipe, _ := cmd.StdoutPipe()
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start serve: %v", err)
-	}
-	reader := bufio.NewReader(stdoutPipe)
-	readLine := func() {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			t.Fatalf("read serve response: %v", err)
-		}
-		_ = line
-	}
-	// Handshake (not counted).
-	fmt.Fprintln(stdin, `{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}`)
-	readLine()
-
-	srvStart := time.Now()
-	for i := 0; i < n; i++ {
-		q := queries[i%len(queries)]
-		callParams, _ := json.Marshal(map[string]any{
-			"name":      "kb_search",
-			"arguments": map[string]any{"query": q, "scope": scope},
-		})
-		fmt.Fprintf(stdin, `{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":%s}`+"\n", i+1, callParams)
-		readLine()
-	}
-	srvTotal := time.Since(srvStart)
-	stdin.Close()
-	cmd.Wait()
-
-	cliPer := cliTotal / n
-	srvPer := srvTotal / n
-	speedup := float64(cliPer) / float64(srvPer)
-
-	t.Logf("latency over %d queries (sample KB, scope=%s):", n, scope)
-	t.Logf("  cold CLI  (spawn/query): %v total, %v per query", cliTotal.Round(time.Microsecond), cliPer.Round(time.Microsecond))
-	t.Logf("  persistent server      : %v total, %v per query", srvTotal.Round(time.Microsecond), srvPer.Round(time.Microsecond))
-	t.Logf("  speedup                : %.1fx (per-query)", speedup)
-
-	if srvPer >= cliPer {
-		t.Errorf("expected persistent server to beat cold CLI per-query, got srv=%v cli=%v", srvPer, cliPer)
 	}
 }

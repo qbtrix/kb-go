@@ -9,11 +9,13 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 func sizeGuideArticle(t *testing.T) *WikiArticle {
 	t.Helper()
-	body, err := os.ReadFile("testdata/size-guide-article.md")
+	body, err := os.ReadFile(kbtest.Path(t, "testdata", "size-guide-article.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

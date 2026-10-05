@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 // rawTokenize is the pre-stemming tokenizer: lowercase + split on
@@ -67,8 +69,7 @@ func writeUnstemmedV2Index(t *testing.T, scope string, articles []*WikiArticle) 
 
 func TestUnstemmedV2IndexIsNotTrusted(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir) // os.UserHomeDir on Windows
+	kbtest.SetHome(t, dir)
 	scope := "sidx-stem-" + filepath.Base(dir)
 	ensureDirs(scope)
 

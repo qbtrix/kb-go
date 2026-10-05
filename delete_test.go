@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 // seedArticle writes an article + its hash-keyed raw doc (mirroring what ingest
@@ -71,7 +73,7 @@ func flushIndexes(t *testing.T, scope string) {
 
 func TestCmdDelete_RemovesArticleEverywhere(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	kbtest.SetHome(t, dir)
 	scope := "del-" + filepath.Base(dir)
 	ensureDirs(scope)
 
@@ -213,7 +215,7 @@ func TestCmdDelete_RemovesArticleEverywhere(t *testing.T) {
 
 func TestCmdDelete_NonExistentIsNoOp(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	kbtest.SetHome(t, dir)
 	scope := "del-noop-" + filepath.Base(dir)
 	ensureDirs(scope)
 
@@ -229,7 +231,7 @@ func TestCmdDelete_NonExistentIsNoOp(t *testing.T) {
 
 func TestCmdDelete_RefusesTraversalID(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	kbtest.SetHome(t, dir)
 	scope := "del-traverse-" + filepath.Base(dir)
 	ensureDirs(scope)
 

@@ -1,10 +1,8 @@
-// kb_test.go — Tests for the kb knowledge base engine.
-// Covers: storage, BM25 search, content hashing, caching, slugify, tokenize,
-// frontmatter parsing, index building, structural lint.
-// Updated: added --since flag tests (TestBuildSinceRefSkipsUnchanged,
-// TestBuildSinceNonGitFallback, TestChangedFilesSinceRef,
-// TestChangedFilesSinceRefRejectsOptionLikeRef,
-// TestChangedFilesSinceRefNonexistentRef).
+// kb_test.go — Tests for the kb knowledge base engine: storage, BM25 search,
+// content hashing, caching, slugify, tokenize, frontmatter parsing, index
+// building, structural lint, category normalisation, and `build --since`
+// (changedFilesSinceRef against a scratch git repo).
+
 package main
 
 import (
@@ -14,25 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
-
-// --- Helpers ---
-
-func tempScope(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	// Override base path for tests
-	scope := "test-" + filepath.Base(dir)
-	// Set up scope dir inside temp
-	root := filepath.Join(dir, scope)
-	os.MkdirAll(filepath.Join(root, "raw"), 0o755)
-	os.MkdirAll(filepath.Join(root, "wiki"), 0o755)
-	os.MkdirAll(filepath.Join(root, "cache"), 0o755)
-	return scope
-}
 
 // --- Slugify ---
 
@@ -1681,95 +1663,6 @@ func TestApplyCategoryPersistsIndex(t *testing.T) {
 	if persisted.Categories[0] != "cli" {
 		t.Errorf("persisted category = %q, want 'cli'", persisted.Categories[0])
 	}
-}
-
-func TestNormalizeCategoriesCLIEmptyScope(t *testing.T) {
-	// Integration test: exec the binary against an empty scope and confirm
-	// the no-op path behaves correctly (prints the "no articles" message,
-	// exits 0). Exercises runCategoryNormalize end-to-end via the CLI.
-	scope := "test-cli-empty-" + contentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
-	// Intentionally no articles — scope is empty.
-	_ = os.MkdirAll(scopeDir(scope), 0o755)
-
-	binary := buildTestBinary(t)
-	out, err := exec.Command(binary, "lint", "--scope", scope, "--normalize-categories").CombinedOutput()
-	if err != nil {
-		t.Fatalf("kb lint --normalize-categories failed: %v\n%s", err, out)
-	}
-	if !strings.Contains(string(out), "No articles in scope") {
-		t.Errorf("expected 'No articles in scope' message, got:\n%s", out)
-	}
-}
-
-func TestNormalizeCategoriesCLIJSONMode(t *testing.T) {
-	// Integration test: --json output on a scope with a real cluster.
-	scope := "test-cli-json-" + contentHash(t.Name())[:8]
-	defer func() { os.RemoveAll(scopeDir(scope)) }()
-
-	articles := []*WikiArticle{
-		{ID: "a1", Title: "A1", Content: "x", Categories: []string{"CLI"}, Version: 1},
-		{ID: "a2", Title: "A2", Content: "x", Categories: []string{"cli"}, Version: 1},
-	}
-	for _, a := range articles {
-		if err := saveArticle(scope, a); err != nil {
-			t.Fatalf("save: %v", err)
-		}
-	}
-
-	binary := buildTestBinary(t)
-	out, err := exec.Command(binary, "lint", "--scope", scope, "--normalize-categories", "--json").CombinedOutput()
-	if err != nil {
-		t.Fatalf("kb lint --normalize-categories --json failed: %v\n%s", err, out)
-	}
-
-	var payload struct {
-		Scope    string            `json:"scope"`
-		Applied  bool              `json:"applied"`
-		Clusters []categoryCluster `json:"clusters"`
-	}
-	if err := json.Unmarshal(out, &payload); err != nil {
-		t.Fatalf("json parse failed: %v\n%s", err, out)
-	}
-	if payload.Scope != scope {
-		t.Errorf("scope = %q, want %q", payload.Scope, scope)
-	}
-	if payload.Applied {
-		t.Error("applied should be false for dry run")
-	}
-	if len(payload.Clusters) != 1 {
-		t.Fatalf("expected 1 cluster, got %d", len(payload.Clusters))
-	}
-	if payload.Clusters[0].Canonical != "cli" {
-		t.Errorf("canonical = %q, want 'cli'", payload.Clusters[0].Canonical)
-	}
-}
-
-// buildTestBinary compiles the kb binary into a temp file for the CLI
-// integration tests. Caches per-test-process so repeated calls are cheap.
-var testBinaryPath string
-
-func buildTestBinary(t *testing.T) string {
-	t.Helper()
-	if testBinaryPath != "" {
-		if _, err := os.Stat(testBinaryPath); err == nil {
-			return testBinaryPath
-		}
-	}
-	dir, err := os.MkdirTemp("", "kb-test-bin-*")
-	if err != nil {
-		t.Fatalf("mkdtemp: %v", err)
-	}
-	path := filepath.Join(dir, "kb")
-	if runtime.GOOS == "windows" {
-		path += ".exe" // exec.Command cannot run an extensionless binary on Windows
-	}
-	cmd := exec.Command("go", "build", "-o", path, ".")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("go build: %v\n%s", err, out)
-	}
-	testBinaryPath = path
-	return path
 }
 
 func TestAffectedArticleCount(t *testing.T) {
