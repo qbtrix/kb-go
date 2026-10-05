@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/qbtrix/kb-go/internal/model"
+	"github.com/qbtrix/kb-go/internal/parse"
 )
 
 const (
@@ -119,7 +120,7 @@ func callAnthropic(spec compilerSpec, system, prompt string) (string, *model.Art
 
 // compileLLM compiles one source with the built-in client. compiled_with is
 // the requested model (as in v0.3.0); usage carries the response's tokens.
-func compileLLM(spec compilerSpec, rawText, source string, codeMod *CodeModule, terse bool) (*model.WikiArticle, error) {
+func compileLLM(spec compilerSpec, rawText, source string, codeMod *parse.Module, terse bool) (*model.WikiArticle, error) {
 	if strings.TrimSpace(spec.APIKey) == "" {
 		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set")
 	}
