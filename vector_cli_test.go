@@ -11,7 +11,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -23,6 +22,7 @@ import (
 	"github.com/qbtrix/kb-go/internal/kbtest"
 	"github.com/qbtrix/kb-go/internal/model"
 	"github.com/qbtrix/kb-go/internal/textutil"
+	"github.com/qbtrix/kb-go/internal/vector"
 )
 
 // --- Helpers ---
@@ -37,31 +37,6 @@ func vectorTestEnv(t *testing.T, name string) (string, string) {
 	scope := "vec-" + name + "-" + filepath.Base(dir)
 	ensureDirs(scope)
 	return dir, scope
-}
-
-// writeVecJSON writes a vector to a JSON file in the given form. form="object"
-// emits `{"vector": [...]}`, form="array" emits the bare array. Both must
-// round-trip through loadVectorFromFile.
-func writeVecJSON(t *testing.T, dir, name string, vec []float32, form string) string {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	var data []byte
-	var err error
-	switch form {
-	case "object":
-		data, err = json.Marshal(map[string]any{"vector": vec})
-	case "array":
-		data, err = json.Marshal(vec)
-	default:
-		t.Fatalf("unknown vec form: %s", form)
-	}
-	if err != nil {
-		t.Fatalf("marshal vec: %v", err)
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatalf("write vec: %v", err)
-	}
-	return path
 }
 
 // stubArticle plants a minimal WikiArticle with the given id so that
@@ -97,52 +72,6 @@ func rebuildScopeIndex(t *testing.T, scope string) {
 	saveIndex(scope, rebuildIndex(scope, all))
 }
 
-// --- loadVectorFromFile ---
-
-func TestLoadVectorFromFile_BothEncodings(t *testing.T) {
-	dir := t.TempDir()
-	want := []float32{0.1, -0.2, 0.3, 0.4}
-
-	for _, form := range []string{"object", "array"} {
-		path := writeVecJSON(t, dir, form+".json", want, form)
-		got, err := loadVectorFromFile(path)
-		if err != nil {
-			t.Fatalf("[%s] loadVectorFromFile: %v", form, err)
-		}
-		if len(got) != len(want) {
-			t.Fatalf("[%s] dim: want %d, got %d", form, len(want), len(got))
-		}
-		for i := range want {
-			if math.Abs(float64(got[i]-want[i])) > 1e-6 {
-				t.Errorf("[%s] [%d] want %f, got %f", form, i, want[i], got[i])
-			}
-		}
-	}
-}
-
-func TestLoadVectorFromFile_Errors(t *testing.T) {
-	dir := t.TempDir()
-
-	// Missing file
-	if _, err := loadVectorFromFile(filepath.Join(dir, "nope.json")); err == nil {
-		t.Error("missing file should error")
-	}
-
-	// Bad JSON
-	bad := filepath.Join(dir, "bad.json")
-	os.WriteFile(bad, []byte("{notjson"), 0o644)
-	if _, err := loadVectorFromFile(bad); err == nil {
-		t.Error("bad JSON should error")
-	}
-
-	// Empty array
-	empty := filepath.Join(dir, "empty.json")
-	os.WriteFile(empty, []byte("[]"), 0o644)
-	if _, err := loadVectorFromFile(empty); err == nil {
-		t.Error("empty array should error")
-	}
-}
-
 // --- attach-vector ingest flow ---
 
 func TestCmdIngestVec_AttachesVectorToExistingArticle(t *testing.T) {
@@ -152,7 +81,7 @@ func TestCmdIngestVec_AttachesVectorToExistingArticle(t *testing.T) {
 	stubArticle(t, scope, "art-1", "First Article", "Auth flow notes.", "Body text about OAuth2.")
 
 	vec := []float32{0.1, 0.2, 0.3, 0.4}
-	vecPath := writeVecJSON(t, dir, "vec.json", vec, "object")
+	vecPath := kbtest.WriteVecJSON(t, dir, "vec.json", vec, "object")
 
 	dim, total, err := attachVectorToArticle(scope, "art-1", vecPath)
 	if err != nil {
@@ -180,7 +109,7 @@ func TestCmdIngestVec_AttachesVectorToExistingArticle(t *testing.T) {
 
 func TestCmdIngestVec_RejectsMissingArticle(t *testing.T) {
 	dir, scope := vectorTestEnv(t, "noart")
-	vecPath := writeVecJSON(t, dir, "vec.json", []float32{0.1, 0.2}, "array")
+	vecPath := kbtest.WriteVecJSON(t, dir, "vec.json", []float32{0.1, 0.2}, "array")
 	if _, _, err := attachVectorToArticle(scope, "missing", vecPath); err == nil {
 		t.Error("attaching to non-existent article should error")
 	}
@@ -188,7 +117,7 @@ func TestCmdIngestVec_RejectsMissingArticle(t *testing.T) {
 
 func TestCmdIngestVec_RejectsEmptyID(t *testing.T) {
 	dir, scope := vectorTestEnv(t, "noid")
-	vecPath := writeVecJSON(t, dir, "vec.json", []float32{0.1, 0.2}, "array")
+	vecPath := kbtest.WriteVecJSON(t, dir, "vec.json", []float32{0.1, 0.2}, "array")
 	if _, _, err := attachVectorToArticle(scope, "", vecPath); err == nil {
 		t.Error("empty id should error")
 	}
@@ -401,7 +330,7 @@ func TestVectorIndexPath_PersistsAcrossInvocations(t *testing.T) {
 
 	// "First invocation": attach a vector.
 	dir := t.TempDir()
-	vecPath := writeVecJSON(t, dir, "v.json", []float32{0.1, 0.2, 0.3}, "object")
+	vecPath := kbtest.WriteVecJSON(t, dir, "v.json", []float32{0.1, 0.2, 0.3}, "object")
 	if _, _, err := attachVectorToArticle(scope, "doc-1", vecPath); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
@@ -412,7 +341,7 @@ func TestVectorIndexPath_PersistsAcrossInvocations(t *testing.T) {
 	if _, err := os.Stat(indexPath); err != nil {
 		t.Fatalf("vectors.json should exist on disk: %v", err)
 	}
-	loaded, err := LoadVectorIndex(indexPath)
+	loaded, err := vector.Load(indexPath)
 	if err != nil {
 		t.Fatalf("LoadVectorIndex: %v", err)
 	}

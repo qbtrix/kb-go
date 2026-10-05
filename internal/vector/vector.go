@@ -1,11 +1,11 @@
-// Brute-force vector search: cosine similarity over float32 slices and a flat
-// in-memory index with JSON persistence, plus the loader for a query/embedding
-// vector file ({"vector": [...]} or a bare array). Sufficient for <100k vectors
-// at sub-millisecond query latency. Vectors are supplied externally: kb never
-// embeds text itself. This is the "level 2" retrieval layer next to BM25
-// (level 1) and the concept graph (level 0).
-
-package main
+// Package vector is brute-force dense-vector search: cosine similarity over
+// float32 slices and a flat in-memory Index with JSON persistence, plus
+// LoadFile for a query/embedding vector file ({"vector": [...]} or a bare
+// array). Sufficient for <100k vectors at sub-millisecond query latency.
+// Vectors are supplied externally: kb never embeds text itself. This is the
+// "level 2" retrieval layer next to BM25 (level 1) and the concept graph
+// (level 0). Pure leaf: stdlib only, no knowledge-base paths.
+package vector
 
 import (
 	"encoding/json"
@@ -15,42 +15,42 @@ import (
 	"sort"
 )
 
-// VectorEntry pairs a document ID with its dense vector.
-type VectorEntry struct {
+// Entry pairs a document ID with its dense vector.
+type Entry struct {
 	ID     string    `json:"id"`
 	Vector []float32 `json:"vector"`
 }
 
-// VectorIndex is a flat in-memory vector index with brute-force cosine search.
+// Index is a flat in-memory vector index with brute-force cosine search.
 // Not thread-safe — caller serializes access (fine for CLI usage).
-type VectorIndex struct {
-	Entries []VectorEntry `json:"entries"`
+type Index struct {
+	Entries []Entry `json:"entries"`
 }
 
-// VectorResult is a single search hit with its cosine similarity score.
-type VectorResult struct {
+// Result is a single search hit with its cosine similarity score.
+type Result struct {
 	ID    string  `json:"id"`
 	Score float32 `json:"score"`
 }
 
-// NewVectorIndex creates an empty vector index.
-func NewVectorIndex() *VectorIndex {
-	return &VectorIndex{}
+// New creates an empty vector index.
+func New() *Index {
+	return &Index{}
 }
 
 // Add inserts a vector with the given document ID. Overwrites if ID already exists.
-func (idx *VectorIndex) Add(id string, vector []float32) {
+func (idx *Index) Add(id string, vector []float32) {
 	for i, e := range idx.Entries {
 		if e.ID == id {
 			idx.Entries[i].Vector = vector
 			return
 		}
 	}
-	idx.Entries = append(idx.Entries, VectorEntry{ID: id, Vector: vector})
+	idx.Entries = append(idx.Entries, Entry{ID: id, Vector: vector})
 }
 
 // Remove deletes a vector by ID. Returns true if found.
-func (idx *VectorIndex) Remove(id string) bool {
+func (idx *Index) Remove(id string) bool {
 	for i, e := range idx.Entries {
 		if e.ID == id {
 			idx.Entries = append(idx.Entries[:i], idx.Entries[i+1:]...)
@@ -62,7 +62,7 @@ func (idx *VectorIndex) Remove(id string) bool {
 
 // Search returns the top-k most similar vectors to the query, sorted by descending
 // cosine similarity. Skips entries with zero-magnitude vectors.
-func (idx *VectorIndex) Search(query []float32, topK int) []VectorResult {
+func (idx *Index) Search(query []float32, topK int) []Result {
 	if len(idx.Entries) == 0 || len(query) == 0 || topK <= 0 {
 		return nil
 	}
@@ -74,7 +74,7 @@ func (idx *VectorIndex) Search(query []float32, topK int) []VectorResult {
 	results := make([]scored, 0, len(idx.Entries))
 
 	for _, e := range idx.Entries {
-		s := CosineSimilarity(query, e.Vector)
+		s := Cosine(query, e.Vector)
 		if s > 0 {
 			results = append(results, scored{id: e.ID, score: s})
 		}
@@ -88,20 +88,20 @@ func (idx *VectorIndex) Search(query []float32, topK int) []VectorResult {
 		topK = len(results)
 	}
 
-	out := make([]VectorResult, topK)
+	out := make([]Result, topK)
 	for i := 0; i < topK; i++ {
-		out[i] = VectorResult{ID: results[i].id, Score: results[i].score}
+		out[i] = Result{ID: results[i].id, Score: results[i].score}
 	}
 	return out
 }
 
 // Len returns the number of entries in the index.
-func (idx *VectorIndex) Len() int {
+func (idx *Index) Len() int {
 	return len(idx.Entries)
 }
 
 // Save writes the index to a JSON file.
-func (idx *VectorIndex) Save(path string) error {
+func (idx *Index) Save(path string) error {
 	data, err := json.Marshal(idx)
 	if err != nil {
 		return err
@@ -109,26 +109,26 @@ func (idx *VectorIndex) Save(path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// LoadVectorIndex reads a vector index from a JSON file.
+// Load reads a vector index from a JSON file.
 // Returns an empty index if the file doesn't exist.
-func LoadVectorIndex(path string) (*VectorIndex, error) {
+func Load(path string) (*Index, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return NewVectorIndex(), nil
+			return New(), nil
 		}
 		return nil, err
 	}
-	var idx VectorIndex
+	var idx Index
 	if err := json.Unmarshal(data, &idx); err != nil {
 		return nil, err
 	}
 	return &idx, nil
 }
 
-// CosineSimilarity computes the cosine similarity between two float32 vectors.
+// Cosine computes the cosine similarity between two float32 vectors.
 // Returns 0 if either vector has zero magnitude or they differ in length.
-func CosineSimilarity(a, b []float32) float32 {
+func Cosine(a, b []float32) float32 {
 	if len(a) != len(b) || len(a) == 0 {
 		return 0
 	}
@@ -145,7 +145,7 @@ func CosineSimilarity(a, b []float32) float32 {
 	return float32(dot / (math.Sqrt(normA) * math.Sqrt(normB)))
 }
 
-// loadVectorFromFile parses a JSON file containing either:
+// LoadFile parses a JSON file containing either:
 //   - {"vector": [0.1, -0.05, ...]}  (object form)
 //   - [0.1, -0.05, ...]              (bare-array form)
 //
@@ -153,7 +153,7 @@ func CosineSimilarity(a, b []float32) float32 {
 // (Python embedding scripts, hand-written test fixtures, future SDK clients).
 // Returns the float32 slice or an error if the file is missing / unparseable
 // / empty.
-func loadVectorFromFile(path string) ([]float32, error) {
+func LoadFile(path string) ([]float32, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		// os.ReadFile errors echo only the path, never file bytes — safe to keep.
