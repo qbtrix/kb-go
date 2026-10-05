@@ -1,6 +1,6 @@
 // Package kbtest holds the test plumbing every kb-go package shares: home
 // isolation, repo-root fixture paths, the kb binary for end-to-end tests
-// (BuildBinary, RunKB), the fake compiler the --compiler hook tests
+// (BuildBinary, RunKB, WriteFiles), the fake compiler the --compiler hook tests
 // re-execute, and the stub Messages API the built-in client tests call.
 //
 // Invariants:
@@ -162,6 +162,23 @@ func BuildBinary(t testing.TB) string {
 	}
 	binPath = path
 	return path
+}
+
+// WriteFiles writes files (relative path -> content) under a fresh temp dir,
+// creating parent directories, and returns the dir.
+func WriteFiles(t testing.TB, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range files {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }
 
 // RunKB executes the built kb binary with extra env (appended to the test

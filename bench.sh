@@ -278,7 +278,7 @@ case "$TARGET" in
     offline)
         echo ""
         echo -e "${CYAN}Running Go benchmarks (offline)...${NC}"
-        cd "$SCRIPT_DIR" && go test -bench=. -benchmem -benchtime=1s -count=1 2>&1
+        cd "$SCRIPT_DIR" && go test -bench=. -benchmem -benchtime=1s -count=1 ./... 2>&1
         exit 0
         ;;
     *)
