@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/qbtrix/kb-go/internal/export"
 	"github.com/qbtrix/kb-go/internal/store"
 )
 
@@ -27,17 +28,17 @@ func cmdGraph(args []string) {
 	}
 
 	// Build the graph based on mode
-	var nodes []graphNode
-	var edges []graphEdge
+	var nodes []export.Node
+	var edges []export.Edge
 	var err error
 
 	switch {
 	case focusConcept != "":
-		nodes, edges, err = buildConceptSubgraph(idx, focusConcept)
+		nodes, edges, err = export.ConceptSubgraph(idx, focusConcept)
 	case focusArticle != "":
-		nodes, edges, err = buildArticleSubgraph(idx, focusArticle)
+		nodes, edges, err = export.ArticleSubgraph(idx, focusArticle)
 	default:
-		nodes, edges = buildConceptGraph(idx, limit, minArticles)
+		nodes, edges = export.ConceptGraph(idx, limit, minArticles)
 	}
 	if err != nil {
 		fatal("%v", err)
@@ -49,7 +50,7 @@ func cmdGraph(args []string) {
 
 	switch format {
 	case "mermaid":
-		fmt.Print(renderMermaid(nodes, edges, focusConcept))
+		fmt.Print(export.Mermaid(nodes, edges, focusConcept))
 	case "json":
 		printJSON(map[string]any{
 			"scope": scope,
@@ -57,7 +58,7 @@ func cmdGraph(args []string) {
 			"edges": edges,
 		})
 	case "dot":
-		fmt.Print(renderDot(nodes, edges, focusConcept))
+		fmt.Print(export.Dot(nodes, edges, focusConcept))
 	default:
 		fatal("Unknown format: %s (expected mermaid, json, or dot)", format)
 	}

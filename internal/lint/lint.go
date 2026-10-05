@@ -1,9 +1,11 @@
-// Knowledge-base lint: structural checks that need no LLM, and an LLM review
-// for inconsistencies, gaps, missing connections and stale articles. The LLM
-// review takes the same compile path as build (compile.go): the --compiler
-// hook when one is configured, else the built-in Anthropic client.
-
-package main
+// Package lint checks a scope's health. Structural runs offline checks
+// (missing concepts, broken backlinks, an empty KB); LLM asks for a review of
+// inconsistencies, gaps, missing connections and stale articles over the same
+// compile path as build: the --compiler hook (compile.Run) when one is
+// configured, else the built-in Anthropic client (compile.CallAnthropic).
+// categories.go clusters category labels that differ only by casing,
+// whitespace or punctuation for `kb lint --normalize-categories`.
+package lint
 
 import (
 	"encoding/json"
@@ -18,7 +20,7 @@ import (
 
 // --- Structural Lint (no LLM) ---
 
-func lintStructural(scope string) []model.LintIssue {
+func Structural(scope string) []model.LintIssue {
 	articles, _ := store.ListArticles(scope)
 	idx := store.LoadIndex(scope)
 	var issues []model.LintIssue
@@ -154,9 +156,9 @@ Knowledge base:
 %s`, sb.String())
 }
 
-// lintLLM runs the LLM review through the configured compile path and parses
+// LLM runs the LLM review through the configured compile path and parses
 // the JSON array of issues the model returns. Unparseable output is an error.
-func lintLLM(scope string, spec compile.Spec) ([]model.LintIssue, error) {
+func LLM(scope string, spec compile.Spec) ([]model.LintIssue, error) {
 	articles, _ := store.ListArticles(scope)
 	if len(articles) == 0 {
 		return []model.LintIssue{{
