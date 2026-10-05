@@ -1,12 +1,12 @@
-// search_index_test.go — Tests for the v2 inverted search index.
+// search_index_test.go — Tests for the inverted search index (current format v3).
 //
 // Pins: (1) the fast postings path returns the same ranking as the on-the-fly
 // slow path across plain, title-boosted, concept-boosted, and glossary-boosted
-// queries; (2) save/load round-trips the v2 format; (3) an old-format (v1
+// queries; (2) save/load round-trips the current format; (3) an old-format (v1
 // token dump) search_index.json is ignored on load, so search silently uses
 // the slow path instead of mis-scoring; (4) a stale index (doc set changed
 // without a rebuild) is not trusted for scoring; (5) a full-scope search
-// self-heals a missing/old-format index — the file reappears as v2 and
+// self-heals a missing/old-format index — the file reappears at the current version and
 // matches the scope — while tag-filtered searches and empty scopes never
 // write one.
 package main
@@ -88,7 +88,7 @@ func TestInvertedIndexMatchesSlowPath(t *testing.T) {
 	}
 }
 
-func TestSearchIndexV2RoundTrip(t *testing.T) {
+func TestSearchIndexRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	scope := "sidx-" + filepath.Base(dir)
@@ -100,7 +100,7 @@ func TestSearchIndexV2RoundTrip(t *testing.T) {
 	}
 	si := loadSearchIndex(scope)
 	if si == nil {
-		t.Fatalf("loadSearchIndex returned nil for a freshly saved v2 index")
+		t.Fatalf("loadSearchIndex returned nil for a freshly saved current-version index")
 	}
 	if !indexMatches(si, articles) {
 		t.Fatalf("loaded index does not match the articles it was built from")
@@ -167,7 +167,7 @@ func TestSearchSelfHealsIndex(t *testing.T) {
 	}
 
 	// First search: scores from articles (v1 index unusable) AND heals the
-	// file to v2 as a side effect.
+	// file to the current version as a side effect.
 	cmdSearch([]string{"auth", "--scope", scope, "--json"})
 
 	si := loadSearchIndex(scope)

@@ -2,18 +2,9 @@
 // Headless, lean CLI. BM25 search over LLM-compiled articles.
 // No embeddings, no vectors. The LLM understands at write time, not query time.
 //
-// Changes: replaced the token-dump search index (v1: every article's full
-// token slice serialized to JSON) with a real inverted index (v2: per-term
-// postings term -> [(docIdx, tf)], per-doc lengths, title/concept token sets).
-// BM25 now scores only from postings — df = postings length, tf from entries —
-// so search cost scales with matching docs, not total corpus tokens. Old-format
-// index files are ignored on load (slow path) and upgraded on the next index
-// write. Ranking semantics are unchanged (same boosts, same scores). Search
-// self-heals: a full-scope single-scope query that finds a missing/stale/old
-// index rebuilds it and best-effort persists it (loadOrHealSearchIndex), so
-// read-only consumers regain the fast path without waiting for an ingest.
-// Previous: loud-fail ingest (--allow-fallback, --article-json, compiled_with
-// in ingest --json output).
+// Search: tokenize() Porter-stems every token (porter.go), and BM25 scores from a
+// persisted inverted index (cache/search_index.json, v3: stemmed postings) that
+// self-heals when missing, stale, or written in an older format.
 //
 
 // Commands: build, prepare, accept, graph, search, ingest, show, list, stats, lint, recompile, watch, clear
@@ -1321,11 +1312,14 @@ func exportWiki(scope, outputDir string) {
 
 // --- Search Index (inverted) ---
 
-// searchIndexVersion is bumped whenever the on-disk shape changes. Old-format
-// files (the v1 token dump: {"articles": [...]}) unmarshal with V == 0 and are
-// ignored — search falls back to on-the-fly tokenization and the next index
-// write replaces the file with the current format.
-const searchIndexVersion = 2
+// searchIndexVersion is bumped whenever the on-disk shape OR the tokens it
+// stores change. v1 was a token dump ({"articles": [...]}, unmarshals as V==0);
+// v2 was the inverted index with raw, unstemmed terms; v3 is the same shape
+// with Porter-stemmed terms (tokenize). Any other version is ignored on load —
+// a v2 file's raw postings would silently miss stemmed query tokens — so
+// search falls back to on-the-fly tokenization and the next index write (or a
+// full-scope search, via loadOrHealSearchIndex) replaces the file.
+const searchIndexVersion = 3
 
 // Posting is one (docIdx, termFrequency) pair in a term's postings list.
 // Encoded as a 2-element JSON array to keep the index file compact.
@@ -1463,12 +1457,25 @@ func indexMatches(si *SearchIndex, articles []*WikiArticle) bool {
 
 // --- BM25 Search ---
 
+// tokenize lowercases, splits on non-alphanumeric runes, and Porter-stems each
+// token. Stemming is the SINGLE shared step that makes BM25 match morphological
+// variants: because both the index (buildSearchIndex) and the query
+// (bm25SearchWithIndex) tokenize through here, "opens" in a doc and the query
+// "open" both reduce to "open" and match. See porter.go.
+//
+// The persisted index stores these stemmed tokens, which is why its format is
+// v3 (searchIndexVersion): pre-stemming v2 files are ignored and healed.
+// porterStem leaves digits and <=2-letter tokens untouched.
 func tokenize(text string) []string {
 	lower := strings.ToLower(text)
 	splitter := func(c rune) bool {
 		return !unicode.IsLetter(c) && !unicode.IsDigit(c)
 	}
-	tokens := strings.FieldsFunc(lower, splitter)
+	fields := strings.FieldsFunc(lower, splitter)
+	tokens := make([]string, len(fields))
+	for i, f := range fields {
+		tokens[i] = porterStem(f)
+	}
 	return tokens
 }
 
@@ -1608,10 +1615,15 @@ func applyGlossaryBoost(articles []*WikiArticle, queryTerms []string, scores []f
 			continue
 		}
 		matched := false
-		termLower := strings.ToLower(articles[i].Term)
+		// queryTerms are Porter-stemmed (via tokenize), so the Term/Alias sides
+		// are stemmed too or a stemmed query token could never equal a raw term.
+		// Identical raw inputs stem identically, so every exact hit survives,
+		// and variants like alias "opens" vs query "open" also match. porterStem
+		// leaves multi-word terms (containing a space) untouched.
+		termLower := porterStem(strings.ToLower(articles[i].Term))
 		aliasesLower := make([]string, len(articles[i].Aliases))
 		for k, al := range articles[i].Aliases {
-			aliasesLower[k] = strings.ToLower(al)
+			aliasesLower[k] = porterStem(strings.ToLower(al))
 		}
 		for _, qt := range queryTerms {
 			qLower := strings.ToLower(qt)
