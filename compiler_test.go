@@ -1,181 +1,39 @@
-// Tests for the bring-your-own-compiler hook (`--compiler` / KB_COMPILER), the
-// commands that need a compile path, the --model / --compiler conflict, and
-// the optional `usage` metadata. The built-in Anthropic client and the
-// precedence between it and the hook are tested in anthropic_test.go.
+// In-process tests for the bring-your-own-compiler hook (`--compiler` /
+// KB_COMPILER): running the hook, parsing its output, timeouts and stderr
+// relay, flag resolution, the optional `usage` metadata, and the version
+// string. The built-in Anthropic client is tested in anthropic_test.go;
+// binary-level tests (every command, precedence, refusals) live in
+// e2e_test.go.
 //
-// The compiler under test is this test binary re-executed: TestMain checks
-// KB_FAKE_COMPILER and, when set, behaves as a compiler (reads the prompt on
-// stdin, prints one article JSON object) instead of running the suite. That
-// keeps the hook tests hermetic and cross-platform: the command string goes
-// through the real platform shell (sh -c / cmd /S /C) exactly as a user's
-// command would.
+// TestMain is kbtest.Main: it isolates the home directory for the package and,
+// when KB_FAKE_COMPILER is set, turns the re-executed test binary into the fake
+// compiler (kbtest.FakeCompiler); it also clears ANTHROPIC_API_KEY,
+// ANTHROPIC_BASE_URL and KB_COMPILER so no test can reach a real API.
+
 package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 func TestMain(m *testing.M) {
-	if mode := os.Getenv("KB_FAKE_COMPILER"); mode != "" {
-		os.Exit(runFakeCompiler(mode))
-	}
-	// Hermetic suite: a developer's real key, gateway or compiler must never
-	// be picked up (in-process or by exec'd kb, which inherits this env).
-	// Tests that need one set it explicitly.
-	for _, k := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "KB_COMPILER"} {
-		os.Unsetenv(k)
-	}
-	os.Exit(m.Run())
-}
-
-// runFakeCompiler is the compiler side of the re-exec trick. Modes:
-//
-//	ok           article JSON titled after the prompt's "Source:" line, with usage
-//	fenced       same, wrapped in ```json fences with extra keys
-//	argv         content echoes os.Args[1:] (shell quoting check)
-//	fail         writes to stderr, exits 3
-//	fail-on:<s>  like ok, but fails when the source contains <s>
-//	garbage      prints non-JSON text
-//	nocontent    valid JSON without content
-//	sleep        sleeps 30s (timeout check)
-//	lint         prints a JSON array of one lint issue
-func runFakeCompiler(mode string) int {
-	in, _ := io.ReadAll(os.Stdin)
-	prompt := string(in)
-	source := "unknown"
-	for _, line := range strings.Split(prompt, "\n") {
-		if strings.HasPrefix(line, "Source: ") {
-			source = strings.TrimSpace(strings.TrimPrefix(line, "Source: "))
-			break
-		}
-	}
-	article := map[string]any{
-		"title":      "Fake " + source,
-		"summary":    "Compiled by the fake compiler.",
-		"content":    fmt.Sprintf("Fake article for %s. PROMPT_BYTES=%d", source, len(prompt)),
-		"concepts":   []string{"fake", "hook"},
-		"categories": []string{"Testing"},
-		"usage": map[string]any{
-			"model": "fake-model", "input_tokens": 100, "output_tokens": 20, "cost_usd": 0.001,
-			"ignored_extra": "x",
-		},
-	}
-	switch {
-	case mode == "ok":
-	case mode == "fenced":
-		b, _ := json.Marshal(article)
-		fmt.Printf("```json\n%s\n```\n", b)
-		return 0
-	case mode == "argv":
-		article["content"] = "ARGV=" + strings.Join(os.Args[1:], "|")
-	case mode == "fail":
-		fmt.Fprintln(os.Stderr, "fake compiler: model unavailable")
-		return 3
-	case strings.HasPrefix(mode, "fail-on:"):
-		if strings.Contains(source, strings.TrimPrefix(mode, "fail-on:")) {
-			fmt.Fprintln(os.Stderr, "fake compiler: refusing "+source)
-			return 4
-		}
-	case mode == "garbage":
-		fmt.Println("I am sorry, I cannot produce JSON today.")
-		return 0
-	case mode == "nocontent":
-		fmt.Println(`{"title":"No Body","summary":"s"}`)
-		return 0
-	case mode == "sleep":
-		time.Sleep(30 * time.Second)
-		return 0
-	case mode == "lint":
-		fmt.Println(`[{"type":"gap","severity":"warning","message":"FAKE_LINT_ISSUE","suggestion":"write more"}]`)
-		return 0
-	}
-	b, _ := json.Marshal(article)
-	fmt.Println(string(b))
-	return 0
-}
-
-// fakeCompilerCommand returns a shell command line that re-executes this test
-// binary as a compiler, plus extra args appended verbatim.
-func fakeCompilerCommand(t *testing.T, extra string) string {
-	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatalf("os.Executable: %v", err)
-	}
-	cmd := `"` + exe + `"`
-	if extra != "" {
-		cmd += " " + extra
-	}
-	return cmd
-}
-
-// isolatedHome points both HOME and USERPROFILE at a temp dir (os.UserHomeDir
-// reads USERPROFILE on Windows), so in-process and exec'd kb share a scratch
-// knowledge base.
-func isolatedHome(t *testing.T) {
-	t.Helper()
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
-}
-
-// runKB executes the built kb binary with extra env and optional stdin.
-func runKB(t *testing.T, env []string, stdin string, args ...string) (stdout, stderr string, code int) {
-	t.Helper()
-	// A hard deadline turns a command that wrongly blocks (e.g. watch without a
-	// compiler) into a test failure instead of a hung suite.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, buildTestBinary(t), args...)
-	cmd.Env = append(os.Environ(), env...)
-	if stdin != "" {
-		cmd.Stdin = strings.NewReader(stdin)
-	}
-	var o, e bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &o, &e
-	err := cmd.Run()
-	code = 0
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			code = ee.ExitCode()
-		} else {
-			t.Fatalf("run kb: %v", err)
-		}
-	}
-	return o.String(), e.String(), code
-}
-
-func writeFiles(t *testing.T, files map[string]string) string {
-	t.Helper()
-	dir := t.TempDir()
-	for name, body := range files {
-		p := filepath.Join(dir, name)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return dir
+	os.Exit(kbtest.Main(m))
 }
 
 // --- Hook unit tests --------------------------------------------------------
 
 func TestCompilerHookHappyPath(t *testing.T) {
 	t.Setenv("KB_FAKE_COMPILER", "ok")
-	spec := compilerSpec{Command: fakeCompilerCommand(t, ""), Timeout: 60 * time.Second}
+	spec := compilerSpec{Command: kbtest.FakeCompilerCommand(t, ""), Timeout: 60 * time.Second}
 
 	art, err := compileWithHook(spec, "package main\nfunc main() {}\n", "cmd/app/main.go", nil, true)
 	if err != nil {
@@ -200,7 +58,7 @@ func TestCompilerHookHappyPath(t *testing.T) {
 
 func TestCompilerHookShellQuoting(t *testing.T) {
 	t.Setenv("KB_FAKE_COMPILER", "argv")
-	spec := compilerSpec{Command: fakeCompilerCommand(t, `"two words" plain`), Timeout: 60 * time.Second}
+	spec := compilerSpec{Command: kbtest.FakeCompilerCommand(t, `"two words" plain`), Timeout: 60 * time.Second}
 	art, err := compileWithHook(spec, "text", "doc.md", nil, false)
 	if err != nil {
 		t.Fatalf("compileWithHook: %v", err)
@@ -222,7 +80,7 @@ func TestCompilerHookDefaultCompiledWith(t *testing.T) {
 
 func TestCompilerHookFencedOutputAndExtraKeys(t *testing.T) {
 	t.Setenv("KB_FAKE_COMPILER", "fenced")
-	spec := compilerSpec{Command: fakeCompilerCommand(t, ""), Timeout: 60 * time.Second}
+	spec := compilerSpec{Command: kbtest.FakeCompilerCommand(t, ""), Timeout: 60 * time.Second}
 	art, err := compileWithHook(spec, "text", "doc.md", nil, false)
 	if err != nil {
 		t.Fatalf("fenced output should parse: %v", err)
@@ -235,7 +93,7 @@ func TestCompilerHookFencedOutputAndExtraKeys(t *testing.T) {
 func TestCompilerHookNonZeroExitIsLoud(t *testing.T) {
 	t.Setenv("KB_FAKE_COMPILER", "fail")
 	var stderr bytes.Buffer
-	spec := compilerSpec{Command: fakeCompilerCommand(t, ""), Timeout: 60 * time.Second, Stderr: &stderr}
+	spec := compilerSpec{Command: kbtest.FakeCompilerCommand(t, ""), Timeout: 60 * time.Second, Stderr: &stderr}
 	art, err := compileWithHook(spec, "text", "notes/a.md", nil, false)
 	if err == nil || art != nil {
 		t.Fatalf("non-zero exit must fail with no article, got art=%v err=%v", art, err)
@@ -250,7 +108,7 @@ func TestCompilerHookNonZeroExitIsLoud(t *testing.T) {
 
 func TestCompilerHookTimeoutIsLoud(t *testing.T) {
 	t.Setenv("KB_FAKE_COMPILER", "sleep")
-	spec := compilerSpec{Command: fakeCompilerCommand(t, ""), Timeout: 1 * time.Second, Stderr: io.Discard}
+	spec := compilerSpec{Command: kbtest.FakeCompilerCommand(t, ""), Timeout: 1 * time.Second, Stderr: io.Discard}
 	start := time.Now()
 	art, err := compileWithHook(spec, "text", "slow.md", nil, false)
 	if err == nil || art != nil {
@@ -268,7 +126,7 @@ func TestCompilerHookGarbageOutputIsLoud(t *testing.T) {
 	for _, mode := range []string{"garbage", "nocontent"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Setenv("KB_FAKE_COMPILER", mode)
-			spec := compilerSpec{Command: fakeCompilerCommand(t, ""), Timeout: 60 * time.Second, Stderr: io.Discard}
+			spec := compilerSpec{Command: kbtest.FakeCompilerCommand(t, ""), Timeout: 60 * time.Second, Stderr: io.Discard}
 			art, err := compileWithHook(spec, "raw text that must never be stored verbatim", "x.md", nil, false)
 			if err == nil || art != nil {
 				t.Fatalf("%s output must fail with no article, got art=%+v", mode, art)
@@ -309,194 +167,13 @@ func TestCompilerFromArgs(t *testing.T) {
 	}
 }
 
-// --- Commands without a compiler: exit 2 with guidance ----------------------
-
-func TestCommandsWithoutCompilerExit2(t *testing.T) {
-	isolatedHome(t)
-	src := writeFiles(t, map[string]string{"a.md": "# A\nalpha", "b.md": "# B\nbeta"})
-	// No compile path at all: no hook and no key.
-	env := []string{"KB_COMPILER=", "ANTHROPIC_API_KEY="}
-
-	cases := []struct {
-		name  string
-		stdin string
-		args  []string
-		want  []string
-	}{
-		{"build", "", []string{"build", src, "--scope", "nocomp", "--pattern", "*.md"}, []string{"ANTHROPIC_API_KEY", "--compiler", "kb prepare", "kb accept"}},
-		{"ingest", "some text", []string{"ingest", "--scope", "nocomp"}, []string{"ANTHROPIC_API_KEY", "--compiler", "--article-json", "--allow-fallback"}},
-		{"recompile", "", []string{"recompile", "--all", "--scope", "nocomp"}, []string{"ANTHROPIC_API_KEY", "--compiler", "kb prepare"}},
-		{"watch", "", []string{"watch", src, "--scope", "nocomp", "--pattern", "*.md"}, []string{"ANTHROPIC_API_KEY", "--compiler"}},
-		{"lint-llm", "", []string{"lint", "--llm", "--scope", "nocomp"}, []string{"ANTHROPIC_API_KEY", "--compiler"}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			_, stderr, code := runKB(t, env, c.stdin, c.args...)
-			if code != 2 {
-				t.Fatalf("exit code = %d, want 2; stderr: %s", code, stderr)
-			}
-			for _, w := range c.want {
-				if !strings.Contains(stderr, w) {
-					t.Errorf("guidance should mention %q, got: %s", w, stderr)
-				}
-			}
-		})
-	}
-	if n := wikiArticleCount(t, "nocomp"); n != 0 {
-		t.Errorf("no articles may be written without a compiler, got %d", n)
-	}
-	if n := rawDocCount(t, "nocomp"); n != 0 {
-		t.Errorf("refusal must happen before any raw doc is written, got %d", n)
-	}
-}
-
-// --model picks the built-in client's model; with a compiler it is a usage
-// error (exit 2) rather than silently ignored, whether the compiler came from
-// the flag or from KB_COMPILER.
-func TestModelWithCompilerIsUsageError(t *testing.T) {
-	isolatedHome(t)
-	src := writeFiles(t, map[string]string{"a.md": "alpha"})
-	env := []string{"KB_FAKE_COMPILER=ok", "ANTHROPIC_API_KEY=sk-dummy"}
-	_, stderr, code := runKB(t, env, "", "build", src, "--scope", "m", "--pattern", "*.md",
-		"--model", "claude-haiku", "--compiler", fakeCompilerCommand(t, ""))
-	if code != 2 || !strings.Contains(stderr, "--model") || !strings.Contains(stderr, "--compiler is given") {
-		t.Errorf("--model with --compiler: want exit 2 naming both; code=%d stderr=%s", code, stderr)
-	}
-	env = append(env, "KB_COMPILER="+fakeCompilerCommand(t, ""))
-	_, stderr, code = runKB(t, env, "", "ingest", "--scope", "m", "--model", "claude-haiku")
-	if code != 2 || !strings.Contains(stderr, "KB_COMPILER is set") {
-		t.Errorf("--model with KB_COMPILER: want exit 2 naming KB_COMPILER; code=%d stderr=%s", code, stderr)
-	}
-	if n := wikiArticleCount(t, "m"); n != 0 {
-		t.Errorf("a usage error must write nothing, got %d articles", n)
-	}
-}
-
-func TestBuildGlossaryOnlyNeedsNoCompiler(t *testing.T) {
-	isolatedHome(t)
-	src := writeFiles(t, map[string]string{
-		"glossary/pocket.md": "---\n{\"id\":\"pocket\",\"title\":\"Pocket\",\"kind\":\"glossary\",\"term\":\"Pocket\"}\n---\n\nA Pocket is a workspace.",
-	})
-	_, stderr, code := runKB(t, []string{"KB_COMPILER="}, "", "build", src, "--scope", "gl", "--pattern", "*.md")
-	if code != 0 {
-		t.Fatalf("glossary-only build needs no compiler; code=%d stderr=%s", code, stderr)
-	}
-}
-
 // --- Commands with the hook -------------------------------------------------
 
-func TestBuildWithCompilerHook(t *testing.T) {
-	isolatedHome(t)
-	src := writeFiles(t, map[string]string{"a.md": "# A\nalpha", "b.md": "# B\nbeta"})
-	env := []string{"KB_FAKE_COMPILER=ok", "KB_COMPILER=" + fakeCompilerCommand(t, "")}
-
-	out, stderr, code := runKB(t, env, "", "build", src, "--scope", "hook", "--pattern", "*.md", "--json", "--concurrency", "2")
-	if code != 0 {
-		t.Fatalf("build failed: code=%d stderr=%s", code, stderr)
-	}
-	var res map[string]any
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("build --json: %v\n%s", err, out)
-	}
-	if res["changed"].(float64) != 2 || res["input_tokens"].(float64) != 200 || res["output_tokens"].(float64) != 20*2 {
-		t.Errorf("build json = %v", res)
-	}
-	a, err := loadArticle("hook", slugify("Fake a.md"))
-	if err != nil || a == nil {
-		t.Fatalf("article for a.md missing: %v", err)
-	}
-	if a.Usage == nil || a.Usage.InputTokens != 100 || a.CompiledWith != "fake-model" {
-		t.Errorf("usage/compiled_with not stored: %+v %q", a.Usage, a.CompiledWith)
-	}
-
-	// Second build: everything cached, compiler not needed.
-	out, stderr, code = runKB(t, []string{"KB_COMPILER="}, "", "build", src, "--scope", "hook", "--pattern", "*.md", "--json")
-	if code != 0 || !strings.Contains(out, `"cached": 2`) {
-		t.Errorf("cached rebuild should need no compiler: code=%d out=%s stderr=%s", code, out, stderr)
-	}
-
-	// Stats sums usage.
-	out, _, code = runKB(t, nil, "", "stats", "--scope", "hook", "--json")
-	if code != 0 {
-		t.Fatalf("stats failed")
-	}
-	var st struct {
-		Usage *struct {
-			Articles     int     `json:"articles"`
-			InputTokens  int     `json:"input_tokens"`
-			OutputTokens int     `json:"output_tokens"`
-			CostUSD      float64 `json:"cost_usd"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal([]byte(out), &st); err != nil || st.Usage == nil {
-		t.Fatalf("stats --json should carry usage totals: %v\n%s", err, out)
-	}
-	if st.Usage.Articles != 2 || st.Usage.InputTokens != 200 || st.Usage.OutputTokens != 40 || st.Usage.CostUSD < 0.0019 || st.Usage.CostUSD > 0.0021 {
-		t.Errorf("stats usage = %+v", *st.Usage)
-	}
-	out, _, _ = runKB(t, nil, "", "stats", "--scope", "hook")
-	if !strings.Contains(out, "200 input") || !strings.Contains(out, "40 output") {
-		t.Errorf("text stats should show usage totals:\n%s", out)
-	}
-}
-
-func TestBuildCompilerFlagWinsOverEnv(t *testing.T) {
-	isolatedHome(t)
-	src := writeFiles(t, map[string]string{"a.md": "alpha"})
-	env := []string{"KB_FAKE_COMPILER=ok", "KB_COMPILER=exit 7"}
-	_, stderr, code := runKB(t, env, "", "build", src, "--scope", "fw", "--pattern", "*.md", "--compiler", fakeCompilerCommand(t, ""))
-	if code != 0 {
-		t.Fatalf("--compiler should win over KB_COMPILER: code=%d stderr=%s", code, stderr)
-	}
-}
-
-func TestBuildCompilerFailureIsLoud(t *testing.T) {
-	isolatedHome(t)
-	src := writeFiles(t, map[string]string{"a.md": "alpha text", "b.md": "beta raw text MUST_NOT_BE_STORED"})
-	env := []string{"KB_FAKE_COMPILER=fail-on:b.md", "KB_COMPILER=" + fakeCompilerCommand(t, "")}
-
-	_, stderr, code := runKB(t, env, "", "build", src, "--scope", "loud", "--pattern", "*.md")
-	if code == 0 {
-		t.Fatalf("a failed item must make build exit non-zero; stderr=%s", stderr)
-	}
-	if !strings.Contains(stderr, "b.md") || !strings.Contains(stderr, "refusing") {
-		t.Errorf("stderr should name the failed source and pass compiler stderr through: %s", stderr)
-	}
-	arts, _ := listArticles("loud")
-	if len(arts) != 1 || arts[0].Title != "Fake a.md" {
-		t.Fatalf("partial success must be saved and the failure must write nothing: %+v", arts)
-	}
-	for _, a := range arts {
-		if strings.Contains(a.Content, "MUST_NOT_BE_STORED") {
-			t.Errorf("raw text stored verbatim as an article")
-		}
-	}
-	// The failed file is not cached: the next build retries it.
-	env = []string{"KB_FAKE_COMPILER=ok", "KB_COMPILER=" + fakeCompilerCommand(t, "")}
-	out, stderr, code := runKB(t, env, "", "build", src, "--scope", "loud", "--pattern", "*.md", "--json")
-	if code != 0 || !strings.Contains(out, `"changed": 1`) {
-		t.Errorf("retry should compile only b.md: code=%d out=%s stderr=%s", code, out, stderr)
-	}
-}
-
-func TestIngestWithCompilerHook(t *testing.T) {
-	isolatedHome(t)
-	src := writeFiles(t, map[string]string{"notes.md": "meeting notes"})
-	out, stderr, code := runKB(t, []string{"KB_FAKE_COMPILER=ok"}, "",
-		"ingest", filepath.Join(src, "notes.md"), "--scope", "ing", "--json", "--compiler", fakeCompilerCommand(t, ""))
-	if code != 0 {
-		t.Fatalf("ingest with compiler failed: code=%d stderr=%s", code, stderr)
-	}
-	if !strings.Contains(out, `"compiled_with": "fake-model"`) {
-		t.Errorf("ingest --json should report compiled_with from usage.model: %s", out)
-	}
-}
-
 func TestIngestCompilerFailureKeepsRawWritesNoArticle(t *testing.T) {
-	isolatedHome(t)
+	kbtest.IsolatedHome(t)
 	scope := "ing-fail"
 	t.Setenv("KB_FAKE_COMPILER", "fail")
-	spec := compilerSpec{Command: fakeCompilerCommand(t, ""), Timeout: 60 * time.Second, Stderr: io.Discard}
+	spec := compilerSpec{Command: kbtest.FakeCompilerCommand(t, ""), Timeout: 60 * time.Second, Stderr: io.Discard}
 	text := "raw text that must not silently become an article"
 	err := ingestText(scope, "notes.md", spec, "", "", text, false, false)
 	if err == nil {
@@ -510,53 +187,10 @@ func TestIngestCompilerFailureKeepsRawWritesNoArticle(t *testing.T) {
 	}
 }
 
-func TestRecompileWithCompilerHook(t *testing.T) {
-	isolatedHome(t)
-	scope := "recomp"
-	if err := ingestArticleJSON(scope, []byte(`{"raw_text":"original raw","article":{"title":"Orig","content":"orig body","source":"orig.md"}}`), false); err != nil {
-		t.Fatal(err)
-	}
-	_, stderr, code := runKB(t, []string{"KB_FAKE_COMPILER=ok", "KB_COMPILER=" + fakeCompilerCommand(t, "")}, "",
-		"recompile", "orig", "--scope", scope)
-	if code != 0 {
-		t.Fatalf("recompile failed: code=%d stderr=%s", code, stderr)
-	}
-	a, _ := loadArticle(scope, "orig")
-	if a == nil || a.Version != 2 || a.Usage == nil || !strings.HasPrefix(a.Content, "Fake ") {
-		t.Errorf("recompiled article = %+v", a)
-	}
-
-	_, stderr, code = runKB(t, []string{"KB_FAKE_COMPILER=fail", "KB_COMPILER=" + fakeCompilerCommand(t, "")}, "",
-		"recompile", "orig", "--scope", scope)
-	if code == 0 {
-		t.Errorf("a failed recompile must exit non-zero; stderr=%s", stderr)
-	}
-	a2, _ := loadArticle(scope, "orig")
-	if a2 == nil || a2.Version != 2 {
-		t.Errorf("failed recompile must leave the article untouched: %+v", a2)
-	}
-}
-
-func TestLintLLMWithCompilerHook(t *testing.T) {
-	isolatedHome(t)
-	scope := "lintllm"
-	saveArticle(scope, &WikiArticle{ID: "a1", Title: "A1", Summary: "s", Content: "x", Concepts: []string{"c"}, Version: 1})
-	out, stderr, code := runKB(t, []string{"KB_FAKE_COMPILER=lint", "KB_COMPILER=" + fakeCompilerCommand(t, "")}, "",
-		"lint", "--llm", "--scope", scope, "--json")
-	if code != 0 || !strings.Contains(out, "FAKE_LINT_ISSUE") {
-		t.Errorf("lint --llm through the hook: code=%d out=%s stderr=%s", code, out, stderr)
-	}
-	_, stderr, code = runKB(t, []string{"KB_FAKE_COMPILER=garbage", "KB_COMPILER=" + fakeCompilerCommand(t, "")}, "",
-		"lint", "--llm", "--scope", scope, "--json")
-	if code == 0 {
-		t.Errorf("unparseable lint output must fail loudly; stderr=%s", stderr)
-	}
-}
-
 // --- usage metadata ---------------------------------------------------------
 
 func TestArticleJSONStoresUsage(t *testing.T) {
-	isolatedHome(t)
+	kbtest.IsolatedHome(t)
 	scope := "aj-usage"
 	payload := `{"raw_text":"r","article":{"title":"With Usage","content":"c","usage":{"model":"gpt-x","input_tokens":5,"output_tokens":6,"cost_usd":0.25}}}`
 	if err := ingestArticleJSON(scope, []byte(payload), false); err != nil {
@@ -575,54 +209,6 @@ func TestArticleJSONStoresUsage(t *testing.T) {
 	b, _ := loadArticle(scope, "explicit")
 	if b == nil || b.CompiledWith != "pp-backend" {
 		t.Errorf("explicit compiled_with should win: %+v", b)
-	}
-}
-
-func TestAcceptStoresAndReplacesUsage(t *testing.T) {
-	isolatedHome(t)
-	scope := "acc-usage"
-	first := `{"scope":"acc-usage","articles":[{"source":"a.md","hash":"h1","raw_id":"r1","title":"Acc","content":"body","usage":{"model":"m1","input_tokens":10,"output_tokens":2,"cost_usd":0.1}}]}`
-	if _, stderr, code := runKB(t, nil, first, "accept", "--scope", scope); code != 0 {
-		t.Fatalf("accept: %s", stderr)
-	}
-	a, _ := loadArticle(scope, "acc")
-	if a == nil || a.Usage == nil || a.Usage.InputTokens != 10 || a.CompiledWith != "m1" {
-		t.Fatalf("accept usage not stored: %+v", a)
-	}
-	second := strings.Replace(strings.Replace(first, `"input_tokens":10`, `"input_tokens":7`, 1), `"model":"m1"`, `"model":"m2"`, 1)
-	runKB(t, nil, second, "accept", "--scope", scope)
-	a, _ = loadArticle(scope, "acc")
-	if a == nil || a.Usage == nil || a.Usage.InputTokens != 7 || a.Usage.Model != "m2" {
-		t.Errorf("re-accept must replace usage, not sum: %+v", a.Usage)
-	}
-	// No usage at all: the old "agent" default and no usage block.
-	third := `{"articles":[{"source":"b.md","raw_id":"r2","title":"NoUsage","content":"body"}]}`
-	runKB(t, nil, third, "accept", "--scope", scope)
-	b, _ := loadArticle(scope, "nousage")
-	if b == nil || b.Usage != nil || b.CompiledWith != "agent" {
-		t.Errorf("accept without usage: %+v", b)
-	}
-}
-
-func TestUsageFrontmatterBackwardCompatible(t *testing.T) {
-	isolatedHome(t)
-	scope := "fm-usage"
-	saveArticle(scope, &WikiArticle{ID: "legacy", Title: "Legacy", Content: "x", Version: 1})
-	raw, _ := os.ReadFile(filepath.Join(scopeDir(scope), "wiki", "legacy.md"))
-	if strings.Contains(string(raw), `"usage"`) {
-		t.Errorf("articles without usage must not grow a usage key:\n%s", raw)
-	}
-	a, _ := loadArticle(scope, "legacy")
-	if a.Usage != nil {
-		t.Errorf("legacy article should load with nil usage")
-	}
-	n, _, _, _ := usageTotals([]*WikiArticle{a})
-	if n != 0 {
-		t.Errorf("no usage → zero articles counted")
-	}
-	out, _, _ := runKB(t, nil, "", "stats", "--scope", scope, "--json")
-	if strings.Contains(out, `"usage"`) {
-		t.Errorf("stats --json must omit usage when no article has it:\n%s", out)
 	}
 }
 
@@ -651,12 +237,5 @@ func TestFormatVersion(t *testing.T) {
 				t.Errorf("formatVersion = %q, want %q", got, c.want)
 			}
 		})
-	}
-}
-
-func TestVersionCommandIsNotHardcoded(t *testing.T) {
-	out, _, code := runKB(t, nil, "", "version")
-	if code != 0 || strings.Contains(out, "v0.1.0") || !strings.HasPrefix(out, "kb ") {
-		t.Errorf("kb version = %q", out)
 	}
 }

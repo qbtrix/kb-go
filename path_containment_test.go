@@ -20,13 +20,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/qbtrix/kb-go/internal/kbtest"
 )
 
 // --- loadArticle id containment ---
 
 func TestLoadArticle_RejectsTraversalID(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	kbtest.SetHome(t, dir)
 	scope := "contain-" + filepath.Base(dir)
 	ensureDirs(scope)
 
@@ -76,7 +78,7 @@ func TestLoadArticle_RejectsTraversalID(t *testing.T) {
 
 func TestLoadArticle_AllowsLegitimateSlugIDs(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	kbtest.SetHome(t, dir)
 	scope := "contain-ok-" + filepath.Base(dir)
 
 	// All ids kb-go actually generates: slugify() output (lowercase, digits,
@@ -110,7 +112,7 @@ func TestLoadArticle_AllowsLegitimateSlugIDs(t *testing.T) {
 
 func TestMCPSearch_QueryVecPath_RejectsTraversal(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	kbtest.SetHome(t, dir)
 	scope := "vec-contain-" + filepath.Base(dir)
 	ensureDirs(scope)
 
@@ -137,7 +139,7 @@ func TestMCPSearch_QueryVecPath_RejectsTraversal(t *testing.T) {
 
 func TestMCPSearch_QueryVecPath_AllowsInBase(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	kbtest.SetHome(t, dir)
 	scope := "vec-ok-" + filepath.Base(dir)
 	ensureDirs(scope)
 
